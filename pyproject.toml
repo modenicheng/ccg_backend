@@ -1,0 +1,13 @@
+[project]
+name = "ccg-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard]>=0.129.0",
+    "icecream>=2.1.10",
+    "qqmusic-api-python>=0.4.1",
+    "rich>=14.3.2",
+    "uvicorn>=0.40.0",
+]
