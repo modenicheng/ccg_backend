@@ -3,11 +3,21 @@ name = "ccg-backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.129.0",
     "icecream>=2.1.10",
+    "numpy>=2.4.2",
+    "pylance>=2.0.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
     "qqmusic-api-python>=0.4.1",
     "rich>=14.3.2",
     "uvicorn>=0.40.0",
 ]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -s"
+testpaths = ["tests"]
+pythonpath = ["."]
