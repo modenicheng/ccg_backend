@@ -14,10 +14,10 @@ def regist(event: EventType):
         return func
     return decorator
 
-async def handle(event: EventType, data: bytes):
+async def handle(event: EventType, data: bytes, clients=None, websocket=None):
     logger.debug("Current handlers: %s", list(_handlers.keys()))
     if event.name in _handlers:
-        result = _handlers[event.name](data)
+        result = _handlers[event.name](data, clients=clients, websocket=websocket)
         if inspect.isawaitable(result):
             return await result
         return result

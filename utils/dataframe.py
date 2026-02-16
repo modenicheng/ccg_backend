@@ -1,6 +1,8 @@
 from abc import abstractmethod
 import string
-from .enumerations import EventType, AudioEncoding
+
+from utils.errors import InvalidFrameError
+from .enumerations import EventType, AudioEncoding, HeartbeatType
 from .logger import get_logger
 import datetime
 import struct
@@ -140,28 +142,41 @@ class HeartbeatFrame(BaseFrame):
     
     The binary format of the heartbeat frame is as follows:
     - 1 byte: event type, refer to `EventType` enum
+    - 1 byte: heartbeat type, refer to `HeartbeatType` enum
     - 8 bytes: timestamp, uint64 (milliseconds)
-    - 16 bytes: uid, string, random generated. Used for identifying the source of the heartbeat frame.
+    - 8 bytes: uid, string, random generated. Used for identifying the source of the heartbeat frame.
     
     The heartbeat used to keep the connection, and mesure the latency between the client and the server.
     
     """
     event_type: EventType = EventType.HEARTBEAT
+    heartbeat_type: HeartbeatType
     timestamp: int = current_timestamp_ms()
-    uid: str = str(random.sample(string.ascii_letters + string.digits, 16))
+    uid: str = "".join(random.sample(string.ascii_letters + string.digits, 8))
+    
+    _data_format = "!B B Q 8s"  # the format for struct packing and unpacking
+    
+    def __init__(self, heartbeat_type: HeartbeatType = HeartbeatType.PING, uid: str | None = None):
+        self.timestamp = current_timestamp_ms()
+        self.heartbeat_type = heartbeat_type
+        if uid:
+            self.uid = uid
+        else:
+            self.uid = "".join(random.sample(string.ascii_letters + string.digits, 8))
 
     def dump(self):
-        return struct.pack("!B Q 16s", self.event_type.value, self.timestamp, self.uid.encode())
+        return struct.pack(HeartbeatFrame._data_format, self.event_type.value, self.heartbeat_type.value, self.timestamp, self.uid.encode())
 
     @staticmethod
     def load(data: bytes):
         try:
-            unpacked = struct.unpack("!B Q 16s", data)
+            unpacked: tuple[int, int, int, bytes] = struct.unpack(HeartbeatFrame._data_format, data)
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
-            raise ValueError("Invalid data for HeartbeatFrame") from e
+            raise InvalidFrameError("Invalid data for HeartbeatFrame") from e
         frame = HeartbeatFrame()
         frame.event_type = EventType(unpacked[0])
-        frame.timestamp = unpacked[1]
-        frame.uid = unpacked[2].decode()
+        frame.heartbeat_type = HeartbeatType(unpacked[1])
+        frame.timestamp = unpacked[2]
+        frame.uid = unpacked[3].decode()
         return frame
