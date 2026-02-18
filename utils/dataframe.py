@@ -145,32 +145,66 @@ class HeartbeatFrame(BaseFrame):
     - 1 byte: heartbeat type, refer to `HeartbeatType` enum
     - 8 bytes: timestamp, uint64 (milliseconds)
     - 8 bytes: uid, string, random generated. Used for identifying the source of the heartbeat frame.
+    - 8 bytes: t1, uint64 (milliseconds), the timestamp when the client sends the heartbeat frame.
+    - 8 bytes: t2, uint64 (milliseconds), the timestamp when the server receives the heartbeat frame.
+    - 8 bytes: t3, uint64 (milliseconds), the timestamp when the server sends the heartbeat response frame.
+    - 8 bytes: t4, uint64 (milliseconds), the timestamp when the client receives the heartbeat response frame.
     
-    The heartbeat used to keep the connection, and mesure the latency between the client and the server.
+    The heartbeat can be used to keep the connection, and measure the latency and time offset between the client and the server.
     
     """
     event_type: EventType = EventType.HEARTBEAT
     heartbeat_type: HeartbeatType
     timestamp: int = current_timestamp_ms()
     uid: str = "".join(random.sample(string.ascii_letters + string.digits, 8))
+    t1: int = 0
+    t2: int = 0
+    t3: int = 0
+    t4: int = 0
     
-    _data_format = "!B B Q 8s"  # the format for struct packing and unpacking
+    _data_format = "!B B Q 8s Q Q Q Q"  # the format for struct packing and unpacking
     
-    def __init__(self, heartbeat_type: HeartbeatType = HeartbeatType.PING, uid: str | None = None):
+    def __init__(
+        self,
+        heartbeat_type: HeartbeatType = HeartbeatType.PING,
+        uid: str | None = None,
+        t1: int = 0,
+        t2: int = 0,
+        t3: int = 0,
+        t4: int = 0,
+    ):
         self.timestamp = current_timestamp_ms()
         self.heartbeat_type = heartbeat_type
         if uid:
             self.uid = uid
         else:
             self.uid = "".join(random.sample(string.ascii_letters + string.digits, 8))
+        if t1 == 0 and heartbeat_type == HeartbeatType.PING:
+            t1 = self.timestamp
+        self.t1 = t1
+        self.t2 = t2
+        self.t3 = t3
+        self.t4 = t4
 
     def dump(self):
-        return struct.pack(HeartbeatFrame._data_format, self.event_type.value, self.heartbeat_type.value, self.timestamp, self.uid.encode())
+        return struct.pack(
+            HeartbeatFrame._data_format,
+            self.event_type.value,
+            self.heartbeat_type.value,
+            self.timestamp,
+            self.uid.encode(),
+            self.t1,
+            self.t2,
+            self.t3,
+            self.t4,
+        )
 
     @staticmethod
     def load(data: bytes):
         try:
-            unpacked: tuple[int, int, int, bytes] = struct.unpack(HeartbeatFrame._data_format, data)
+            unpacked: tuple[int, int, int, bytes, int, int, int, int] = struct.unpack(
+                HeartbeatFrame._data_format, data
+            )
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
             raise InvalidFrameError("Invalid data for HeartbeatFrame") from e
@@ -179,4 +213,8 @@ class HeartbeatFrame(BaseFrame):
         frame.heartbeat_type = HeartbeatType(unpacked[1])
         frame.timestamp = unpacked[2]
         frame.uid = unpacked[3].decode()
+        frame.t1 = unpacked[4]
+        frame.t2 = unpacked[5]
+        frame.t3 = unpacked[6]
+        frame.t4 = unpacked[7]
         return frame

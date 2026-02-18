@@ -37,7 +37,7 @@ class ClientManager:
             print(f"Failed to send message to client {client.client}: {e}")
     
     async def broadcast(self, message: str | bytes | dict):
-        await asyncio.gather(*(self.send(client, message) for client in self._clients))
+        await asyncio.gather(*[self.send(client, message) for client in self._clients])
     
     def __len__(self):
         return len(self._clients)
