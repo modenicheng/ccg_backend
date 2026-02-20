@@ -34,7 +34,7 @@ async def startup_event():
     )
     await memory_monitor.start()
     logger.info("内存监控器已启动")
-    
+
     # 方法2: 也可以使用便捷函数
     # global memory_monitor2
     # memory_monitor2 = await start_memory_monitoring(
@@ -42,7 +42,7 @@ async def startup_event():
     #     report_threshold_mb=100.0,
     #     detailed_report=False,
     # )
-    
+
     # 方法3: 或者启动简单的定时报告
     # asyncio.create_task(periodic_memory_report(
     #     interval=60.0,
@@ -57,7 +57,7 @@ async def shutdown_event():
     if 'memory_monitor' in globals():
         await memory_monitor.stop()
         logger.info("内存监控器已停止")
-    
+
     # if 'memory_monitor2' in globals():
     #     await memory_monitor2.stop()
 
@@ -74,7 +74,7 @@ async def get_memory_info():
     from utils.memory_monitor import MemoryMonitor
     monitor = MemoryMonitor()
     memory_info = monitor._get_memory_info()
-    
+
     return {
         "process_memory_mb": {
             "rss": memory_info["rss_mb"],
@@ -97,17 +97,17 @@ async def get_memory_report():
     monitor = MemoryMonitor(detailed_report=True)
     memory_info = monitor._get_memory_info()
     report = monitor._format_memory_report(memory_info)
-    
+
     return {"report": report}
 
 
 async def demo_manual_usage():
     """演示手动使用内存监控"""
     logger.info("演示手动使用内存监控...")
-    
+
     # 1. 使用上下文管理器（推荐）
     monitor = MemoryMonitor(interval=5.0, report_threshold_mb=10.0)
-    
+
     async with monitor.monitor_context():
         logger.info("在监控上下文中执行一些操作...")
         # 模拟一些内存操作
@@ -115,26 +115,26 @@ async def demo_manual_usage():
         await asyncio.sleep(10)
         del data  # 释放内存
         await asyncio.sleep(5)
-    
+
     # 2. 手动控制
     monitor2 = MemoryMonitor(interval=2.0, report_threshold_mb=5.0)
     await monitor2.start()
-    
+
     # 执行一些操作
     logger.info("手动监控中，执行一些内存操作...")
     large_list = []
     for i in range(5):
         large_list.append(bytearray(5 * 1024 * 1024))  # 每次分配5MB
         await asyncio.sleep(3)
-    
+
     await monitor2.stop()
-    
+
     logger.info("手动使用演示完成")
 
 
 if __name__ == "__main__":
     import sys
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "demo":
         # 运行演示
         asyncio.run(demo_manual_usage())
@@ -145,7 +145,7 @@ if __name__ == "__main__":
         logger.info("访问 http://localhost:8000/memory 查看内存信息")
         logger.info("访问 http://localhost:8000/memory/report 查看详细报告")
         logger.info("使用 'python memory_monitor_example.py demo' 运行手动演示")
-        
+
         uvicorn.run(
             app,
             host="0.0.0.0",

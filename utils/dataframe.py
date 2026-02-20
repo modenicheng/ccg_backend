@@ -10,6 +10,7 @@ import random
 
 logger = get_logger(__name__)
 
+
 def get_event_type(data: bytes) -> EventType:
     """Get the event type from the binary data.
     
@@ -21,6 +22,7 @@ def get_event_type(data: bytes) -> EventType:
     if not data:
         raise ValueError("Data is empty.")
     return EventType(data[0])
+
 
 def current_timestamp_ms() -> int:
     return int(datetime.datetime.now().timestamp() * 1000)
@@ -161,9 +163,9 @@ class HeartbeatFrame(BaseFrame):
     t2: int = 0
     t3: int = 0
     t4: int = 0
-    
+
     _data_format = "!B B Q 8s Q Q Q Q"  # the format for struct packing and unpacking
-    
+
     def __init__(
         self,
         heartbeat_type: HeartbeatType = HeartbeatType.PING,
@@ -178,7 +180,8 @@ class HeartbeatFrame(BaseFrame):
         if uid:
             self.uid = uid
         else:
-            self.uid = "".join(random.sample(string.ascii_letters + string.digits, 8))
+            self.uid = "".join(
+                random.sample(string.ascii_letters + string.digits, 8))
         if t1 == 0 and heartbeat_type == HeartbeatType.PING:
             t1 = self.timestamp
         self.t1 = t1
@@ -202,9 +205,9 @@ class HeartbeatFrame(BaseFrame):
     @staticmethod
     def load(data: bytes):
         try:
-            unpacked: tuple[int, int, int, bytes, int, int, int, int] = struct.unpack(
-                HeartbeatFrame._data_format, data
-            )
+            unpacked: tuple[int, int, int, bytes, int, int, int,
+                            int] = struct.unpack(HeartbeatFrame._data_format,
+                                                 data)
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
             raise InvalidFrameError("Invalid data for HeartbeatFrame") from e

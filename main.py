@@ -1,4 +1,5 @@
 from email.mime import audio
+from email.policy import HTTP
 import logging
 import time
 from client_manager import ClientManager
@@ -6,12 +7,17 @@ from utils import get_event_type, get_logger, init_logging
 from utils.dataframe import AudioFrame, AudioEncoding
 from utils.enumerations import EventType
 from utils.memory_monitor import MemoryMonitor
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from handlers import handle
 import asyncio
 import datetime
 from pydub import AudioSegment
+from pathlib import Path
+import mimetypes
+import pydantic
 
 init_logging(level=logging.DEBUG)
 logger = get_logger(__name__)
@@ -25,81 +31,27 @@ app.add_middleware(
 clients = ClientManager()
 memory_monitor = None  # 内存监控器实例
 
-async def test_pcm_audio():
-    """测试函数：解码FLAC并循环播放，发送PCM音频数据到所有客户端。"""
-    global clients
-    audio_file = "D:\\QQMusicDownloads\\HOYO-MiX\\崩坏星穹铁道-星空剧场2 Astral Theater Vol_2\\初花学剑动星芒 My Sword Stirs Starlight - HOYO-MiX.flac"
-    
-    # 加载并解码FLAC文件
-    logger.info(f"Loading audio file: {audio_file}")
-    audio: AudioSegment = AudioSegment.from_file(audio_file, format="flac")
-    
-    # 获取音频参数
-    sample_rate: int = audio.frame_rate
-    channels: int = audio.channels
-    sample_width: int = audio.sample_width  # 字节数
-    
-    if not audio.raw_data:
-        logger.warning("Audio file loaded but contains no data.")
-        return
-    # 转换为PCM原始数据
-    pcm_data: bytes = audio.raw_data
-    
-    logger.info(f"Audio loaded - Sample rate: {sample_rate}Hz, Channels: {channels}, Sample width: {sample_width} bytes, Duration: {len(audio)}ms")
-    
-    # 计算每次发送的数据块大小（例如：每50ms发送一次）
-    chunk_duration_ms = 50
-    bytes_per_ms = (sample_rate * channels * sample_width) // 1000
-    chunk_size = bytes_per_ms * chunk_duration_ms
-    
-    position = 0
-    
-    # 循环播放
-    while True:
-        t1 = time.perf_counter_ns()
-        # 提取当前块
-        chunk_data = pcm_data[position:position + chunk_size]
-        
-        # 如果到达末尾，从头开始（循环播放）
-        if len(chunk_data) < chunk_size:
-            position = 0
-            chunk_data = pcm_data[position:position + chunk_size]
-        
-        # 计算实际采样数
-        sample_num = len(chunk_data) // (channels * sample_width)
-        
-        # 创建音频帧并广播
-        audio_frame = AudioFrame(
-            sample_rate=sample_rate,
-            sample_num=sample_num,
-            channels=channels,
-            encoding=AudioEncoding.PCM,
-            data=chunk_data
-        )
-        await clients.broadcast(audio_frame.bin)
-        
-        # 移动播放位置
-        position += chunk_size
-        t2 = time.perf_counter_ns()
-        elapsed_ms = (t2 - t1) / 1_000_000
-        # 按实际播放速度等待
-        await asyncio.sleep(((chunk_duration_ms - (elapsed_ms * 4)) / 1000))
+# 前端静态文件目录配置
+STATIC_DIR = Path(__file__).parent.parent / "ccg_frontend" / "dist"
+logger.info(f"Static directory path: {STATIC_DIR}")
+
+if STATIC_DIR.exists():
+    logger.info(f"Frontend dist directory found: {STATIC_DIR}")
+else:
+    logger.warning(f"Frontend dist directory not found: {STATIC_DIR}")
+
 
 @app.on_event("startup")
 async def startup_event():
     """应用启动时的事件处理：启动测试音频播放任务和内存监控"""
     global memory_monitor
-    
-    # 启动测试音频播放任务
-    asyncio.create_task(test_pcm_audio())
-    logger.info("Test PCM audio playback task started")
-    
+
     # 启动内存监控
     try:
         memory_monitor = MemoryMonitor(
-            interval=30.0,           # 每30秒报告一次
+            interval=30.0,  # 每30秒报告一次
             report_threshold_mb=20.0,  # 内存变化超过20MB时报告
-            detailed_report=True,    # 输出详细报告
+            detailed_report=True,  # 输出详细报告
         )
         await memory_monitor.start()
         logger.info("Memory monitor started successfully")
@@ -121,11 +73,16 @@ async def shutdown_event():
 
 @app.get("/")
 async def root():
-    """根路由，显示应用状态"""
+    """返回前端应用主页"""
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    # 如果前端文件不存在，返回API信息
     return {
         "message": "CCG Backend Server",
         "status": "running",
-        "features": ["WebSocket audio streaming", "Memory monitoring"],
+        "note": "Frontend not found. Please build frontend first.",
+        "static_dir": str(STATIC_DIR),
         "endpoints": {
             "websocket": "/ws/",
             "memory_status": "/memory",
@@ -133,70 +90,6 @@ async def root():
             "health": "/health"
         }
     }
-
-
-@app.get("/health")
-async def health_check():
-    """健康检查端点"""
-    return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
-
-
-@app.get("/memory")
-async def get_memory_status():
-    """获取当前内存状态"""
-    global memory_monitor
-    
-    if not memory_monitor:
-        return {"error": "Memory monitor not initialized", "status": "not_available"}
-    
-    try:
-        memory_info = memory_monitor._get_memory_info()
-        return {
-            "status": "available",
-            "process_memory_mb": {
-                "rss": round(memory_info["rss_mb"], 2),
-                "vms": round(memory_info["vms_mb"], 2),
-            },
-            "system_memory_mb": {
-                "total": round(memory_info["system_total_mb"], 2),
-                "used": round(memory_info["system_used_mb"], 2),
-                "available": round(memory_info["system_available_mb"], 2),
-                "percent": round(memory_info["system_percent"], 1),
-            },
-            "monitor_config": {
-                "interval": memory_monitor.interval,
-                "report_threshold_mb": memory_monitor.report_threshold_mb,
-                "detailed_report": memory_monitor.detailed_report,
-                "is_running": memory_monitor._running if hasattr(memory_monitor, '_running') else False
-            },
-            "timestamp": memory_info["timestamp"],
-            "formatted_time": datetime.datetime.fromtimestamp(memory_info["timestamp"]).isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Failed to get memory status: {e}")
-        return {"error": str(e), "status": "error"}
-
-
-@app.get("/memory/report")
-async def get_memory_report():
-    """获取格式化的内存报告"""
-    global memory_monitor
-    
-    if not memory_monitor:
-        return {"error": "Memory monitor not initialized", "status": "not_available"}
-    
-    try:
-        memory_info = memory_monitor._get_memory_info()
-        report = memory_monitor._format_memory_report(memory_info)
-        return {
-            "status": "available",
-            "report": report,
-            "timestamp": memory_info["timestamp"],
-            "formatted_time": datetime.datetime.fromtimestamp(memory_info["timestamp"]).isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Failed to get memory report: {e}")
-        return {"error": str(e), "status": "error"}
 
 
 @app.websocket("/ws/")
@@ -209,23 +102,83 @@ async def websocket_endpoint(websocket: WebSocket):
     # asyncio.create_task(heartbeat_init(websocket))
     try:
         while True:
-            try:
-                data = await websocket.receive_bytes()
-            except KeyError:
-                logger.warning(f"WebSocket disconnected: {websocket.client}. The data is not in bytes format.")
-                break
-            event: EventType = get_event_type(data)
-            logger.debug("Received event: %s", event.name)
-            try:
-                await handle(event, data, clients, websocket)
-            except Exception as e:
-                logger.warning(f"Failed to handle event: {event.name}, error: {e}")
-                await clients.send(websocket, f"Failed to handle event: {event.name}, error: {e}")
-    except WebSocketDisconnect:
+            data = await websocket.receive()
+            if "text" in data:
+                data = data["text"]
+                # // use pydantic to validate and parse the incoming JSON data directly into a python object.
+            elif "bytes" in data:
+                data = data["bytes"]
+                event: EventType = get_event_type(data)
+                logger.debug("Received event: %s", event.name)
+                try:
+                    await handle(event, data, clients, websocket)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to handle event: {event.name}, error: {e}")
+                    await clients.send(
+                        websocket,
+                        f"Failed to handle event: {event.name}, error: {e}")
+            else:
+                logger.warning(
+                    f"Received unsupported data type from {websocket.client}: {data}"
+                )
+                continue
+
+    except (WebSocketDisconnect, RuntimeError) as e:
         logger.info("WebSocket disconnected: %s", websocket.client)
     finally:
         clients.pop(websocket)
         logger.info("WebSocket removed from clients: %s", websocket.client)
+
+
+# Catch-all 路由：处理前端的客户端路由（必须放在所有路由的最后）
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """处理所有其他路由，返回静态文件或前端应用（用于 SPA 客户端路由）"""
+    # 尝试返回请求的静态文件
+    file_path = STATIC_DIR / full_path
+    logger.debug(f"Requested path: {full_path}, Resolved to: {file_path}")
+
+    # 防目录越界检查：确保解析后的路径在 STATIC_DIR 内
+    try:
+        # 获取规范化路径（解析 .. 等相对路径）
+        resolved_path = file_path.resolve()
+        static_dir_resolved = STATIC_DIR.resolve()
+
+        # 确保 resolved_path 在 static_dir_resolved 目录内
+        if not str(resolved_path).startswith(str(static_dir_resolved)):
+            logger.warning(
+                f"Path traversal attempt detected: {full_path} -> {resolved_path}"
+            )
+            # 返回 index.html（作为安全降级）
+            raise HTTPException(status_code=404, detail="Not found")
+    except Exception as e:
+        logger.warning(f"Path resolution error: {e}")
+        return {"error": "Invalid path"}
+
+    if file_path.exists() and file_path.is_file():
+        logger.debug(f"Serving static file: {file_path}")
+        return FileResponse(file_path)
+
+    # 检查是否是目录（目录访问重定向到 index.html）
+    if file_path.exists() and file_path.is_dir():
+        index_file = file_path / "index.html"
+        if index_file.exists():
+            logger.debug(f"Serving index.html from directory: {file_path}")
+            return FileResponse(index_file)
+
+    # 如果文件不存在，返回 index.html（用于前端客户端路由）
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        logger.debug(
+            f"File not found, serving index.html for client-side routing: {full_path}"
+        )
+        return FileResponse(index_file)
+
+    # 前端文件不存在
+    logger.warning(f"Not found: {full_path}, index.html also not found")
+    return {"error": "Not found", "path": full_path}
+
 
 if __name__ == "__main__":
     import uvicorn

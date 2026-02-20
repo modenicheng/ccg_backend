@@ -29,4 +29,5 @@ def test_audio_frame_encoding_decoding():
     assert original_frame.data == decoded_frame.data
     ic(decoded_frame.to_dict())
 
+
 test_audio_frame_encoding_decoding()
