@@ -134,7 +134,7 @@
 | `PLAY`               | 16     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构       |
 | `PAUSE`              | 17     | S→C      | 暂停播放（由抢答或房主触发），包含播放进度（毫秒）            |
 | `ATTEMPT_ANSWER`     | 18     | C→S      | 玩家抢答，触发暂停和入队                                      |
-| `YOUR_TURN`          | 19     | S→C      | 通知某个玩家开始作答（私有事件），包含剩余时间                |
+| `YOUR_TURN`          | 19     | S→C      | 广播通知指定玩家开始作答，包含剩余时间（前端显示xxx正在作答）                |
 | `SUBMIT_ANSWER`      | 20     | C→S      | 玩家提交勾选的标签ID列表及精准描述文本                        |
 | `ANSWER_BROADCAST`   | 21     | S→C      | 广播某玩家提交的答案（匿名或带玩家名，不含正确性）            |
 | `ANSWER_QUEUE`       | 22     | S→C      | 广播当前抢答队列顺序（用于前端展示排队状态）                  |
@@ -159,6 +159,10 @@
 | `/api/tags/suggest`  | GET    | 根据歌曲ID获取历史标签和描述推荐       | `songId: int`                              | 标签频次列表、描述频次列表        |
 
 ## 6. 数据模型设计
+
+**以下 sql 语句内容仅供数据结构参考**。
+
+实现上，使用 sqpalchemy orm 作为数据库交互接口，辅以 pydantic 做 json 数据的序列化/反序列化/数据校验（二进制数据由现有的 frame 基类和相关类构成）
 
 ### 6.1 SQLite 表结构
 
@@ -199,7 +203,7 @@ CREATE TABLE songs (
     audio_url TEXT,               -- 原始播放链接
     cached_path TEXT,             -- 本地缓存路径
     metadata_json TEXT,           -- 额外元数据（JSON）
-    UNIQUE(platform, platform_song_id)
+    UNIQUE(platform_song_id)
 );
 ```
 
@@ -435,6 +439,8 @@ Set-Cookie: token=...; HttpOnly; ...
 - **房主权限控制**：房主界面显示额外控件（开始游戏、结束回合、判分提交），判分界面展示所有玩家的答案，以及标签组勾选框和描述候选列表。
 
 ## 9. 部署方案
+
+放过我吧别用docker
 
 使用 Docker Compose 编排服务，确保易部署：
 
