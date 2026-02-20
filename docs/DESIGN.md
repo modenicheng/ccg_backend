@@ -51,9 +51,9 @@
 | WebSocket 协议 | 二进制帧（现有框架扩展）         | 基于现有 EventType 增加游戏事件；保持低延迟                          |
 | 数据库     | SQLite 3                          | 轻量级文件数据库，支持 JSON 扩展；使用 `aiosqlite` 实现异步操作      |
 | 缓存       | Redis 7                           | 存储房间实时状态，支持发布订阅（可用于广播）                          |
-| 任务队列   | 可选：Celery + Redis              | 用于异步爬取歌单、预下载音频（避免阻塞主线程）                        |
-| 音频缓存   | 后端本地文件 + Nginx（可选）      | 预下载的音频文件作为静态资源提供，减少对外部依赖                      |
-| 部署       | Docker + Docker Compose           | 容器化部署，包含 Redis、SQLite 数据卷、Nginx（前端）                  |
+| 任务队列   | 可选：Huey/flowrra + Redis              | 用于异步爬取歌单、预下载音频（避免阻塞主线程）                        |
+| 音频缓存   | 后端本地文件，后端自行维护一个cache路由      | 预下载的音频文件作为静态资源提供，减少对外部依赖                      |
+
 
 ## 5. 详细模块设计
 
@@ -72,10 +72,10 @@
 
 ### 5.3 歌曲管理模块
 
-- **歌单导入**：房主提供 QQ 音乐歌单 ID，后端异步爬取歌曲列表（名称、歌手、封面、播放链接等）。可使用 `requests` + 解析网页或调用第三方非官方 API（需注意合规性）。爬取结果存入 SQLite 的 `songs` 表，并与房间关联。
+- **歌单导入**：房主提供 QQ 音乐歌单 ID，后端异步爬取歌曲列表（名称、歌手、封面、播放链接等）。可使用 `aiohttp` + 解析网页或调用第三方非官方 API（需注意合规性）。爬取结果存入 SQLite 的 `songs` 表，并与房间关联。
 - **播放列表生成**：将歌曲列表洗牌（shuffle），生成随机顺序，存储于 Redis 房间信息中的 `song_queue` 列表。
 - **音频预下载**：游戏开始前，后端根据播放列表预下载下一首音频到本地缓存目录（如 `static/audio/`），并生成静态资源 URL。下载完成通过 WebSocket 通知前端预加载。
-- **缓存策略**：已下载的音频文件保留一段时间（如 7 天），通过文件名 MD5 或歌曲 ID 去重，避免重复下载。
+- **缓存策略**：已下载的音频文件保留一段时间（如 7 天，或设置永久保留），通过文件名 MD5 或歌曲 ID 去重，避免重复下载。
 
 ### 5.4 标签系统模块
 
@@ -87,7 +87,7 @@
 
 游戏房间内维护一个有限状态机，状态流转如下：
 
-1. **等待准备**：房主可调整歌单、标签组；玩家点击“准备”，状态存入 Redis。
+1. **等待准备**：房主可调整歌单、标签组；玩家点击“准备”，状态存入 Redis 缓存。
 2. **倒计时**：当所有玩家准备就绪（或房主强制开始），后端广播 3 秒倒计时事件，同时通知前端预加载音频。
 3. **播放中**：倒计时结束，后端广播 `play` 事件（含音频元数据、当前轮次索引、标签组信息）。前端开始播放。
 4. **抢答排队**：
@@ -288,6 +288,193 @@ CREATE TABLE player_answers (
     answer_order INTEGER,           -- 该轮抢答顺序
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+```
+
+以下是对应的orm模型
+
+```python
+# 文件: models.py
+from sqlalchemy import (
+    Column, Integer, String, Boolean, DateTime, Text, JSON, 
+    ForeignKey, UniqueConstraint, PrimaryKeyConstraint, func
+)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+
+Base = declarative_base()
+
+class User(Base):
+    """用户表 users"""
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String, nullable=False)
+    display_suffix = Column(String)  # 用于显示的唯一后缀
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系：一个用户可以是多个房间的主持人
+    hosted_rooms = relationship('Room', back_populates='host_user')
+
+
+class Song(Base):
+    """歌曲表 songs"""
+    __tablename__ = 'songs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String)                # 如 qqmusic
+    platform_song_id = Column(String)
+    title = Column(String)
+    artist = Column(String)
+    cover_url = Column(String)
+    audio_url = Column(String)                # 原始播放链接
+    cached_path = Column(String)              # 本地缓存路径
+    metadata_json = Column(JSON)              # 额外元数据（JSON）
+
+    __table_args__ = (
+        UniqueConstraint('platform', 'platform_song_id', name='uq_song_platform_id'),
+    )
+
+    # 关系：歌曲在多个房间中被使用
+    rooms = relationship('RoomSong', back_populates='song')
+
+
+class Room(Base):
+    """房间表 rooms"""
+    __tablename__ = 'rooms'
+
+    id = Column(String, primary_key=True)          # 房间ID，如 "ABC123"
+    host_user_id = Column(Integer, ForeignKey('users.id'))
+    playlist_id = Column(String)                    # QQ音乐歌单ID
+    tag_groups_json = Column(JSON)                  # 标签组配置的JSON序列化
+    status = Column(Integer, default=0)              # 0:等待中,1:游戏中,2:已结束
+    created_at = Column(DateTime, default=func.current_timestamp())
+    ended_at = Column(DateTime, nullable=True)
+
+    # 关系
+    host_user = relationship('User', back_populates='hosted_rooms')
+    room_songs = relationship('RoomSong', back_populates='room')
+    tag_groups = relationship('TagGroup', back_populates='room')
+    scores = relationship('Score', back_populates='room')
+    player_answers = relationship('PlayerAnswer', back_populates='room')
+    song_tag_history = relationship('SongTagHistory', back_populates='room')
+    song_description_history = relationship('SongDescriptionHistory', back_populates='room')
+
+
+class RoomSong(Base):
+    """房间歌曲关联表 room_songs"""
+    __tablename__ = 'room_songs'
+
+    room_id = Column(String, ForeignKey('rooms.id', ondelete='CASCADE'), primary_key=True)
+    song_id = Column(Integer, ForeignKey('songs.id'), primary_key=True)
+    song_order = Column(Integer)                    # 播放顺序
+
+    # 关系
+    room = relationship('Room', back_populates='room_songs')
+    song = relationship('Song', back_populates='rooms')
+
+
+class TagGroup(Base):
+    """标签组表 tag_groups"""
+    __tablename__ = 'tag_groups'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    room_id = Column(String, ForeignKey('rooms.id', ondelete='CASCADE'), nullable=True)  # 可为空，表示全局模板
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系
+    room = relationship('Room', back_populates='tag_groups')
+    tags = relationship('Tag', back_populates='group', cascade='all, delete-orphan')
+
+
+class Tag(Base):
+    """标签表 tags"""
+    __tablename__ = 'tags'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey('tag_groups.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('group_id', 'name', name='uq_tag_group_name'),
+    )
+
+    # 关系
+    group = relationship('TagGroup', back_populates='tags')
+    song_history = relationship('SongTagHistory', back_populates='tag')
+
+
+class SongTagHistory(Base):
+    """歌曲标签历史表 song_tag_history"""
+    __tablename__ = 'song_tag_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
+    tag_id = Column(Integer, ForeignKey('tags.id'), nullable=False)
+    judged_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系
+    song = relationship('Song')
+    tag = relationship('Tag', back_populates='song_history')
+    judged_by_user = relationship('User')
+    room = relationship('Room', back_populates='song_tag_history')
+
+
+class SongDescriptionHistory(Base):
+    """精准描述历史表 song_description_history"""
+    __tablename__ = 'song_description_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
+    description_text = Column(Text, nullable=False)
+    is_correct = Column(Boolean, default=True)      # 房主是否标记为正确
+    judged_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系
+    song = relationship('Song')
+    judged_by_user = relationship('User')
+    room = relationship('Room', back_populates='song_description_history')
+
+
+class Score(Base):
+    """积分记录表 scores"""
+    __tablename__ = 'scores'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    round_index = Column(Integer)
+    score_delta = Column(Integer)                     # 本轮得分变化
+    total_score = Column(Integer)                      # 累计得分（可冗余）
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系
+    room = relationship('Room', back_populates='scores')
+    user = relationship('User')
+
+
+class PlayerAnswer(Base):
+    """玩家答案记录表 player_answers（可选，用于审计和重放）"""
+    __tablename__ = 'player_answers'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
+    round_index = Column(Integer)
+    selected_tag_ids = Column(JSON)                   # JSON数组
+    description_text = Column(Text)
+    answer_order = Column(Integer)                     # 该轮抢答顺序
+    created_at = Column(DateTime, default=func.current_timestamp())
+
+    # 关系
+    room = relationship('Room', back_populates='player_answers')
+    user = relationship('User')
+    song = relationship('Song')
 ```
 
 ### 6.2 Redis 数据结构
