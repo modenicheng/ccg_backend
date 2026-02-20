@@ -1,131 +1,201 @@
-# CCG Backend 现有功能文档
+# CCG Backend
 
-本文档仅描述当前代码已经实现的功能与接口，不包含规划功能。
+本文档仅描述当前代码仓库**已经实现**的能力，不包含未来规划。
 
 ## 项目概览
 
-该服务基于 FastAPI 提供一个 WebSocket 入口，用于接收二进制帧并按事件类型分发处理。当前已实现心跳事件解析与日志输出，
-并提供音频帧与心跳帧的二进制编解码能力。
+`ccg_backend` 是一个基于 FastAPI 的实时后端，当前提供：
 
-## 运行与监听
+- WebSocket 二进制事件接入与分发
+- 心跳帧（PING/PONG）编解码与回包
+- 音频帧二进制编解码工具（供协议层使用）
+- 进程/系统内存定时监控能力
+- 前端静态资源托管与 SPA 回退路由
+- Rich + 文件滚动日志
 
-- 服务入口：`main.py`
-- 监听地址：`0.0.0.0:3200`
-- WebSocket 路径：`/ws/`
-- CORS：允许所有来源（`allow_origins=["*"]`）
+## 运行方式
 
-## WebSocket 接口
+### 环境要求
 
-### 连接与数据流
+- Python: `>=3.12`
+- 依赖见 `pyproject.toml`
 
-客户端连接 `/ws/` 后，服务端会接受连接并持续读取二进制数据帧：
+### 启动服务
 
-- 每次读取：`receive()`
-- 判断是不是二进制消息
-- 根据首字节解析事件类型：`get_event_type(data)` / 发送到 JSON 事件处理器
-- 分发给对应事件处理器：`handlers.handle(event, data)`
+服务入口：`main.py`
 
-### 事件类型
+`main.py` 直接运行时使用：
 
-事件类型定义在 `utils/enumerations.py`：
+- Host: `0.0.0.0`
+- Port: `8000`
+
+## HTTP / WebSocket 接口
+
+### `GET /`
+
+- 若存在前端构建产物 `../ccg_frontend/dist/index.html`，返回该页面。
+- 若不存在，返回后端状态 JSON。
+
+### `GET /{full_path:path}`（Catch-all）
+
+- 优先返回 `dist` 下对应静态文件。
+- 目录请求会尝试返回目录内 `index.html`。
+- 不存在时回退到根 `index.html`（用于前端路由）。
+- 包含路径越界防护（`resolve()` + 前缀校验）。
+
+### `WebSocket /ws/`
+
+连接后流程：
+
+1. 服务端 `accept()` 并加入 `ClientManager`
+2. 循环读取 `receive()` 消息
+3. 二进制消息按首字节解析 `EventType`
+4. 分发到 `handlers.handle(event, data, clients, websocket)`
+5. 断连后移除客户端
+
+> 当前文本消息分支仅保留占位（未实现 JSON 业务解析）。
+
+## 事件系统
+
+### 事件枚举（`utils/enumerations.py`）
 
 - `OMIT = 0`
 - `AUDIO_FRAME = 1`
 - `META_DATA = 2`
 - `HEARTBEAT = 3`
+- `TIME_SYNC = 4`
+- `MESSAGE = 255`（错误处理保留值）
 
-> 事件类型由帧首字节指定，必须与枚举值一致，否则会抛出 `ValueError` 或枚举转换错误。
+当前已注册处理器：
 
-## 数据帧协议
+- `HEARTBEAT`（见 `handlers/heartbeats.py`）
 
-### 公共约定
+未注册的事件会在分发层抛出 `ValueError`。
 
-所有帧均包含以下字段：
+## 二进制帧协议
 
-- 1 字节：事件类型（`EventType`）
-- 8 字节：时间戳（`uint64`，毫秒）
+实现位于 `utils/dataframe.py`。
 
-### 音频帧 `AudioFrame` **Deprecated** 已弃用
+### 公共字段
 
-实现位置：`utils/dataframe.py`
+所有帧以网络字节序（big-endian，`struct` 的 `!` 前缀）编码，均包含：
 
-二进制格式（网络字节序）：
+- 1 字节：事件类型
+- 8 字节：时间戳（毫秒，`uint64`）
 
-- 1 字节：事件类型（`EventType.AUDIO_FRAME`）
-- 8 字节：时间戳（`uint64`，毫秒）
-- 2 字节：采样率（`uint16`）
-- 4 字节：采样点数（`uint32`）
-- 1 字节：声道数（`uint8`）
-- 4 字节：音频数据长度（`uint32`）
-- 1 字节：编码类型（`AudioEncoding`）
-- N 字节：音频数据
+### 音频帧 `AudioFrame`
 
-编码类型定义在 `utils/enumerations.py`：
+格式：`!B Q H I B I B + N bytes`
+
+- 1 字节：`event_type`（`AUDIO_FRAME`）
+- 8 字节：`timestamp`
+- 2 字节：`sample_rate`（`uint16`）
+- 4 字节：`sample_num`（`uint32`）
+- 1 字节：`channels`（`uint8`）
+- 4 字节：`length`（`uint32`）
+- 1 字节：`encoding`（`AudioEncoding`）
+- N 字节：音频载荷
+
+编码枚举：
 
 - `UNKNOWN = 0`
 - `OPUS = 1`
 - `PCM = 2`
 
-相关能力：
+能力：
 
-- `AudioFrame.dump()`：序列化为二进制
-- `AudioFrame.load(data)`：从二进制反序列化
-- `AudioFrame.to_dict()`：返回可读的字典表示
-
-注意事项：
-
-- 采样率与采样点数应在 `uint32` 范围内
-- 若音频数据为空会记录警告日志
+- `dump()` / `bin`：序列化
+- `load(data)`：反序列化
+- `to_dict()`：可读字典
 
 ### 心跳帧 `HeartbeatFrame`
 
-实现位置：`utils/dataframe.py`
+格式：`!B B Q 8s Q Q Q Q`
 
-二进制格式（网络字节序）：
+- 1 字节：`event_type`（`HEARTBEAT`）
+- 1 字节：`heartbeat_type`（`PING` / `PONG`）
+- 8 字节：`timestamp`
+- 8 字节：`uid`（固定 8 字节字符串）
+- 8 字节：`t1`
+- 8 字节：`t2`
+- 8 字节：`t3`
+- 8 字节：`t4`
 
-- 1 字节：事件类型（`EventType.HEARTBEAT`）
-- 8 字节：时间戳（`uint64`，毫秒）
-- 16 字节：UID（随机字符串，用于标识心跳来源）
+心跳类型：
 
-相关能力：
+- `PING = 0`
+- `PONG = 1`
 
-- `HeartbeatFrame.dump()`：序列化为二进制
-- `HeartbeatFrame.load(data)`：从二进制反序列化
+处理逻辑（`handlers/heartbeats.py`）：
 
-## 事件处理
+- 收到 `PING`：记录服务端接收时刻 `t2`，构造 `PONG` 并回发
+- 收到 `PONG`：记录调试日志（用于后续时延/时钟分析）
 
-### 心跳事件
+## 客户端管理
 
-实现位置：`handlers/heartbeats.py`
+实现：`client_manager/__init__.py`
 
-处理逻辑：
+提供能力：
 
-- 使用 `HeartbeatFrame.load(data)` 解析心跳帧
-- 输出调试日志：`uid` 与 `timestamp`
+- 连接集合管理：`push/pop/clear/is_empty`
+- 单播：`send(client, bytes|dict)`
+- 广播：`broadcast(message, except_clients=...)`
+- 踢出连接：`kick(client, code, reason)`
+
+## 内存监控
+
+实现：`utils/memory_monitor.py`
+
+主要能力：
+
+- `MemoryMonitor` 异步监控器
+  - 可配置 `interval`、`report_threshold_mb`、`detailed_report`
+  - 支持 `start()` / `stop()`
+  - 支持 `monitor_context()` 异步上下文
+- `start_memory_monitoring(...)` 快捷启动
+- `periodic_memory_report(...)` 轻量定时报告
+
+在主服务中的行为：
+
+- `startup` 自动启动监控（30s 间隔，20MB 阈值，详细模式）
+- `shutdown` 自动停止监控
+
+详细说明见：`docs/memory_monitor_usage.md`
 
 ## 日志
 
-日志模块位于 `utils/logger.py`，提供以下能力：
+实现：`utils/logger.py`
 
-- Rich 控制台日志输出
-- 旋转文件日志（默认路径 `logs/app.log`）
-- `init_logging()` 初始化一次性配置
+- Rich 控制台输出
+- 旋转文件日志（默认 `logs/app.log`）
+- `init_logging()` 具备幂等初始化保护
 - `get_logger(name)` 获取命名日志器
 
-## 测试
+## 测试与示例
 
-当前包含音频帧编解码测试：`tests/test_audio_frame_encoding.py`
+### 自动化测试
 
-- 验证 `AudioFrame.dump()` 与 `AudioFrame.load()` 的一致性
-- 断言字段一致性并输出字典视图
+- `tests/test_audio_frame_encoding.py`
+  - 验证 `AudioFrame.dump()/load()` 一致性
 
-## 目录结构速览
+### 手动/示例脚本
 
-- `main.py`：FastAPI 服务入口与 WebSocket 路由
-- `handlers/`：事件处理器
-- `utils/`：数据帧、枚举与日志工具
+- `test_memory_monitor.py`：内存监控功能脚本化验证
+- `examples/memory_monitor_example.py`：集成示例
+
+## 目录结构（核心）
+
+- `main.py`：FastAPI 入口、WebSocket、静态资源路由、生命周期钩子
+- `handlers/`：事件处理器与注册机制
+- `client_manager/`：WebSocket 客户端集合管理
+- `utils/`：协议帧、枚举、日志、内存监控、错误定义
 - `tests/`：单元测试
-- `logs/`：运行时日志输出目录
+- `docs/`：功能文档
+
+## 当前边界与说明
+
+- 文档中提到的房间/歌单业务流程目前**尚未在本仓库实现**。
+- `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler。
 
 ## 局内流程设计
 
