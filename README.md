@@ -29,6 +29,38 @@
 - Host: `0.0.0.0`
 - Port: `8000`
 
+## 数据库迁移（Alembic）
+
+本项目已接入 Alembic，并与 `db.models.Base.metadata` 对齐。
+
+- 配置文件：`alembic.ini`
+- 迁移目录：`alembic/versions/`
+- 默认数据库 URL：读取 `.env` 中的 `DATABASE_URL`
+
+常用流程（推荐通过 uv 执行）：
+
+1. 生成迁移（基于当前 ORM 模型自动对比）
+   - `uv run alembic revision --autogenerate -m "your_message"`
+2. 应用到最新版本
+   - `uv run alembic upgrade head`
+3. 回滚一个版本
+   - `uv run alembic downgrade -1`
+
+说明：
+
+- SQLite 开发默认使用 `sqlite+aiosqlite:///data/game.db`
+- 预留 PostgreSQL：`postgresql+asyncpg://user:password@host:5432/dbname`
+
+详细说明（推荐先读）：`docs/database_migration_guide.md`
+
+日常最小流程（团队统一约定）：
+
+1. 修改 ORM 模型（`db/models.py`）
+2. 生成迁移：`uv run alembic revision --autogenerate -m "<简短说明>"`
+3. 人工检查迁移脚本（尤其是删除列/改类型）
+4. 本地执行：`uv run alembic upgrade head`
+5. 提交代码：模型 + 迁移脚本一起提交
+
 ## HTTP / WebSocket 接口
 
 ### `GET /`
@@ -82,31 +114,6 @@
 
 - 1 字节：事件类型
 - 8 字节：时间戳（毫秒，`uint64`）
-
-### 音频帧 `AudioFrame`
-
-格式：`!B Q H I B I B + N bytes`
-
-- 1 字节：`event_type`（`AUDIO_FRAME`）
-- 8 字节：`timestamp`
-- 2 字节：`sample_rate`（`uint16`）
-- 4 字节：`sample_num`（`uint32`）
-- 1 字节：`channels`（`uint8`）
-- 4 字节：`length`（`uint32`）
-- 1 字节：`encoding`（`AudioEncoding`）
-- N 字节：音频载荷
-
-编码枚举：
-
-- `UNKNOWN = 0`
-- `OPUS = 1`
-- `PCM = 2`
-
-能力：
-
-- `dump()` / `bin`：序列化
-- `load(data)`：反序列化
-- `to_dict()`：可读字典
 
 ### 心跳帧 `HeartbeatFrame`
 
