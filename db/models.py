@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, CheckConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -18,11 +18,12 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String, nullable=False)
-    display_suffix: Mapped[str | None] = mapped_column(String, nullable=True)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    room_id: Mapped[str | None] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), nullable=True)
+    is_owner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
-    hosted_rooms: Mapped[list[Room]] = relationship(back_populates="host_user")
+    room: Mapped[Room | None] = relationship(back_populates="users")
 
 
 class Song(Base):
@@ -53,14 +54,13 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    host_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     playlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
     tag_groups_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    host_user: Mapped[User | None] = relationship(back_populates="hosted_rooms")
+    users: Mapped[list[User]] = relationship(back_populates="room", cascade="all, delete-orphan")
     room_songs: Mapped[list[RoomSong]] = relationship(back_populates="room")
     tag_groups: Mapped[list[TagGroup]] = relationship(back_populates="room")
     scores: Mapped[list[Score]] = relationship(back_populates="room")
