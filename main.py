@@ -3,6 +3,7 @@ from email.policy import HTTP
 import logging
 import time
 from client_manager import ClientManager
+from redis.connection import redis_client
 from utils import get_event_type, get_logger, init_logging
 from utils.dataframe import AudioFrame, AudioEncoding
 from utils.enumerations import EventType
@@ -46,6 +47,16 @@ async def startup_event():
     """应用启动时的事件处理：启动测试音频播放任务和内存监控"""
     global memory_monitor
 
+    # 连接 Redis
+    try:
+        redis_connected = redis_client.connect()
+        if redis_connected:
+            logger.info("Redis connected successfully")
+        else:
+            logger.warning("Failed to connect to Redis, some features may be unavailable")
+    except Exception as e:
+        logger.error(f"Error connecting to Redis: {e}")
+
     # 启动内存监控
     try:
         memory_monitor = MemoryMonitor(
@@ -63,6 +74,15 @@ async def startup_event():
 async def shutdown_event():
     """应用关闭时的事件处理：停止内存监控"""
     global memory_monitor
+    
+    # 断开 Redis 连接
+    try:
+        redis_client.disconnect()
+        logger.info("Redis disconnected successfully")
+    except Exception as e:
+        logger.error(f"Failed to disconnect Redis: {e}")
+    
+    # 停止内存监控
     if memory_monitor:
         try:
             await memory_monitor.stop()
