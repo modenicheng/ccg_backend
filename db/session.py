@@ -26,8 +26,8 @@ def _normalize_database_url(raw_url: str | None) -> str:
     return url
 
 
-DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL"))
-DATABASE_ECHO = os.getenv("DATABASE_ECHO", "false").lower() in {"1", "true", "yes", "on"}
+DATABASE_URL = _normalize_database_url(os.getenv("CCG_DATABASE_URL"))
+DATABASE_ECHO = os.getenv("CCG_DATABASE_ECHO", "false").lower() in {"1", "true", "yes", "on"}
 
 engine = create_async_engine(
     DATABASE_URL,

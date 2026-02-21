@@ -1,6 +1,6 @@
 import logging
 from client_manager import ClientManager
-from redis.connection import redis_client
+from cache.connection import redis_client
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType
 from utils.memory_monitor import MemoryMonitor

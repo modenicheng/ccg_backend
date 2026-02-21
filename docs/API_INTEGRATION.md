@@ -1,5 +1,7 @@
 # QQ 音乐 API 集成文档
 
+**此文档适用于官方 API 它需要 tmd 审核**，所以我们可能需要转向三方接口。
+
 本文档整理了猜猜歌系统中需要用到的 QQ 音乐 API 调用方法，包括歌单信息获取和音频播放链接获取等核心功能。
 
 > 官方文档参考：[QQ音乐开发者平台](https://developer.y.qq.com/docs/openapi#/)
@@ -7,14 +9,17 @@
 ## 1. 获取歌单中歌曲列表
 
 ### 功能说明
+
 获取歌单中歌曲列表，接口不需要登录。
 
 注意：根据接口返回的 `song_type` 标识歌曲类型，非库内歌曲合作方直接置灰，不用请求歌曲详情。
 
 ### 命令字
+
 `fcg_music_custom_get_songlist_detail.fcg`
 
 ### 输入参数
+
 | 输入参数 | 含义 | 参数是否必传 |
 |---------|------|-------------|
 | dissid  | 操作的歌单id | 是 |
@@ -46,6 +51,7 @@
 | has_more | int | 是否有下一页 |
 
 ### 返回码说明
+
 | 返回码 | 说明 |
 |-------|------|
 | 0 | 成功 |
@@ -53,6 +59,7 @@
 | 100431 | 获取歌曲列表失败（歌单不存在） |
 
 ### 请求示例
+
 ```
 https://openrpc.music.qq.com/rpc_proxy/fcgi-bin/music_open_api.fcg?opi_cmd=fcg_music_custom_get_songlist_detail.fcg&app_id=xxxxxxxxxxx&timestamp=1555067641&sign=1ebf9d123a74446bb77a2ec2e9533c5f&dissid=xxx&page=1&page_size=10
 ```
@@ -60,12 +67,15 @@ https://openrpc.music.qq.com/rpc_proxy/fcgi-bin/music_open_api.fcg?opi_cmd=fcg_m
 ## 2. 批量获取歌曲信息
 
 ### 功能说明
+
 获取歌曲详情信息,包含歌曲的基本信息、播放地址等。
 
 ### 命令字
+
 `fcg_music_custom_get_song_info_batch.fcg`
 
 ### 输入参数
+
 | 输入参数 | 参数是否必传 | 含义 |
 |---------|-------------|------|
 | song_mid | 否 | 表示歌曲mid，多个mid用逗号分割（优先判断）上限50 |
@@ -101,12 +111,14 @@ https://openrpc.music.qq.com/rpc_proxy/fcgi-bin/music_open_api.fcg?opi_cmd=fcg_m
 | vkeyLeftSec | int | 播放链接剩余时长，单位秒 |
 
 ### 返回码说明
+
 | 返回码 | 说明 |
 |-------|------|
 | 0 | 成功 |
 | 100001 | 获取歌曲信息失败 |
 
 ### 请求示例
+
 ```
 https://openrpc.music.qq.com/rpc_proxy/fcgi-bin/music_open_api.fcg?opi_cmd=fcg_music_custom_get_song_info_batch.fcg&app_id=***&app_key=xxxxxxxxxxx&timestamp=1532921851&sign=xxxxxxxxxxx&song_mid=xxxx,xxxx
 ```
