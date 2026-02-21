@@ -12,6 +12,7 @@
 - 进程/系统内存定时监控能力
 - 前端静态资源托管与 SPA 回退路由
 - Rich + 文件滚动日志
+- Redis 缓存集成（房间状态管理、会话管理）
 
 ## 运行方式
 
@@ -19,6 +20,7 @@
 
 - Python: `>=3.12`
 - 依赖见 `pyproject.toml`
+- Redis: `>=7.0` (可选，用于房间状态管理和会话管理)
 
 ### 启动服务
 
@@ -60,6 +62,52 @@
 3. 人工检查迁移脚本（尤其是删除列/改类型）
 4. 本地执行：`uv run alembic upgrade head`
 5. 提交代码：模型 + 迁移脚本一起提交
+
+## Redis 缓存集成
+
+本项目已集成 Redis 缓存，用于房间状态管理和会话管理。
+
+### 配置方式
+
+- 默认 Redis URL：`redis://localhost:6379/0`
+- 可通过环境变量 `REDIS_URL` 自定义配置
+
+### 核心功能
+
+- **房间状态管理**：存储房间基本信息、玩家列表、准备状态、歌曲队列等
+- **会话管理**：存储用户令牌与房间/玩家的映射关系
+- **抢答队列**：管理玩家抢答顺序
+- **过期时间**：房间数据默认 6 小时过期，会话数据默认 24 小时过期
+
+### 目录结构
+
+- `redis/connection.py`：Redis 连接管理
+- `redis/utils.py`：Redis 操作工具类（房间管理、会话管理）
+
+### 使用方式
+
+```python
+from redis.connection import get_redis
+from redis.utils import room_manager, session_manager
+
+# 获取 Redis 客户端
+redis_client = get_redis()
+
+# 房间管理
+room_manager.create_room(room_id, host_player_id)
+room_manager.add_player(room_id, player_id)
+room_manager.set_player_ready(room_id, player_id, True)
+
+# 会话管理
+session_manager.create_session(token, room_id, player_id)
+session_data = session_manager.get_session(token)
+```
+
+### 注意事项
+
+- Redis 为可选依赖，若未连接 Redis，部分实时功能可能不可用
+- 生产环境建议使用稳定的 Redis 服务
+- 开发环境可使用本地 Redis 或 Docker 容器运行 Redis
 
 ## HTTP / WebSocket 接口
 
