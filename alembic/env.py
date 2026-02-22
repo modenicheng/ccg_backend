@@ -49,7 +49,7 @@ def _normalize_database_url(raw_url: str | None) -> str:
 
 
 _load_env_file()
-database_url = _normalize_database_url(os.getenv("DATABASE_URL"))
+database_url = _normalize_database_url(os.getenv("CCG_DATABASE_URL"))
 config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata

@@ -1,16 +1,16 @@
 import os
-import redis
-from typing import Optional
+import redis.asyncio as redis
+from typing import Any, Optional
 
 
 class RedisClient:
     """Redis 客户端管理类"""
 
     def __init__(self):
-        self.client: Optional[redis.Redis] = None
+        self.client: Optional[Any] = None
         self.connected = False
 
-    def connect(self, url: Optional[str] = None) -> bool:
+    async def connect(self, url: Optional[str] = None) -> bool:
         """连接到 Redis
         
         Args:
@@ -24,7 +24,7 @@ class RedisClient:
                                          "redis://localhost:6379/0")
             self.client = redis.from_url(redis_url, decode_responses=True)
             # 测试连接
-            self.client.ping()
+            await self.client.ping()
             self.connected = True
             return True
         except Exception as e:
@@ -32,25 +32,25 @@ class RedisClient:
             self.connected = False
             return False
 
-    def disconnect(self):
+    async def disconnect(self):
         """断开 Redis 连接"""
         if self.client:
             try:
-                self.client.close()
+                await self.client.aclose()
             except Exception as e:
                 print(f"Error closing Redis connection: {e}")
             finally:
                 self.client = None
                 self.connected = False
 
-    def get_client(self) -> Optional[redis.Redis]:
+    async def get_client(self) -> Optional[Any]:
         """获取 Redis 客户端实例
         
         Returns:
             Optional[redis.Redis]: Redis 客户端实例
         """
         if not self.connected:
-            self.connect()
+            await self.connect()
         return self.client
 
     def is_connected(self) -> bool:
@@ -66,10 +66,10 @@ class RedisClient:
 redis_client = RedisClient()
 
 
-def get_redis() -> Optional[redis.Redis]:
+async def get_redis() -> Optional[Any]:
     """获取 Redis 客户端的快捷函数
     
     Returns:
         Optional[redis.Redis]: Redis 客户端实例
     """
-    return redis_client.get_client()
+    return await redis_client.get_client()

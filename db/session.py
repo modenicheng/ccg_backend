@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 from typing import AsyncIterator
@@ -9,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from .models import Base
 
+import dotenv
+
+dotenv.load_dotenv()
 
 def _normalize_database_url(raw_url: str | None) -> str:
     """Normalize database URL and provide a SQLite default for local dev."""
@@ -66,9 +70,30 @@ async def drop_db() -> None:
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: provide an async database session."""
+    """FastAPI dependency with a unified transaction boundary.
+
+    - commit on successful request handling
+    - rollback on error
+    """
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncIterator[AsyncSession]:
+    """Reusable transaction scope for non-FastAPI flows (tasks/scripts/services)."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def ping_db() -> bool:

@@ -26,6 +26,37 @@ class User(Base):
     room: Mapped[Room | None] = relationship(back_populates="users")
 
 
+class Songlist(Base):
+    """歌单表 songlists"""
+
+    __tablename__ = "songlists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str | None] = mapped_column(String, nullable=True)
+    platform_songlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    creator_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("platform", "platform_songlist_id", name="uq_songlist_platform_id"),
+    )
+
+    songs: Mapped[list[SonglistSong]] = relationship(back_populates="songlist", cascade="all, delete-orphan")
+
+class SonglistSong(Base):
+    """歌单歌曲关联表 songlist_songs"""
+
+    __tablename__ = "songlist_songs"
+
+    songlist_id: Mapped[int] = mapped_column(ForeignKey("songlists.id", ondelete="CASCADE"), primary_key=True)
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id"), primary_key=True)
+    song_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    songlist: Mapped[Songlist] = relationship(back_populates="songs")
+    song: Mapped[Song] = relationship(back_populates="songlists")
+
 class Song(Base):
     """歌曲表 songs"""
 
@@ -35,10 +66,12 @@ class Song(Base):
     platform: Mapped[str | None] = mapped_column(String, nullable=True)
     platform_song_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    subtitle: Mapped[str | None] = mapped_column(String, nullable=True)
     artist: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
     audio_url: Mapped[str | None] = mapped_column(String, nullable=True)
     cached_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    album_name: Mapped[str | None] = mapped_column(String, nullable=True)
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (
@@ -46,6 +79,7 @@ class Song(Base):
     )
 
     rooms: Mapped[list[RoomSong]] = relationship(back_populates="song")
+    songlists: Mapped[list[SonglistSong]] = relationship(back_populates="song")
 
 
 class Room(Base):

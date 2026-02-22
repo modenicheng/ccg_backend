@@ -2,6 +2,10 @@
 
 本文档仅描述当前代码仓库**已经实现**的能力，不包含未来规划。
 
+## qqmusic
+
+`9561851623` 是可用于测试的 QQ 音乐的歌单 ID
+
 ## 项目概览
 
 `ccg_backend` 是一个基于 FastAPI 的实时后端，当前提供：
@@ -49,7 +53,7 @@ uv run uvicorn main:app --reload --port 8000
 
 - 配置文件：`alembic.ini`
 - 迁移目录：`alembic/versions/`
-- 默认数据库 URL：读取 `.env` 中的 `DATABASE_URL`
+- 默认数据库 URL：读取 `.env` 中的 `CCG_DATABASE_URL`
 
 常用流程（推荐通过 uv 执行）：
 
@@ -82,7 +86,34 @@ uv run uvicorn main:app --reload --port 8000
 ### 配置方式
 
 - 默认 Redis URL：`redis://localhost:6379/0`
-- 可通过环境变量 `REDIS_URL` 自定义配置
+- 可通过环境变量 `CCG_REDIS_URL` 自定义配置
+
+此外，`mq/tasks.py` 使用以下环境变量：
+
+- `CCG_QQ_MUSIC_COOKIE`：QQ 音乐 Cookie 字符串（用于需要登录态的请求）
+- `CCG_SONGLIST_FETCH_CONCURRENCY`：分页抓取并发上限（默认 `8`）
+- `CCG_SONGLIST_FETCH_RETRIES`：单页抓取重试次数（默认 `5`）
+- `CCG_SONGLIST_FETCH_BACKOFF_SECONDS`：重试退避基数秒数（默认 `0.4`）
+- `CCG_AUDIO_DOWNLOAD_RETRIES`：音频下载重试次数（默认 `3`）
+- `CCG_AUDIO_DOWNLOAD_BACKOFF_SECONDS`：音频下载重试退避基数秒数（默认 `0.4`）
+- `CCG_AUDIO_DOWNLOAD_DIR`：音频默认下载目录（默认 `assets/audio`，未显式传 `save_path` 时保存为 `assets/audio/<mid>.<ext>`）
+- `CCG_SONG_URL_RETRIES`：歌曲 URL 获取重试次数（默认 `3`）
+- `CCG_SONG_URL_BACKOFF_SECONDS`：歌曲 URL 获取重试退避基数秒数（默认 `0.4`）
+
+端到端链路文档（歌单 ID → 入库 → 首曲缓存）：`docs/songlist_cache_flow.md`
+
+#### 如何获取 `CCG_QQ_MUSIC_COOKIE`
+
+1. 在浏览器登录 QQ 音乐网页版（建议使用与日常账号一致的浏览器配置文件）。
+2. 打开开发者工具（F12）→ `Network`。
+3. 刷新页面后，点开任意发往 `y.qq.com` / `u.y.qq.com` 的请求。
+4. 在请求头中找到 `Cookie`，复制完整字符串。
+5. 粘贴到 `.env` 的 `CCG_QQ_MUSIC_COOKIE=` 后面（不要加额外引号）。
+
+建议：
+
+- 该值属于敏感凭据，请勿提交到 Git 仓库。
+- Cookie 失效后需要重新获取并更新。
 
 ### 核心功能
 
@@ -258,6 +289,7 @@ session_data = session_manager.get_session(token)
 - `utils/`：协议帧、枚举、日志、内存监控、错误定义
 - `tests/`：单元测试
 - `docs/`：功能文档
+   - `docs/songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
 
 ## 当前边界与说明
 

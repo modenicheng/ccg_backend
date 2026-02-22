@@ -39,7 +39,7 @@ async def startup_event():
 
     # 连接 Redis
     try:
-        redis_connected = redis_client.connect()
+        redis_connected = await redis_client.connect()
         if redis_connected:
             logger.info("Redis connected successfully")
         else:
@@ -67,7 +67,7 @@ async def shutdown_event():
     
     # 断开 Redis 连接
     try:
-        redis_client.disconnect()
+        await redis_client.disconnect()
         logger.info("Redis disconnected successfully")
     except Exception as e:
         logger.error(f"Failed to disconnect Redis: {e}")

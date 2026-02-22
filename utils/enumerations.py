@@ -19,3 +19,7 @@ class AudioEncoding(Enum):
 class HeartbeatType(Enum):
     PING = 0
     PONG = 1
+
+class MusicPlatform(Enum):
+    QQ = "qq"
+    NETEASE = "netease"
