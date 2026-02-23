@@ -154,6 +154,20 @@ session_data = session_manager.get_session(token)
 
 ## HTTP / WebSocket 接口
 
+### `POST /api/room/`
+
+- 创建房间。
+- 返回：`roomId`、`playerId`、`token`。
+
+### `GET /api/room/{roomid}`
+
+- 获取房间信息（房主、状态、玩家列表、歌单队列、标签配置等）。
+
+### `PATCH /api/room/{roomid}`
+
+- 更新房间设置。
+- 当前支持：`songQueue`、`title`、`description`、`tagGroups`。
+
 ### `GET /`
 
 - 若存在前端构建产物 `../ccg_frontend/dist/index.html`，返回该页面。
@@ -166,15 +180,17 @@ session_data = session_manager.get_session(token)
 - 不存在时回退到根 `index.html`（用于前端路由）。
 - 包含路径越界防护（`resolve()` + 前缀校验）。
 
-### `WebSocket /ws/`
+### `WebSocket /ws/{roomid}`
 
 连接后流程：
 
-1. 服务端 `accept()` 并加入 `ClientManager`
-2. 循环读取 `receive()` 消息
-3. 二进制消息按首字节解析 `EventType`
-4. 分发到 `handlers.handle(event, data, clients, websocket)`
-5. 断连后移除客户端
+1. 服务端 `accept()` 并校验房间是否存在
+2. 可选校验 `token`（存在时要求与 `roomid` 匹配）
+3. 加入对应房间的 `ClientManager`
+4. 循环读取 `receive()` 消息
+5. 二进制消息按首字节解析 `EventType`
+6. 分发到 `handlers.handle(event, data, clients, websocket, room_id)`
+7. 断连后从对应房间移除客户端
 
 > 当前文本消息分支仅保留占位（未实现 JSON 业务解析）。
 
@@ -235,10 +251,10 @@ session_data = session_manager.get_session(token)
 
 提供能力：
 
-- 连接集合管理：`push/pop/clear/is_empty`
+- 按房间连接集合管理：`push(room_id, client)` / `pop(room_id, client)`
 - 单播：`send(client, bytes|dict)`
-- 广播：`broadcast(message, except_clients=...)`
-- 踢出连接：`kick(client, code, reason)`
+- 房间广播：`broadcast(room_id, message, except_clients=...)`
+- 踢出连接：`kick(room_id, client, code, reason)`
 
 ## 内存监控
 

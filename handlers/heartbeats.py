@@ -10,8 +10,9 @@ logger = get_logger(__name__)
 
 @regist(enumerations.EventType.HEARTBEAT)
 async def handle_heartbeat(data: bytes,
-                           clients: set[WebSocket] | None = None,
-                           websocket: WebSocket | None = None):
+                           clients=None,
+                           websocket: WebSocket | None = None,
+                           room_id: str | None = None):
     server_recv_ts = int(datetime.now().timestamp() * 1000)
     frame = HeartbeatFrame.load(data)
     logger.debug(
