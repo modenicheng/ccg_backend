@@ -1,13 +1,19 @@
 import logging
+import json
+import secrets
+import string
+from uuid import uuid4
 from client_manager import ClientManager
 from cache.connection import redis_client
+from cache.utils import RedisKeys, room_manager, session_manager
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType
 from utils.memory_monitor import MemoryMonitor
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from handlers import handle
+from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse
 from pathlib import Path
 
 init_logging(level=logging.DEBUG)
@@ -21,6 +27,7 @@ app.add_middleware(
 
 clients = ClientManager()
 memory_monitor = None  # 内存监控器实例
+room_router = APIRouter(prefix="/api/room", tags=["room"])
 
 # 前端静态文件目录配置
 STATIC_DIR = Path(__file__).parent.parent / "ccg_frontend" / "dist"
@@ -30,6 +37,110 @@ if STATIC_DIR.exists():
     logger.info(f"Frontend dist directory found: {STATIC_DIR}")
 else:
     logger.warning(f"Frontend dist directory not found: {STATIC_DIR}")
+
+
+def generate_room_id(length: int = 6) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(chars) for _ in range(length))
+
+
+async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
+    redis = await redis_client.get_client()
+    if not redis:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    room_key = RedisKeys.room(roomid)
+    room_data = await redis.hgetall(room_key)
+    if not room_data:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    players = sorted(list(await room_manager.get_room_players(roomid)))
+    song_queue = await room_manager.get_song_queue(roomid)
+
+    tag_groups_raw = room_data.get("tag_groups", "{}")
+    try:
+        tag_groups = json.loads(tag_groups_raw) if tag_groups_raw else {}
+    except json.JSONDecodeError:
+        tag_groups = {}
+
+    play_progress = int(room_data.get("play_progress", 0) or 0)
+
+    return RoomInfoResponse(
+        roomId=roomid,
+        hostPlayerId=room_data.get("host_player_id", ""),
+        status=room_data.get("status", "waiting"),
+        title=room_data.get("title"),
+        description=room_data.get("description"),
+        players=players,
+        songQueue=song_queue,
+        tagGroups=tag_groups,
+        playProgress=play_progress,
+    )
+
+
+@room_router.post("/", response_model=CreateRoomResponse)
+async def create_room() -> CreateRoomResponse:
+    redis = await redis_client.get_client()
+    if not redis:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    for _ in range(10):
+        room_id = generate_room_id()
+        room_key = RedisKeys.room(room_id)
+        exists = await redis.exists(room_key)
+        if exists:
+            continue
+
+        player_id = uuid4().hex[:12]
+        token = secrets.token_urlsafe(24)
+
+        created = await room_manager.create_room(room_id, player_id)
+        if not created:
+            continue
+
+        await session_manager.create_session(token, room_id, player_id)
+        return CreateRoomResponse(roomId=room_id, playerId=player_id, token=token)
+
+    raise HTTPException(status_code=500, detail="Failed to create room")
+
+
+@room_router.get("/{roomid}", response_model=RoomInfoResponse)
+async def room_info(roomid: str) -> RoomInfoResponse:
+    return await get_room_info_payload(roomid)
+
+
+@room_router.patch("/{roomid}", response_model=RoomInfoResponse)
+async def room_setting(roomid: str, payload: PatchRoomRequest) -> RoomInfoResponse:
+    redis = await redis_client.get_client()
+    if not redis:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    room_key = RedisKeys.room(roomid)
+    room_data = await redis.hgetall(room_key)
+    if not room_data:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    updates: dict[str, str | int] = {}
+
+    if payload.songQueue is not None:
+        await room_manager.set_song_queue(roomid, payload.songQueue)
+
+    if payload.title is not None:
+        updates["title"] = payload.title
+
+    if payload.description is not None:
+        updates["description"] = payload.description
+
+    if payload.tagGroups is not None:
+        updates["tag_groups"] = json.dumps(payload.tagGroups, ensure_ascii=False)
+
+    if updates:
+        await redis.hset(room_key, mapping=updates)
+
+    return await get_room_info_payload(roomid)
+
+
+app.include_router(room_router)
 
 
 @app.on_event("startup")
@@ -94,7 +205,10 @@ async def root():
         "note": "Frontend not found. Please build frontend first.",
         "static_dir": str(STATIC_DIR),
         "endpoints": {
-            "websocket": "/ws/",
+            "websocket": "/ws/{roomid}",
+            "create_room": "/api/room/",
+            "room_info": "/api/room/{roomid}",
+            "room_setting": "/api/room/{roomid}",
             "memory_status": "/memory",
             "memory_report": "/memory/report",
             "health": "/health"
@@ -102,13 +216,34 @@ async def root():
     }
 
 
-@app.websocket("/ws/")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/{roomid}")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    roomid: str,
+    token: str | None = Query(default=None),
+):
 
     global clients
     await websocket.accept()
+
+    redis = await redis_client.get_client()
+    if not redis:
+        await websocket.close(code=1013, reason="Service unavailable")
+        return
+
+    room_exists = await redis.exists(RedisKeys.room(roomid))
+    if not room_exists:
+        await websocket.close(code=1008, reason="Room not found")
+        return
+
+    if token:
+        session = await session_manager.get_session(token)
+        if not session or session.get("room_id") != roomid:
+            await websocket.close(code=1008, reason="Invalid room session")
+            return
+
     logger.info("WebSocket connected: %s", websocket.client)
-    clients.push(websocket)
+    clients.push(roomid, websocket)
     # asyncio.create_task(heartbeat_init(websocket))
     try:
         while True:
@@ -121,7 +256,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 event: EventType = get_event_type(data)
                 logger.debug("Received event: %s", event.name)
                 try:
-                    await handle(event, data, clients, websocket)
+                    await handle(event,
+                                 data,
+                                 clients=clients,
+                                 websocket=websocket,
+                                 room_id=roomid)
                 except Exception as e:
                     logger.warning(
                         f"Failed to handle event: {event.name}, error: {e}")
@@ -137,7 +276,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except (WebSocketDisconnect, RuntimeError) as e:
         logger.info("WebSocket disconnected: %s", websocket.client)
     finally:
-        clients.pop(websocket)
+        clients.pop(roomid, websocket)
         logger.info("WebSocket removed from clients: %s", websocket.client)
 
 

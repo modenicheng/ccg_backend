@@ -20,6 +20,11 @@ from .task import (
     TaskDownloadRequest,
     TaskDownloadResponse,
 )
+from .room import (
+    CreateRoomResponse,
+    RoomInfoResponse,
+    PatchRoomRequest,
+)
 
 __all__ = [
     # Songlist schemas
@@ -32,4 +37,8 @@ __all__ = [
     # Task schemas
     "TaskDownloadRequest",
     "TaskDownloadResponse",
+    # Room schemas
+    "CreateRoomResponse",
+    "RoomInfoResponse",
+    "PatchRoomRequest",
 ]
