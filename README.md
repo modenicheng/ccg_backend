@@ -289,7 +289,7 @@ session_data = session_manager.get_session(token)
 - `utils/`：协议帧、枚举、日志、内存监控、错误定义
 - `tests/`：单元测试
 - `docs/`：功能文档
-   - `docs/songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
+  - `docs/songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
 
 ## 当前边界与说明
 

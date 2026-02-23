@@ -173,7 +173,6 @@ async def _get_song_url(
     filetype: qapi.song.SongFileType = qapi.song.SongFileType.OGG_320
 ) -> str | None:
     try:
-
         async def _fetch_song_urls() -> dict[str, Any]:
             return await qapi.song.get_song_urls(
                 [mid],
