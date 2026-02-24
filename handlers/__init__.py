@@ -24,13 +24,15 @@ async def handle(event: EventType,
                  data: bytes,
                  clients=None,
                  websocket=None,
-                 room_id: str | None = None):
+                 room_id: str | None = None,
+                 player_id: str | None = None):
     logger.debug("Current handlers: %s", list(_handlers.keys()))
     if event.name in _handlers:
         result = _handlers[event.name](data,
                                        clients=clients,
                                        websocket=websocket,
-                                       room_id=room_id)
+                                       room_id=room_id,
+                                       player_id=player_id)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -43,14 +45,16 @@ async def handle_json(event: EventType,
                       data: dict | str,
                       clients=None,
                       websocket=None,
-                      room_id: str | None = None):
+                      room_id: str | None = None,
+                      player_id: str | None = None):
 
     logger.debug("Handling JSON event: %s with data: %s", event.name, data)
     if event.name in _handlers:
         result = _handlers[event.name](data,
                                        clients=clients,
                                        websocket=websocket,
-                                       room_id=room_id)
+                                       room_id=room_id,
+                                       player_id=player_id)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -61,3 +65,4 @@ async def handle_json(event: EventType,
 
 # Import handler modules to trigger decorator registration.
 from . import heartbeats  # noqa: E402,F401
+from . import game_sync  # noqa: E402,F401

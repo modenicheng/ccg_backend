@@ -7,6 +7,35 @@ class EventType(Enum):
     META_DATA = 2
     HEARTBEAT = 3
     TIME_SYNC = 4
+
+    # 1x room events
+    ROOM_CREATE = 10
+    ROOM_JOIN = 11
+    ROOM_STATE = 12
+    GAME_OVER = 13
+
+    # 2x audio events
+    LOAD = 20
+    PLAY = 21
+    PAUSE = 22
+    SEEK = 23
+
+    # 3x player events
+    PLAYER_READY = 30
+    GAME_START = 31
+    COUNTDOWN = 32
+    ATTEMPT_ANSWER = 33
+    YOUR_TURN = 34
+    SUBMIT_ANSWER = 35
+    ANSWER_BROADCAST = 36
+    ANSWER_QUEUE = 37
+    ROUND_END = 38
+
+    # 4x admin events
+    JUDGING = 40
+    JUDGE_SUBMIT = 41
+    SCORE_UPDATE = 42
+
     MESSAGE = 255  # for error handling
 
 

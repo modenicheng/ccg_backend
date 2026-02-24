@@ -16,11 +16,18 @@ class User(Base):
     """用户表 users"""
 
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("player_id", name="uq_users_player_id"),
+        UniqueConstraint("room_id", "username", name="uq_users_room_username"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    player_id: Mapped[str] = mapped_column(String, nullable=False)
+    username: Mapped[str] = mapped_column(String, nullable=False)
     room_id: Mapped[str | None] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), nullable=True)
     is_owner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
 
     room: Mapped[Room | None] = relationship(back_populates="users")
@@ -90,9 +97,14 @@ class Room(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     playlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
     tag_groups_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="waiting", nullable=False)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rounds_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    final_scores_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     users: Mapped[list[User]] = relationship(back_populates="room", cascade="all, delete-orphan")
     room_songs: Mapped[list[RoomSong]] = relationship(back_populates="room")

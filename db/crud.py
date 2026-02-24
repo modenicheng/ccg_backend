@@ -308,3 +308,205 @@ async def update_song_cached_path(session: AsyncSession,
     existing.cached_path = cached_path
     await session.flush()
     return existing
+
+
+# ===================== 房间持久化相关 CRUD 操作 =====================
+
+async def create_room_in_db(session: AsyncSession, room_id: str, title: Optional[str] = None, 
+                           description: Optional[str] = None) -> Optional[models.Room]:
+    """创建房间记录到数据库
+    
+    Args:
+        session: 数据库会话
+        room_id: 房间 ID
+        title: 房间标题
+        description: 房间描述
+        
+    Returns:
+        创建的 Room 对象，或 None 如果失败
+    """
+    try:
+        from datetime import datetime
+        
+        # 检查房间是否已存在
+        existing = await session.get(models.Room, room_id)
+        if existing:
+            l.warning(f"Room {room_id} already exists in database")
+            return existing
+        
+        room = models.Room(
+            id=room_id,
+            title=title or "New Room",
+            description=description or "",
+            status="waiting",
+            created_at=datetime.now()
+        )
+        session.add(room)
+        await session.flush()
+        return room
+    except Exception as e:
+        l.error(f"Error creating room in database: {e}")
+        return None
+
+
+async def add_user_to_room(session: AsyncSession, room_id: str, player_id: str, username: str, 
+                          is_owner: bool = False) -> Optional[models.User]:
+    """将用户添加到房间
+    
+    Args:
+        session: 数据库会话
+        room_id: 房间 ID
+        player_id: 玩家 ID（系统唯一）
+        username: 显示用户名（房间内唯一）
+        is_owner: 是否是房主
+        
+    Returns:
+        创建的 User 对象，或 None 如果失败
+    """
+    try:
+        # 优先按 player_id 查找（稳定身份键）
+        query = select(models.User).where(models.User.player_id == player_id)
+        res = await session.execute(query)
+        existing_user = res.scalars().first()
+        
+        if existing_user:
+            existing_user.room_id = room_id
+            existing_user.username = username
+            existing_user.is_owner = is_owner
+            await session.flush()
+            return existing_user
+
+        # 房间内用户名唯一
+        same_name_query = select(models.User).where(
+            and_(models.User.room_id == room_id, models.User.username == username)
+        )
+        same_name_res = await session.execute(same_name_query)
+        if same_name_res.scalars().first():
+            l.warning(f"Duplicate username in room: room_id={room_id}, username={username}")
+            return None
+        
+        # 创建新用户
+        user = models.User(
+            player_id=player_id,
+            username=username,
+            room_id=room_id,
+            is_owner=is_owner
+        )
+        session.add(user)
+        await session.flush()
+        return user
+    except Exception as e:
+        l.error(f"Error adding user to room: {e}")
+        return None
+
+
+async def update_room_status(session: AsyncSession, room_id: str, status: str) -> bool:
+    """更新房间状态
+    
+    Args:
+        session: 数据库会话
+        room_id: 房间 ID
+        status: 新状态 ("waiting", "playing", "ended")
+        
+    Returns:
+        是否更新成功
+    """
+    try:
+        room = await session.get(models.Room, room_id)
+        if not room:
+            l.warning(f"Room {room_id} not found")
+            return False
+        
+        room.status = status
+        if status == "playing" and not room.started_at:
+            from datetime import datetime
+            room.started_at = datetime.now()
+        elif status == "ended" and not room.ended_at:
+            from datetime import datetime
+            room.ended_at = datetime.now()
+        
+        await session.flush()
+        return True
+    except Exception as e:
+        l.error(f"Error updating room status: {e}")
+        return False
+
+
+async def update_room_scores(session: AsyncSession, room_id: str, 
+                            final_scores: dict[str, Any]) -> bool:
+    """更新房间的最终积分
+    
+    Args:
+        session: 数据库会话
+        room_id: 房间 ID
+        final_scores: 最终积分字典
+        
+    Returns:
+        是否更新成功
+    """
+    try:
+        room = await session.get(models.Room, room_id)
+        if not room:
+            l.warning(f"Room {room_id} not found")
+            return False
+        
+        room.final_scores_json = final_scores
+        await session.flush()
+        return True
+    except Exception as e:
+        l.error(f"Error updating room scores: {e}")
+        return False
+
+
+async def update_room_rounds_data(session: AsyncSession, room_id: str, 
+                                 rounds_data: dict[str, Any]) -> bool:
+    """更新房间的轮次数据
+    
+    Args:
+        session: 数据库会话
+        room_id: 房间 ID
+        rounds_data: 轮次数据
+        
+    Returns:
+        是否更新成功
+    """
+    try:
+        room = await session.get(models.Room, room_id)
+        if not room:
+            l.warning(f"Room {room_id} not found")
+            return False
+        
+        room.rounds_data = rounds_data
+        await session.flush()
+        return True
+    except Exception as e:
+        l.error(f"Error updating room rounds data: {e}")
+        return False
+
+
+async def mark_user_left_room(session: AsyncSession, user_id: int) -> bool:
+    """标记用户离开房间
+    
+    Args:
+        session: 数据库会话
+        user_id: 用户 ID
+        
+    Returns:
+        是否更新成功
+    """
+    try:
+        from datetime import datetime
+        
+        user = await session.get(models.User, user_id)
+        if not user:
+            l.warning(f"User {user_id} not found")
+            return False
+        
+        user.left_at = datetime.now()
+        user.room_id = None
+        await session.flush()
+        return True
+    except Exception as e:
+        l.error(f"Error marking user left room: {e}")
+        return False
+

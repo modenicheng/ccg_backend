@@ -1,20 +1,26 @@
 import logging
 import json
+import time
 import secrets
 import string
 from uuid import uuid4
 from client_manager import ClientManager
 from cache.connection import redis_client
 from cache.utils import RedisKeys, room_manager, session_manager
+from db.session import get_db_session
+from db import crud
+from db.cache_sync import CacheSyncManager
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType
 from utils.memory_monitor import MemoryMonitor
-from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from handlers import handle
-from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse
+from handlers import handle, handle_json
+from handlers.game_sync import send_room_state
+from schemas import CreateRoomRequest, CreateRoomResponse, PatchRoomRequest, RoomInfoResponse
 from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncSession
 
 init_logging(level=logging.DEBUG)
 logger = get_logger(__name__)
@@ -44,6 +50,27 @@ def generate_room_id(length: int = 6) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
+async def _periodic_cleanup_task():
+    """
+    定期清理任务：检查并同步即将过期的房间
+    每 30 分钟运行一次
+    """
+    import asyncio
+    
+    while True:
+        try:
+            await asyncio.sleep(30 * 60)  # 每 30 分钟运行一次
+            cleaned = await CacheSyncManager.cleanup_expired_rooms()
+            if cleaned > 0:
+                logger.info(f"Periodic cleanup: synced {cleaned} rooms")
+        except asyncio.CancelledError:
+            logger.info("Periodic cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup task: {e}")
+            # 继续运行，不要因为错误就停止定时任务
+
+
 async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
     redis = await redis_client.get_client()
     if not redis:
@@ -51,8 +78,18 @@ async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
 
     room_key = RedisKeys.room(roomid)
     room_data = await redis.hgetall(room_key)
+    
+    # 如果 Redis 中没有房间数据，尝试从数据库恢复
     if not room_data:
-        raise HTTPException(status_code=404, detail="Room not found")
+        logger.info(f"Room {roomid} not found in Redis, attempting to restore from database")
+        restored = await CacheSyncManager.restore_room_from_db(roomid)
+        if not restored:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # 尝试再次从 Redis 读取
+        room_data = await redis.hgetall(room_key)
+        if not room_data:
+            raise HTTPException(status_code=404, detail="Room not found after restore")
 
     players = sorted(list(await room_manager.get_room_players(roomid)))
     song_queue = await room_manager.get_song_queue(roomid)
@@ -79,7 +116,7 @@ async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
 
 
 @room_router.post("/", response_model=CreateRoomResponse)
-async def create_room() -> CreateRoomResponse:
+async def create_room(payload: CreateRoomRequest, session: AsyncSession = Depends(get_db_session)) -> CreateRoomResponse:
     redis = await redis_client.get_client()
     if not redis:
         raise HTTPException(status_code=503, detail="Redis unavailable")
@@ -92,16 +129,47 @@ async def create_room() -> CreateRoomResponse:
             continue
 
         player_id = uuid4().hex[:12]
+        username = payload.username.strip()
+        if not username:
+            raise HTTPException(status_code=422, detail="username cannot be empty")
         token = secrets.token_urlsafe(24)
 
-        created = await room_manager.create_room(room_id, player_id)
-        if not created:
+        try:
+            # 1. 先在数据库中创建房间
+            db_room = await crud.create_room_in_db(session, room_id)
+            if not db_room:
+                logger.warning(f"Failed to create room in database: {room_id}")
+                continue
+
+            # 2. 添加房主用户到数据库
+            db_user = await crud.add_user_to_room(
+                session,
+                room_id,
+                player_id=player_id,
+                username=username,
+                is_owner=True,
+            )
+            if not db_user:
+                logger.warning(f"Failed to add user to database: {room_id}, {player_id}")
+                continue
+
+            # 3. 在 Redis 中创建房间
+            created = await room_manager.create_room(room_id, player_id)
+            if not created:
+                logger.warning(f"Failed to create room in Redis: {room_id}")
+                continue
+
+            # 4. 创建会话
+            await session_manager.create_session(token, room_id, player_id)
+            
+            logger.info(f"Room created successfully: {room_id}, player: {player_id}")
+            return CreateRoomResponse(roomId=room_id, playerId=player_id, token=token)
+        
+        except Exception as e:
+            logger.error(f"Error creating room: {e}")
             continue
 
-        await session_manager.create_session(token, room_id, player_id)
-        return CreateRoomResponse(roomId=room_id, playerId=player_id, token=token)
-
-    raise HTTPException(status_code=500, detail="Failed to create room")
+    raise HTTPException(status_code=500, detail="Failed to create room after retries")
 
 
 @room_router.get("/{roomid}", response_model=RoomInfoResponse)
@@ -169,12 +237,27 @@ async def startup_event():
         logger.info("Memory monitor started successfully")
     except Exception as e:
         logger.error(f"Failed to start memory monitor: {e}")
+    
+    # 启动定期清理任务（检查即将过期的房间并同步到 DB）
+    try:
+        import asyncio
+        asyncio.create_task(_periodic_cleanup_task())
+        logger.info("Periodic cleanup task started")
+    except Exception as e:
+        logger.error(f"Failed to start periodic cleanup task: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭时的事件处理：停止内存监控"""
+    """应用关闭时的事件处理：停止内存监控并同步所有活跃房间"""
     global memory_monitor
+    
+    # 同步所有活跃房间到数据库
+    try:
+        synced_count = await CacheSyncManager.sync_all_active_rooms()
+        logger.info(f"Synced {synced_count} active rooms on shutdown")
+    except Exception as e:
+        logger.error(f"Error syncing rooms on shutdown: {e}")
     
     # 断开 Redis 连接
     try:
@@ -220,7 +303,7 @@ async def root():
 async def websocket_endpoint(
     websocket: WebSocket,
     roomid: str,
-    token: str | None = Query(default=None),
+    token: str = Query(...),
 ):
 
     global clients
@@ -236,21 +319,54 @@ async def websocket_endpoint(
         await websocket.close(code=1008, reason="Room not found")
         return
 
-    if token:
-        session = await session_manager.get_session(token)
-        if not session or session.get("room_id") != roomid:
-            await websocket.close(code=1008, reason="Invalid room session")
-            return
+    session = await session_manager.get_session(token)
+    if not session or session.get("room_id") != roomid:
+        await websocket.close(code=1008, reason="Invalid room session")
+        return
+
+    player_id = session.get("player_id")
+    if not player_id:
+        await websocket.close(code=1008, reason="Invalid player session")
+        return
 
     logger.info("WebSocket connected: %s", websocket.client)
     clients.push(roomid, websocket)
+    await send_room_state(roomid, clients, websocket)
     # asyncio.create_task(heartbeat_init(websocket))
     try:
         while True:
             data = await websocket.receive()
             if "text" in data:
                 data = data["text"]
-                # // use pydantic to validate and parse the incoming JSON data directly into a python object.
+                try:
+                    payload = json.loads(data)
+                    event_value = int(payload.get("event"))
+                    event = EventType(event_value)
+                    payload_data = payload.get("data") or {}
+                    if not isinstance(payload_data, dict):
+                        raise ValueError("payload.data must be object")
+                    if payload.get("request_id"):
+                        payload_data["request_id"] = payload.get("request_id")
+                    await handle_json(event,
+                                      payload_data,
+                                      clients=clients,
+                                      websocket=websocket,
+                                      room_id=roomid,
+                                      player_id=player_id)
+                except Exception as e:
+                    logger.warning("Failed to handle JSON message: %s", e)
+                    await clients.send(websocket, {
+                        "v": 1,
+                        "event": EventType.MESSAGE.value,
+                        "ts": int(time.time() * 1000),
+                        "data": {
+                            "ok": False,
+                            "error": {
+                                "code": "INVALID_MESSAGE",
+                                "message": str(e),
+                            },
+                        },
+                    })
             elif "bytes" in data:
                 data = data["bytes"]
                 event: EventType = get_event_type(data)
@@ -260,13 +376,23 @@ async def websocket_endpoint(
                                  data,
                                  clients=clients,
                                  websocket=websocket,
-                                 room_id=roomid)
+                                 room_id=roomid,
+                                 player_id=player_id)
                 except Exception as e:
                     logger.warning(
                         f"Failed to handle event: {event.name}, error: {e}")
-                    await clients.send(
-                        websocket,
-                        f"Failed to handle event: {event.name}, error: {e}")
+                    await clients.send(websocket, {
+                        "v": 1,
+                        "event": EventType.MESSAGE.value,
+                        "ts": int(time.time() * 1000),
+                        "data": {
+                            "ok": False,
+                            "error": {
+                                "code": "EVENT_HANDLE_FAILED",
+                                "message": f"Failed to handle event: {event.name}, error: {e}",
+                            },
+                        },
+                    })
             else:
                 logger.warning(
                     f"Received unsupported data type from {websocket.client}: {data}"

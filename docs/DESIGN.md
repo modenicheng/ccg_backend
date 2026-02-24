@@ -96,7 +96,7 @@
    - 后端将该玩家加入抢答队列（Redis List），若队列此前为空，则立即暂停播放（广播 `pause` 事件，含播放进度），并开始处理第一个玩家作答。
    - 若播放已暂停且有玩家正在作答，新抢答者仅入队，不重复暂停。
 5. **作答轮次**：
-   - 后端从队列中取出队首玩家，将其状态设为“作答中”，广播 `your_turn` 事件（仅该玩家收到）或 `answering_player` 通知（其他玩家可见谁在作答）。
+   - 后端从队列中取出队首玩家，将其状态设为“作答中”，广播 `your_turn` 事件
    - 该玩家在限定时间内（如 30 秒）提交答案，包含各组选中的标签 ID 列表及精准描述文本。提交后，后端广播 `answer_submitted` 事件（公开答案内容，不含正确性）。
    - 若超时未提交，自动视为弃权，从队列移除，继续处理下一个玩家。
    - 若队列非空，继续处理下一个玩家；若队列为空，则继续播放音频。
@@ -139,9 +139,10 @@
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `PLAY`               | 20     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构      | state & broadcast |
-| `PAUSE`              | 21     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
-| `SEEK`               | 22     | S→C      | 调整播放进度，但不改变播放状态                               | broadcast         |
+| `LOAD`               | 20     | S→C      | 音频URL、歌曲元数据、轮次索引、标签组结构                    | state & broadcast |
+| `PLAY`               | 21     | S→C      | 开始播放~~，包含音频URL、歌曲元数据、轮次索引、标签组结构~~  | state & broadcast |
+| `PAUSE`              | 22     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
+| `SEEK`               | 23     | S→C      | 调整播放进度，但不改变播放状态                               | broadcast         |
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
@@ -168,15 +169,368 @@
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
 | `GAME_OVER`          | 13     | S→C      | 游戏结束，展示最终排名                                       | state & broadcast |
 
-简单起见，游戏事件走 json 格式。约定通用格式：
+简单起见，游戏事件走 JSON 格式。统一约定如下（字段使用 `snake_case`）：
+
+#### 通用 Envelope
 
 ```json
 {
-  "event": u8,
-  "ts": u64,
-  "data": object
+  "v": 1,
+  "event": 20,
+  "ts": 1735567890123,
+  "request_id": "req_01JY8FQ9C6Y7R6J0M8N3K4P2T1",
+  "seq": 1024,
+  "trace_id": "tr_01JY8FR2N6C5Q1B2K8W9E0R7T6",
+  "data": {
+    "audio_url": "/static/audio/abc.mp3"
+  }
 }
 ```
+
+字段说明：
+
+- `v`（u8，必填）：协议版本，当前固定为 `1`。
+- `event`（u8，必填）：事件类型值（见上表）。
+- `ts`（u64，必填）：服务端/客户端发送时的 Unix 毫秒时间戳。
+- `seq`（u64，可选）：广播序列号。仅 S→C 广播消息建议携带，按房间内单调递增。
+- `trace_id`（string，可选）：链路追踪 ID，用于日志排障。
+- `data`（object，必填）：事件业务载荷。
+
+约束约定：
+
+- 所有业务 ID 字段统一为 `*_id`（例如 `room_id`、`player_id`、`song_id`）。
+- 时长/进度统一使用 `*_ms`（毫秒）。
+- 列表字段使用复数命名（例如 `selected_tag_ids`、`scores`）。
+
+#### 事件 data 字段定义
+
+##### 1x 房间事件
+
+- `ROOM_CREATE` (10, C→S)
+
+  ```json
+  {
+    "username": "alice"
+  }
+  ```
+
+  > 弃用，走RESTful
+
+- `ROOM_JOIN` (11, C→S)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "username": "bob"
+  }
+  ```
+
+  > 弃用，走RESTful
+
+- `ROOM_STATE` (12, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "status": "waiting",
+    "players": [
+      { "player_id": 1, "username": "alice", "is_host": true, "is_ready": true, "score": 3 },
+      { "player_id": 2, "username": "bob", "is_host": false, "is_ready": false, "score": 1 }
+    ],
+    "current_round_index": 1,
+    "current_song_index": 0,
+    "current_song_id": 123,
+    "play_state": "paused",
+    "play_progress_ms": 12500,
+    "queue_player_ids": [2],
+    "current_answerer_player_id": 2,
+    "tag_groups": [
+      {
+        "group_id": 1,
+        "name": "年代",
+        "tags": [
+          { "tag_id": 101, "name": "80年代" },
+          { "tag_id": 102, "name": "90年代" }
+        ]
+      }
+    ]
+  }
+  ```
+
+- `GAME_OVER` (13, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "final_scores": [
+      { "player_id": 1, "username": "alice", "score": 30, "rank": 1 },
+      { "player_id": 2, "username": "bob", "score": 25, "rank": 2 }
+    ]
+  }
+  ```
+
+##### 2x 音频事件
+
+- `LOAD` (20, S→C)
+
+  ```json
+  {
+    "song_id": 123,
+    "title": "歌曲名",
+    "artist": "歌手",
+    "cover_url": "https://...",
+    "audio_url": "/static/audio/abc.mp3",
+    "duration_ms": 215000,
+    "round_index": 1,
+    "tag_groups": [
+      {
+        "group_id": 1,
+        "name": "年代",
+        "tags": [
+          { "tag_id": 101, "name": "80年代" },
+          { "tag_id": 102, "name": "90年代" }
+        ]
+      }
+    ]
+  }
+  ```
+
+- `PLAY` (21, S→C)
+
+  ```json
+  {
+    "song_id": 123,
+    "progress_ms": 12500,
+  }
+  ```
+
+- `PAUSE` (22, S→C)
+
+  ```json
+  {
+    "song_id": 123,
+    "progress_ms": 20123,
+    "reason": "attempt_answer",
+    "trigger_player_id": 2
+  }
+  ```
+
+- `SEEK` (23, S→C)
+
+  ```json
+  {
+    "song_id": 123,
+    "progress_ms": 30000,
+    "keep_playing": false
+  }
+  ```
+
+##### 3x 玩家操作
+
+- `PLAYER_READY` (30, C→S)
+
+  ```json
+  {
+    "user_id": "ABC123",
+    "is_ready": true
+  }
+  ```
+
+- `GAME_START` (31, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "round_index": 1,
+    "locked_join": true
+  }
+  ```
+
+- `COUNTDOWN` (32, S→C)
+
+  ```json
+  {
+    "round_index": 1,
+    "remain_sec": 3
+  }
+  ```
+
+- `ATTEMPT_ANSWER` (33, C→S)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "progress_ms": 12345
+  }
+  ```
+
+- `YOUR_TURN` (34, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "song_id": 123,
+    "answerer_player_id": 2,
+    "time_limit_sec": 30,
+    "queue_position": 1,
+    "tag_groups": [
+      {
+        "group_id": 1,
+        "name": "年代",
+        "tags": [
+          { "tag_id": 101, "name": "80年代" },
+          { "tag_id": 102, "name": "90年代" }
+        ]
+      }
+    ]
+  }
+  ```
+
+- `SUBMIT_ANSWER` (35, C→S)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "song_id": 123,
+    "selected_tag_ids": [101, 201],
+    "description_text": "这是一首经典摇滚"
+  }
+  ```
+
+- `ANSWER_BROADCAST` (36, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "song_id": 123,
+    "player_id": 2,
+    "username": "bob",
+    "selected_tag_ids": [101, 201],
+    "description_text": "这是一首经典摇滚",
+    "answer_order": 1
+  }
+  ```
+
+- `ANSWER_QUEUE` (37, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "queue_player_ids": [2, 5, 8]
+  }
+  ```
+
+- `ROUND_END` (38, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "ended_round_index": 1,
+    "next_round_index": 2,
+    "next_song_id": 124
+  }
+  ```
+
+##### 4x 管理操作
+
+- `JUDGING` (40, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "song_id": 123,
+    "round_index": 1,
+    "tag_groups": [
+      {
+        "group_id": 1,
+        "name": "年代",
+        "tags": [
+          { "tag_id": 101, "name": "80年代" },
+          { "tag_id": 102, "name": "90年代" }
+        ]
+      }
+    ],
+    "description_candidates": [
+      { "description_id": 1001, "text": "这是一首经典摇滚", "count": 3 },
+      { "description_id": 1002, "text": "旋律优美", "count": 1 }
+    ],
+    "answers": [
+      {
+        "player_id": 2,
+        "username": "bob",
+        "selected_tag_ids": [101, 201],
+        "description_text": "这是一首经典摇滚",
+        "answer_order": 1
+      }
+    ]
+  }
+  ```
+
+- `JUDGE_SUBMIT` (41, C→S)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "song_id": 123,
+    "correct_tag_ids": [101, 201],
+    "correct_description_ids": [1001],
+    "new_correct_descriptions": ["歌手早年经典", "电影主题曲"],
+    "skip_scoring": false
+  }
+  ```
+
+- `SCORE_UPDATE` (42, S→C)
+
+  ```json
+  {
+    "room_id": "ABC123",
+    "round_index": 1,
+    "scores": [
+      { "player_id": 1, "username": "alice", "score_delta": 2, "total_score": 15 },
+      { "player_id": 2, "username": "bob", "score_delta": 1, "total_score": 10 }
+    ]
+  }
+  ```
+
+#### ACK / ERROR 统一格式
+
+- ACK（建议事件号沿用原事件号，`event` 不变）：
+
+> 此处可以不要
+
+  ```json
+  {
+    "v": 1,
+    "event": 33,
+    "ts": 1735567890666,
+    "request_id": "req_01JY8FQ9C6Y7R6J0M8N3K4P2T1",
+    "trace_id": "tr_01JY8FR2N6C5Q1B2K8W9E0R7T6",
+    "data": {
+      "ok": true
+    }
+  }
+  ```
+
+- ERROR（建议统一通过 `MESSAGE(255)` 或同事件号返回，二选一，务必全链路一致）：
+
+  ```json
+  {
+    "v": 1,
+    "event": 255,
+    "ts": 1735567890777,
+    "trace_id": "tr_01JY8FR2N6C5Q1B2K8W9E0R7T6",
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "ROOM_NOT_FOUND",
+        "message": "room_id does not exist",
+        "details": {
+          "room_id": "ABC123"
+        }
+      }
+    }
+  }
+  ```
 
 ### 5.8 HTTP API 设计
 
@@ -184,7 +538,7 @@
 
 | 端点                 | 方法   | 说明                                   | 请求体/参数                                | 返回                                |
 |----------------------|--------|----------------------------------------|--------------------------------------------| ----------------------------------- |
-| `/api/room/create`   | POST   | 创建房间                               | `{ username: string, tagGroups?: [...] }`  | `{ roomId: string, token: string }` |
+| `/api/room/`         | POST   | 创建房间                               | `{ username: string, tagGroups?: [...] }`  | `{ roomId: string, token: string }` |
 | `/api/room/join`     | POST   | 加入房间                               | `{ roomId: string, username: string }`     | `{ token: string, roomState: ... }` |
 | `/api/room/:roomId`  | GET    | 获取房间公开信息（用于展示）           | -                                          | 房间基本信息                        |
 | `/api/song/search`   | GET    | 搜索歌曲（备用）                       | `q: string`                                | 歌曲列表                            |
@@ -607,8 +961,8 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "selected_tags": [101, 201],  // 标签ID列表（每组至多一个）
-    "description": "这是一首经典摇滚"
+    "selected_tag_ids": [101, 201],  // 标签ID列表（每组至多一个）
+    "description_text": "这是一首经典摇滚"
   }
   ```
 
@@ -618,8 +972,8 @@ class PlayerAnswer(Base):
   {
     "player_id": 42,
     "username": "bob",
-    "selected_tags": [101, 201],
-    "description": "这是一首经典摇滚"
+    "selected_tag_ids": [101, 201],
+    "description_text": "这是一首经典摇滚"
   }
   ```
 
@@ -627,7 +981,7 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "queue": [42, 37, 15]  // 玩家ID列表，按抢答顺序排列
+    "queue_player_ids": [42, 37, 15]  // 玩家ID列表，按抢答顺序排列
   }
   ```
 
@@ -644,8 +998,8 @@ class PlayerAnswer(Base):
       { "id": 1002, "text": "旋律优美", "count": 1 }
     ],
     "answers": [  // 本轮所有玩家提交的答案（用于房主参考）
-      { "player_id": 42, "username": "bob", "selected_tags": [101,201], "description": "这是一首经典摇滚" },
-      { "player_id": 37, "username": "alice", "selected_tags": [102], "description": "节奏感强" }
+      { "player_id": 42, "username": "bob", "selected_tag_ids": [101,201], "description_text": "这是一首经典摇滚" },
+      { "player_id": 37, "username": "alice", "selected_tag_ids": [102], "description_text": "节奏感强" }
     ]
   }
   ```
@@ -654,7 +1008,7 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "correct_tags": [101, 201],
+    "correct_tag_ids": [101, 201],
     "correct_description_ids": [1001],  // 空数组表示无正确描述
     "new_correct_descriptions": ["歌手早年经典", "电影主题曲"], // 手动输入的新描述，会被添加到历史中，同时生成description_id供未来选择
     "skip_scoring": false

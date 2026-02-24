@@ -39,6 +39,9 @@ class RedisKeys:
 
 class RedisRoomManager:
     """Redis 房间管理类"""
+    
+    # Redis 房间数据的 TTL（24 小时）
+    ROOM_TTL = 24 * 60 * 60
 
     async def create_room(self, room_id: str, host_player_id: str) -> bool:
         """创建房间
@@ -62,28 +65,28 @@ class RedisRoomManager:
                                 "host_player_id": host_player_id,
                                 "status": "waiting",
                                 "current_song_index": 0,
-                                "current_round_state": "playing",
+                                "current_round_state": "paused",
                                 "play_progress": 0,
                                 "tag_groups": "{}",
                                 "current_answerer": "",
                             })
 
-            # 设置房间过期时间（6小时）
-            await redis.expire(room_key, 6 * 60 * 60)
+            # 设置房间过期时间（24小时）
+            await redis.expire(room_key, self.ROOM_TTL)
 
             # 创建玩家集合
             players_key = RedisKeys.room_players(room_id)
             await redis.sadd(players_key, host_player_id)
-            await redis.expire(players_key, 6 * 60 * 60)
+            await redis.expire(players_key, self.ROOM_TTL)
 
             # 创建玩家准备状态
             ready_key = RedisKeys.room_ready(room_id)
             await redis.hset(ready_key, host_player_id, "true")
-            await redis.expire(ready_key, 6 * 60 * 60)
+            await redis.expire(ready_key, self.ROOM_TTL)
 
             # 创建歌曲队列
             song_queue_key = RedisKeys.room_song_queue(room_id)
-            await redis.expire(song_queue_key, 6 * 60 * 60)
+            await redis.expire(song_queue_key, self.ROOM_TTL)
 
             return True
         except Exception as e:
@@ -347,6 +350,8 @@ class RedisRoomManager:
             # 添加歌曲到队列
             if song_ids:
                 await redis.lpush(song_queue_key, *song_ids)
+            # 设置 TTL
+            await redis.expire(song_queue_key, self.ROOM_TTL)
             return True
         except Exception as e:
             print(f"Error setting song queue: {e}")

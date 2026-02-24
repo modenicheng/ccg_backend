@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 
 
+class CreateRoomRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=32, description="房主用户名")
+
+
 class CreateRoomResponse(BaseModel):
     roomId: str = Field(..., description="房间 ID")
     playerId: str = Field(..., description="创建者玩家 ID")

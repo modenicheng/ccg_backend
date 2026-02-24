@@ -12,7 +12,8 @@ logger = get_logger(__name__)
 async def handle_heartbeat(data: bytes,
                            clients=None,
                            websocket: WebSocket | None = None,
-                           room_id: str | None = None):
+                           room_id: str | None = None,
+                           player_id: str | None = None):
     server_recv_ts = int(datetime.now().timestamp() * 1000)
     frame = HeartbeatFrame.load(data)
     logger.debug(
