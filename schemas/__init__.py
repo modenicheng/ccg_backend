@@ -21,6 +21,7 @@ from .task import (
     TaskDownloadResponse,
 )
 from .room import (
+    CreateRoomRequest,
     CreateRoomResponse,
     RoomInfoResponse,
     PatchRoomRequest,
@@ -38,6 +39,7 @@ __all__ = [
     "TaskDownloadRequest",
     "TaskDownloadResponse",
     # Room schemas
+    "CreateRoomRequest",
     "CreateRoomResponse",
     "RoomInfoResponse",
     "PatchRoomRequest",

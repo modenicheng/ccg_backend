@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import IntEnum
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, CheckConstraint, Index
@@ -11,6 +12,12 @@ from sqlalchemy.types import JSON
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base."""
     pass
+
+
+class RoomStatus(IntEnum):
+    WAITING = 0
+    RUNNING = 1
+    ENDED = 2
 
 
 class User(Base):
@@ -138,20 +145,22 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    playlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    # tag_groups_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    status: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    tag_group_id: Mapped[int | None] = mapped_column(ForeignKey(
-        "tag_groups.id", ondelete="SET NULL"),
-                                                     nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[RoomStatus] = mapped_column(Integer,
+                                               default=RoomStatus.WAITING,
+                                               nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    __table_args__ = (
+        CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
+    )
+
     users: Mapped[list[User]] = relationship(back_populates="room",
                                              cascade="all, delete-orphan")
     room_songs: Mapped[list[RoomSong]] = relationship(back_populates="room")
-    tag_group: Mapped[TagGroup | None] = relationship(back_populates="rooms")
+    tag_group: Mapped[list[TagGroup]] = relationship(back_populates="rooms", secondary="tag_groups_rooms")
     scores: Mapped[list[Score]] = relationship(back_populates="room")
     player_answers: Mapped[list[PlayerAnswer]] = relationship(
         back_populates="room")
@@ -172,6 +181,8 @@ class RoomSong(Base):
     song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
                                                     ondelete="CASCADE"),
                                          primary_key=True)
+    
+    # 这里用于记录歌曲在房间内的顺序，数值越小表示越靠前。可以为 null，表示没有特定顺序要求。
     song_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     room: Mapped[Room] = relationship(back_populates="room_songs")
@@ -187,12 +198,21 @@ class TagGroup(Base):
                                     primary_key=True,
                                     autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
     tags: Mapped[list[Tag]] = relationship(secondary="tag_group_tags",
                                            back_populates="groups")
-    rooms: Mapped[list[Room]] = relationship(back_populates="tag_group")
+    rooms: Mapped[list[Room]] = relationship(back_populates="tag_group", secondary="tag_groups_rooms")
+
+class TagGroupRoom(Base):
+    """标签组与房间关联表 tag_groups_rooms"""
+
+    __tablename__ = "tag_groups_rooms"
+
+    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id", ondelete="CASCADE"), primary_key=True)
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True)
 
 
 class TagGroupTag(Base):
@@ -200,12 +220,11 @@ class TagGroupTag(Base):
 
     __tablename__ = "tag_group_tags"
 
-    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id",
-                                                   ondelete="CASCADE"),
-                                        primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id",
-                                                     ondelete="CASCADE"),
-                                          primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id", ondelete="CASCADE"), primary_key=True)
+
+
+
 
 
 
@@ -217,7 +236,7 @@ class Tag(Base):
     id: Mapped[int] = mapped_column(Integer,
                                     primary_key=True,
                                     autoincrement=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
 
     groups: Mapped[list[TagGroup]] = relationship(secondary="tag_group_tags",
                                                   back_populates="tags")

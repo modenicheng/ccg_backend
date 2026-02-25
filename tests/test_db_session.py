@@ -36,7 +36,7 @@ async def isolated_session_factory(tmp_path, monkeypatch) -> AsyncIterator[async
 
 @pytest.mark.asyncio
 async def test_get_db_session_commits_on_success(isolated_session_factory) -> None:
-    gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db_session())
+    gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db())
     session = await anext(gen)
 
     session.add(models.Song(platform="qq", platform_song_id="commit-1", title="ok"))
@@ -53,7 +53,7 @@ async def test_get_db_session_commits_on_success(isolated_session_factory) -> No
 
 @pytest.mark.asyncio
 async def test_get_db_session_rolls_back_on_error(isolated_session_factory) -> None:
-    gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db_session())
+    gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db())
     session = await anext(gen)
 
     session.add(models.Song(platform="qq", platform_song_id="rollback-1", title="nope"))

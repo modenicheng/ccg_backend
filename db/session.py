@@ -69,7 +69,7 @@ async def drop_db() -> None:
         await conn.run_sync(Base.metadata.drop_all)
 
 
-async def get_db_session() -> AsyncIterator[AsyncSession]:
+async def get_db() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency with a unified transaction boundary.
 
     - commit on successful request handling
