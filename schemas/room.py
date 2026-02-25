@@ -1,11 +1,16 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+class RoomSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+class CreateRoomRequest(BaseModel):
+    title: str = Field(..., max_length=100, description="房间标题")
+    host_name: str = Field(..., description="房主名称")
 
 class CreateRoomResponse(BaseModel):
-    roomId: str = Field(..., description="房间 ID")
-    playerId: str = Field(..., description="创建者玩家 ID")
-    token: str = Field(..., description="会话令牌")
-
+    room_id: str = Field(..., description="房间 ID")
+    host_name: str = Field(..., description="房主名称")
+    host_token: str = Field(..., description="房主令牌，用于后续管理房间")
 
 class RoomInfoResponse(BaseModel):
     roomId: str
@@ -14,7 +19,6 @@ class RoomInfoResponse(BaseModel):
     title: str | None = None
     description: str | None = None
     players: list[str] = Field(default_factory=list)
-    songQueue: list[str] = Field(default_factory=list)
     tagGroups: dict = Field(default_factory=dict)
     playProgress: int = 0
 

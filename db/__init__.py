@@ -11,7 +11,7 @@ from .models import (
 	TagGroup,
 	User,
 )
-from .session import AsyncSessionLocal, DATABASE_URL, drop_db, engine, get_db_session, init_db, ping_db, session_scope
+from .session import AsyncSessionLocal, DATABASE_URL, drop_db, engine, get_db, init_db, ping_db, session_scope
 
 __all__ = [
 	"Base",
@@ -30,7 +30,7 @@ __all__ = [
 	"AsyncSessionLocal",
 	"init_db",
 	"drop_db",
-	"get_db_session",
+	"get_db",
 	"session_scope",
 	"ping_db",
 ]
