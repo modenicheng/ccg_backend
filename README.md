@@ -25,6 +25,7 @@
 - Python: `>=3.12`
 - 依赖见 `pyproject.toml`
 - Redis: `>=7.0` (可选，用于房间状态管理和会话管理)
+- PostgreSQL （不得不必须用这个，项目里用了些 psql 的特性）
 
 ### 配置方法
 

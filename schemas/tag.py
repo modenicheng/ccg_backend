@@ -25,7 +25,7 @@ class TagGroupBase(BaseModel):
 
 # 创建 TagGroup 时，可选的 tags 列表
 class TagGroupCreate(TagGroupBase):
-    tags: List[TagCreate] = []          # 允许传入纯新标签（无 id）
+    tags: List[str] = []          # 允许传入纯新标签（无 id）
     existing_tag_ids: List[int] = []     # 允许传入已有标签的 id
 
 # 更新 TagGroup 时，全量替换 tags（PUT）
@@ -35,6 +35,7 @@ class TagGroupUpdate(TagGroupBase):
 
 # 部分更新 TagGroup（PATCH），例如只改名称，或增量修改 tags
 class TagGroupPatch(BaseModel):
+    id: int
     name: Optional[str] = None
     description: Optional[str] = None
     add_tags: List[TagCreate] = []       # 新增的标签（可能包含新标签名）

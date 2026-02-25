@@ -41,16 +41,6 @@ class TaskDownloadRequest(BaseModel):
         description="Optional override for max retry attempts per song"
     )
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "songlist_id": 1,
-                "song_ids": [1, 2, 3, 4, 5],
-                "max_concurrent": 3,
-                "max_retries": 5
-            }
-        }
-
 
 class TaskDownloadResult(BaseModel):
     """Result for a single song download attempt."""
@@ -71,19 +61,6 @@ class TaskDownloadResult(BaseModel):
         default=None,
         description="Duration of successful download in seconds"
     )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "song_id": 1,
-                "platform_song_id": "004R6Kl32YDHxe",
-                "status": "success",
-                "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                "error_message": None,
-                "attempts": 1,
-                "duration_seconds": 12.5
-            }
-        }
 
 
 class TaskDownloadResponse(BaseModel):
@@ -112,29 +89,3 @@ class TaskDownloadResponse(BaseModel):
         default=None,
         description="Total task duration in seconds"
     )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "task_id": "abc123def456",
-                "songlist_id": 1,
-                "total_songs": 5,
-                "successful": 4,
-                "failed": 1,
-                "retried": 0,
-                "results": [
-                    {
-                        "song_id": 1,
-                        "platform_song_id": "004R6Kl32YDHxe",
-                        "status": "success",
-                        "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                        "error_message": None,
-                        "attempts": 1,
-                        "duration_seconds": 12.5
-                    }
-                ],
-                "overall_status": "success",
-                "error_summary": None,
-                "duration_seconds": 45.2
-            }
-        }

@@ -9,7 +9,7 @@ Handles:
 
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SongResponse(BaseModel):
@@ -37,9 +37,9 @@ class SongResponse(BaseModel):
         default=False
     )
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "platform": "qqmusic",
@@ -55,6 +55,7 @@ class SongResponse(BaseModel):
                 "metadata_json": None
             }
         }
+    )
 
     @property
     def is_cached(self) -> bool:
@@ -81,8 +82,8 @@ class SongCacheUpdateRequest(BaseModel):
         description="Optional: file size in bytes"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "song_id": 1,
                 "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
@@ -90,3 +91,4 @@ class SongCacheUpdateRequest(BaseModel):
                 "file_size_bytes": 5242880
             }
         }
+    )
