@@ -1,4 +1,7 @@
+from sqlalchemy.exc import IntegrityError
+
 from db.models import Room, User
+from schemas.room import JoinRoomRequest, JoinRoomResponse
 from schemas.user import UserLogin
 from utils import get_logger
 from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse, CreateRoomRequest
@@ -45,14 +48,12 @@ async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
     play_progress = int(room_data.get("play_progress", 0) or 0)
 
     return RoomInfoResponse(
-        roomId=roomid,
-        hostPlayerId=room_data.get("host_player_id", ""),
+        room_id=roomid,
+        host_player_id=room_data.get("host_player_id", ""),
         status=room_data.get("status", "waiting"),
         title=room_data.get("title"),
-        description=room_data.get("description"),
         players=players,
-        tagGroups=tag_groups,
-        playProgress=play_progress,
+        tag_groups=tag_groups,
     )
 
 
@@ -80,6 +81,31 @@ async def create_room(
     return CreateRoomResponse(
         room_id=room_id,
         host=UserLogin.model_validate(owner),
+    )
+
+
+@room_router.post("/{roomid}", response_model=JoinRoomResponse)
+async def join_room(roomid: str,
+                    data: JoinRoomRequest,
+                    session: AsyncSession = Depends(get_db)):
+    stmt = select(Room).where(Room.id == roomid)
+    result = await session.execute(stmt)
+    room = result.scalar_one_or_none()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    new_user = User(username=data.username,
+                    is_owner=False,
+                    token=str(uuid4()),
+                    room=room)
+    try:
+        session.add(new_user)
+        await session.commit()
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already taken in this room")
+    return JoinRoomResponse(
+        room_id=roomid,
+        user=UserLogin.model_validate(new_user),
     )
 
 

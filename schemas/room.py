@@ -42,3 +42,16 @@ class PatchRoomRequest(BaseModel):
     tag_groups: list[TagGroupResponse] | None = Field(default=None,
                                                       description="房间标签分组配置")
     model_config = ConfigDict(from_attributes=True)
+
+
+class JoinRoomRequest(BaseModel):
+    username: str = Field(..., description="用户名")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class JoinRoomResponse(BaseModel):
+    room_id: str = Field(..., description="房间 ID")
+    user: UserLogin = Field(..., description="用户信息")
+
+    model_config = ConfigDict(from_attributes=True)
