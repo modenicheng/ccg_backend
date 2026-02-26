@@ -196,7 +196,7 @@
 | 端点                 | 方法   | 说明                                   | 请求体/参数                                | 返回                                |
 |----------------------|--------|----------------------------------------|--------------------------------------------| ----------------------------------- |
 | `/api/room/create`   | POST   | 创建房间                               | `{ username: string, tagGroups?: [...] }`  | `{ roomId: string, token: string }` |
-| `/api/room/join`     | POST   | 加入房间                               | `{ roomId: string, username: string }`     | `{ token: string, roomState: ... }` |
+| `/api/room/:roomId`  | POST   | 加入房间                               | `{ roomId: string, username: string }`     | `{ token: string, roomState: ... }` |
 | `/api/room/:roomId`  | GET    | 获取房间公开信息（用于展示）           | -                                          | 房间基本信息                        |
 | `/api/room/:roomId`  | PATCH  | 更新房间设置                           | `{ title?: string, description?: string, songQueue?: string[], tagGroups?: object }` | 房间信息                            |
 | `/api/song/search`   | GET    | 搜索歌曲（备用）                       | `q: string`                                | 歌曲列表                            |

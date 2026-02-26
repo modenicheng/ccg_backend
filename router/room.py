@@ -1,60 +1,42 @@
 from sqlalchemy.exc import IntegrityError
 
-from db.models import Room, User
+from db.models import Room, User, TagGroup
 from schemas.room import JoinRoomRequest, JoinRoomResponse
-from schemas.user import UserLogin
+from schemas.user import UserLogin, BaseUser
+from schemas.tag import TagGroupResponse
 from utils import get_logger
 from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse, CreateRoomRequest
-from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
-import json
+from fastapi import APIRouter, HTTPException, Depends
 import secrets
 import string
 from cache.connection import redis_client
-from cache.utils import RedisKeys, room_manager, session_manager
+from cache.utils import room_manager
 from uuid import uuid4
 from db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 logger = get_logger(__name__)
 
 room_router = APIRouter(prefix="/api/room", tags=["room"])
 
 
+def _to_room_info_response(room: Room) -> RoomInfoResponse:
+    host_user = next((user for user in room.users if user.is_owner), None)
+    return RoomInfoResponse(
+        room_id=room.id,
+        host_player_id=str(host_user.id) if host_user else "",
+        status=int(room.status),
+        title=room.title,
+        players=[BaseUser.model_validate(user) for user in room.users],
+        tag_groups=[TagGroupResponse.model_validate(group) for group in room.tag_groups],
+    )
+
+
 def generate_room_id(length: int = 6) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(chars) for _ in range(length))
-
-
-async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
-    redis = await redis_client.get_client()
-    if not redis:
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-    room_key = RedisKeys.room(roomid)
-    room_data = await redis.hgetall(room_key)
-    if not room_data:
-        raise HTTPException(status_code=404, detail="Room not found")
-
-    players = sorted(list(await room_manager.get_room_players(roomid)))
-    song_queue = await room_manager.get_song_queue(roomid)
-
-    tag_groups_raw = room_data.get("tag_groups", "{}")
-    try:
-        tag_groups = json.loads(tag_groups_raw) if tag_groups_raw else {}
-    except json.JSONDecodeError:
-        tag_groups = {}
-
-    play_progress = int(room_data.get("play_progress", 0) or 0)
-
-    return RoomInfoResponse(
-        room_id=roomid,
-        host_player_id=room_data.get("host_player_id", ""),
-        status=room_data.get("status", "waiting"),
-        title=room_data.get("title"),
-        players=players,
-        tag_groups=tag_groups,
-    )
 
 
 @room_router.post("/", response_model=CreateRoomResponse)
@@ -112,42 +94,71 @@ async def join_room(roomid: str,
 @room_router.get("/{roomid}", response_model=RoomInfoResponse)
 async def room_info(
     roomid: str, session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
-    stmt = select(Room).where(Room.id == roomid)
+    stmt = (
+        select(Room)
+        .where(Room.id == roomid)
+        .options(
+            selectinload(Room.users),
+            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+        )
+    )
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    return room
+    return _to_room_info_response(room)
 
 
 @room_router.patch("/{roomid}", response_model=RoomInfoResponse)
 async def room_setting(roomid: str,
-                       payload: PatchRoomRequest) -> RoomInfoResponse:
-    redis = await redis_client.get_client()
-    if not redis:
-        raise HTTPException(status_code=503, detail="Redis unavailable")
-
-    room_key = RedisKeys.room(roomid)
-    room_data = await redis.hgetall(room_key)
-    if not room_data:
+                       payload: PatchRoomRequest,
+                       session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
+    stmt = (
+        select(Room)
+        .where(Room.id == roomid)
+        .options(
+            selectinload(Room.users),
+            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+        )
+    )
+    result = await session.execute(stmt)
+    room = result.scalar_one_or_none()
+    if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    updates: dict[str, str | int] = {}
-
-    if payload.songQueue is not None:
-        await room_manager.set_song_queue(roomid, payload.songQueue)
+    if payload.song_queue is not None:
+        await room_manager.set_song_queue(roomid, payload.song_queue)
 
     if payload.title is not None:
-        updates["title"] = payload.title
+        room.title = payload.title
 
-    if payload.description is not None:
-        updates["description"] = payload.description
+    if payload.tag_group_ids is not None or payload.tag_groups is not None:
+        group_ids = payload.tag_group_ids
+        if group_ids is None:
+            group_ids = [group.id for group in (payload.tag_groups or [])]
+        group_ids = list(dict.fromkeys(group_ids))
+        if group_ids:
+            group_result = await session.execute(
+                select(TagGroup)
+                .where(TagGroup.id.in_(group_ids))
+                .options(selectinload(TagGroup.tags))
+            )
+            found_groups = list(group_result.scalars().all())
+            found_ids = {group.id for group in found_groups}
+            missing_ids = [group_id for group_id in group_ids if group_id not in found_ids]
+            if missing_ids:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Tag groups with IDs {missing_ids} not found"
+                )
+            room.tag_groups = found_groups
+        else:
+            room.tag_groups = []
 
-    if payload.tagGroups is not None:
-        updates["tag_groups"] = json.dumps(payload.tagGroups,
-                                           ensure_ascii=False)
+    await session.commit()
 
-    if updates:
-        await redis.hset(room_key, mapping=updates)
-
-    return await get_room_info_payload(roomid)
+    refreshed_result = await session.execute(stmt)
+    refreshed_room = refreshed_result.scalar_one_or_none()
+    if not refreshed_room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return _to_room_info_response(refreshed_room)

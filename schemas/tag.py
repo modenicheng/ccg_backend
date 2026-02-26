@@ -8,6 +8,10 @@ class TagBase(BaseModel):
 class TagCreate(TagBase):
     pass
 
+
+class TagPatch(BaseModel):
+    name: str = Field(..., description="更新后的标签名称")
+
 class TagResponse(TagBase):
     id: int
     model_config = ConfigDict(from_attributes=True)

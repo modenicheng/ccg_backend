@@ -1,7 +1,9 @@
 import logging
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import User
+from sqlalchemy.orm import selectinload
+from db.models import User, Room, TagGroup
 from db.session import get_db
 from uuid import uuid4
 from client_manager import ClientManager
@@ -15,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from handlers import handle
 from pathlib import Path
+from schemas.room import RoomStateInitMessage, RoomStateInitData, RoomStatePlayerItem, RoomStateTagGroupItem, RoomStateTagItem
 
 from router import room_router, tag_router
 
@@ -46,6 +49,51 @@ if STATIC_DIR.exists():
     logger.info(f"Frontend dist directory found: {STATIC_DIR}")
 else:
     logger.warning(f"Frontend dist directory not found: {STATIC_DIR}")
+
+
+def build_roomstate_init_payload(room: Room) -> RoomStateInitMessage:
+    host_user = next((u for u in room.users if u.is_owner), None)
+
+    tag_groups: list[RoomStateTagGroupItem] = []
+    unique_tags: dict[int, RoomStateTagItem] = {}
+    for group in room.tag_groups:
+        group_tags: list[RoomStateTagItem] = []
+        for tag in group.tags:
+            tag_item = RoomStateTagItem(
+                id=tag.id,
+                name=tag.name,
+            )
+            group_tags.append(tag_item)
+            unique_tags[tag.id] = tag_item
+
+        tag_groups.append(
+            RoomStateTagGroupItem(
+                id=group.id,
+                name=group.name,
+                description=group.description,
+                tags=group_tags,
+            ))
+
+    message = RoomStateInitMessage(
+        data=RoomStateInitData(
+            room_id=room.id,
+            title=room.title,
+            status=int(room.status),
+            host=host_user.username if host_user else None,
+            owner=host_user.username if host_user else None,
+            host_player_id=str(host_user.id) if host_user else "",
+            players=[
+                RoomStatePlayerItem(
+                    id=u.id,
+                    username=u.username,
+                    is_owner=u.is_owner,
+                ) for u in room.users
+            ],
+            tag_groups=tag_groups,
+            tags=list(unique_tags.values()),
+        ))
+
+    return message
 
 
 @app.on_event("startup")
@@ -157,24 +205,26 @@ async def websocket_endpoint(websocket: WebSocket,
 
     await websocket.accept()
 
-    redis = await redis_client.get_client()
-    if not redis:
-        await websocket.close(code=1013, reason="Service unavailable")
-        return
-
-    room_exists = await redis.exists(RedisKeys.room(roomid))
-    # if not room_exists:
-    #     await websocket.close(code=1008, reason="Room not found")
-    #     return
-
-    # if token:
-    #     session = await session_manager.get_session(token)
-    #     if not session or session.get("room_id") != roomid:
-    #         await websocket.close(code=1008, reason="Invalid room session")
-    #         return
-
     logger.info("WebSocket connected: %s", websocket.client)
     clients.push(roomid, websocket)
+
+    room_stmt = (
+        select(Room)
+        .where(Room.id == roomid)
+        .options(
+            selectinload(Room.users),
+            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+        )
+    )
+    room_result = await session.execute(room_stmt)
+    room = room_result.scalar_one_or_none()
+    if not room:
+        await websocket.close(code=1008, reason="Room not found")
+        return
+
+    init_payload = build_roomstate_init_payload(room)
+    await websocket.send_text(init_payload.model_dump_json())
+
     # asyncio.create_task(heartbeat_init(websocket))
     try:
         while True:

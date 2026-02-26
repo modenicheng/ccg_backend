@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from db.models import Tag, TagGroup
 from db.session import get_db
-from schemas.tag import TagGroupCreate, TagGroupPatch, TagGroupResponse, TagsCreateRequest, TagResponse, TagListResponse
+from schemas.tag import TagGroupCreate, TagGroupPatch, TagGroupResponse, TagsCreateRequest, TagResponse, TagListResponse, TagPatch
 
 tag_router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -70,6 +71,61 @@ async def get_tags(
     tags = result.scalars().all()
     return TagListResponse(
         tags=[TagResponse.model_validate(tag) for tag in tags])
+
+
+@tag_router.patch("/{tag_id}", response_model=TagResponse)
+async def patch_tag(
+    tag_id: int,
+    data: TagPatch,
+    session: AsyncSession = Depends(get_db)
+):
+    result = await session.execute(select(Tag).where(Tag.id == tag_id))
+    tag = result.scalar_one_or_none()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    new_name = data.name.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="name cannot be empty")
+
+    tag.name = new_name
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Tag name already exists")
+
+    return TagResponse.model_validate(tag)
+
+
+@tag_router.delete("/{tag_id}", status_code=204)
+async def delete_tag(
+    tag_id: int,
+    session: AsyncSession = Depends(get_db)
+):
+    result = await session.execute(select(Tag).where(Tag.id == tag_id))
+    tag = result.scalar_one_or_none()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    await session.delete(tag)
+    await session.commit()
+
+
+@tag_router.get("/groups/", response_model=list[TagGroupResponse])
+async def get_tag_groups(
+        session: AsyncSession = Depends(get_db),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+):
+    result = await session.execute(
+        select(TagGroup)
+        .options(selectinload(TagGroup.tags))
+        .limit(limit)
+        .offset(offset)
+    )
+    groups = result.scalars().all()
+    return [TagGroupResponse.model_validate(group) for group in groups]
 
 @tag_router.post("/groups/", response_model=TagGroupResponse)
 async def create_tag_group(data: TagGroupCreate,
@@ -189,3 +245,19 @@ async def patch_tag_group(
     tag_group = result.scalar_one()
 
     return TagGroupResponse.model_validate(tag_group)
+
+
+@tag_router.delete("/groups/{group_id}", status_code=204)
+async def delete_tag_group(
+    group_id: int,
+    session: AsyncSession = Depends(get_db)
+):
+    result = await session.execute(
+        select(TagGroup).where(TagGroup.id == group_id)
+    )
+    tag_group = result.scalar_one_or_none()
+    if not tag_group:
+        raise HTTPException(status_code=404, detail="Tag group not found")
+
+    await session.delete(tag_group)
+    await session.commit()
