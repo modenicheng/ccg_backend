@@ -1,7 +1,9 @@
 from fastapi import WebSocket
 from pydantic import ValidationError
+from typing import Any
 
 from cache.utils import room_manager
+from client_manager import ClientManager
 from schemas.game_events import PauseMessage, PlayMessage, SeekMessage
 from utils import get_logger
 from utils.enumerations import GameEventType
@@ -26,10 +28,39 @@ def _build_error(event: GameEventType, reason: str):
     }
 
 
+async def _safe_send_error(
+    clients: ClientManager | None,
+    websocket: WebSocket | None,
+    event: GameEventType,
+    reason: str,
+):
+    if clients is None or websocket is None:
+        logger.warning("Skip send error: clients/websocket missing, event=%s",
+                       event.name)
+        return
+    await clients.send(websocket, _build_error(event, reason))
+
+
+async def _safe_broadcast(
+    clients: ClientManager | None,
+    room_id: str,
+    payload: dict[str, Any],
+    websocket: WebSocket,
+):
+    if clients is None:
+        logger.warning("Skip broadcast: clients missing, room=%s", room_id)
+        return
+    await clients.broadcast(
+        room_id,
+        payload,
+        except_clients={websocket},
+    )
+
+
 async def _handle_play_control(
     event: GameEventType,
     data: dict,
-    clients=None,
+    clients: ClientManager | None = None,
     websocket: WebSocket | None = None,
     room_id: str | None = None,
 ):
@@ -37,7 +68,8 @@ async def _handle_play_control(
         return
 
     if not _ensure_owner(websocket):
-        await clients.send(websocket, _build_error(event, "Only owner can control playback"))
+        await _safe_send_error(clients, websocket, event,
+                               "Only owner can control playback")
         return
 
     try:
@@ -52,7 +84,8 @@ async def _handle_play_control(
             round_state = "seeking"
     except ValidationError as exc:
         logger.warning("Invalid %s payload: %s", event.name, exc)
-        await clients.send(websocket, _build_error(event, f"Invalid payload: {exc.errors()}"))
+        await _safe_send_error(clients, websocket, event,
+                               f"Invalid payload: {exc.errors()}")
         return
 
     await room_manager.update_playback_state(
@@ -65,17 +98,18 @@ async def _handle_play_control(
         event_name=event.name,
     )
 
-    await clients.broadcast(
-        room_id,
-        payload.model_dump(),
-        except_clients={websocket},
-    )
+    await _safe_broadcast(clients, room_id, payload.model_dump(), websocket)
 
 
 @regist(GameEventType.PLAY)
-async def handle_play(data, clients=None, websocket=None, room_id=None, **kwargs):
+async def handle_play(data,
+                      clients=None,
+                      websocket=None,
+                      room_id=None,
+                      **kwargs):
     if not isinstance(data, dict):
-        await clients.send(websocket, _build_error(GameEventType.PLAY, "Expected JSON object"))
+        await _safe_send_error(clients, websocket, GameEventType.PLAY,
+                               "Expected JSON object")
         return
     await _handle_play_control(GameEventType.PLAY,
                                data,
@@ -85,10 +119,14 @@ async def handle_play(data, clients=None, websocket=None, room_id=None, **kwargs
 
 
 @regist(GameEventType.PAUSE)
-async def handle_pause(data, clients=None, websocket=None, room_id=None, **kwargs):
+async def handle_pause(data,
+                       clients=None,
+                       websocket=None,
+                       room_id=None,
+                       **kwargs):
     if not isinstance(data, dict):
-        await clients.send(websocket,
-                           _build_error(GameEventType.PAUSE, "Expected JSON object"))
+        await _safe_send_error(clients, websocket, GameEventType.PAUSE,
+                               "Expected JSON object")
         return
     await _handle_play_control(GameEventType.PAUSE,
                                data,
@@ -98,9 +136,14 @@ async def handle_pause(data, clients=None, websocket=None, room_id=None, **kwarg
 
 
 @regist(GameEventType.SEEK)
-async def handle_seek(data, clients=None, websocket=None, room_id=None, **kwargs):
+async def handle_seek(data,
+                      clients=None,
+                      websocket=None,
+                      room_id=None,
+                      **kwargs):
     if not isinstance(data, dict):
-        await clients.send(websocket, _build_error(GameEventType.SEEK, "Expected JSON object"))
+        await _safe_send_error(clients, websocket, GameEventType.SEEK,
+                               "Expected JSON object")
         return
     await _handle_play_control(GameEventType.SEEK,
                                data,
