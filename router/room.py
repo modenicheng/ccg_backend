@@ -1,4 +1,5 @@
-from db.models import Room
+from db.models import Room, User
+from schemas.user import UserLogin
 from utils import get_logger
 from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse, CreateRoomRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
@@ -10,6 +11,7 @@ from cache.utils import RedisKeys, room_manager, session_manager
 from uuid import uuid4
 from db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 logger = get_logger(__name__)
 
@@ -56,29 +58,40 @@ async def get_room_info_payload(roomid: str) -> RoomInfoResponse:
 
 @room_router.post("/", response_model=CreateRoomResponse)
 async def create_room(
-    info: CreateRoomRequest,
-    session: AsyncSession = Depends(get_db)
+    info: CreateRoomRequest, session: AsyncSession = Depends(get_db)
 ) -> CreateRoomResponse:
     room_id = generate_room_id()
     logger.info(f"Creating room with ID: {room_id}")
 
-    new_room = Room(
-        id=room_id,
-        title=info.title,
-    )
+    owner = User(username=info.host_name,
+                 is_owner=True,
+                 token=str(uuid4()),
+                 room_id=room_id)
+    session.add(owner)
+
+    new_room = Room(id=room_id, title=info.title, users=[owner])
     session.add(new_room)
-    
+
     redis = await redis_client.get_client()
     if not redis:
         raise HTTPException(status_code=503, detail="Redis unavailable")
     await session.commit()
 
-    return CreateRoomResponse(room_id=room_id, host_name=info.host_name, host_token=str(uuid4()))
+    return CreateRoomResponse(
+        room_id=room_id,
+        host=UserLogin.model_validate(owner),
+    )
 
 
 @room_router.get("/{roomid}", response_model=RoomInfoResponse)
-async def room_info(roomid: str) -> RoomInfoResponse:
-    return await get_room_info_payload(roomid)
+async def room_info(
+    roomid: str, session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
+    stmt = select(Room).where(Room.id == roomid)
+    result = await session.execute(stmt)
+    room = result.scalar_one_or_none()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return room
 
 
 @room_router.patch("/{roomid}", response_model=RoomInfoResponse)

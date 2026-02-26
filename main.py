@@ -1,5 +1,8 @@
 import logging
-
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from db.models import User
+from db.session import get_db
 from uuid import uuid4
 from client_manager import ClientManager
 from cache.connection import redis_client
@@ -7,7 +10,7 @@ from cache.utils import RedisKeys, room_manager, session_manager
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType
 from utils.memory_monitor import MemoryMonitor
-from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from handlers import handle
@@ -120,13 +123,38 @@ async def root():
 
 
 @app.websocket("/ws/{roomid}")
-async def websocket_endpoint(
-        websocket: WebSocket,
-        roomid: str,
-        token: str | None = Query(default=None),
-):
+async def websocket_endpoint(websocket: WebSocket,
+                             roomid: str,
+                             session: AsyncSession = Depends(get_db)):
 
     global clients
+    logger.debug(websocket.cookies)
+
+    user_token = websocket.cookies.get(f"ccg-room-token:{roomid}")
+    user_id = websocket.cookies.get(f"ccg-room-user-id:{roomid}")
+    username = websocket.cookies.get(f"ccg-room-username:{roomid}")
+
+    if not user_token or not user_id or not username:
+        logger.warning(
+            f"WebSocket connection missing authentication cookies for room {roomid}. user_token: {user_token}, user_id: {user_id}, username: {username}"
+        )
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
+    stmt = select(User).where(User.id == int(user_id))
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user or user.token != user_token or user.room_id != roomid:
+        logger.warning(
+            f"WebSocket authentication failed for room {roomid}. user_id: {user_id}, token valid: {user.token == user_token if user else 'N/A'}, room_id valid: {user.room_id == roomid if user else 'N/A'}"
+        )
+        await websocket.close(code=1008, reason="Invalid authentication")
+        return
+
+    logger.info(
+        f"WebSocket connection attempt for room {roomid} with token: {user_token}, user_id: {user_id}, username: {username}"
+    )
+
     await websocket.accept()
 
     redis = await redis_client.get_client()
@@ -135,15 +163,15 @@ async def websocket_endpoint(
         return
 
     room_exists = await redis.exists(RedisKeys.room(roomid))
-    if not room_exists:
-        await websocket.close(code=1008, reason="Room not found")
-        return
+    # if not room_exists:
+    #     await websocket.close(code=1008, reason="Room not found")
+    #     return
 
-    if token:
-        session = await session_manager.get_session(token)
-        if not session or session.get("room_id") != roomid:
-            await websocket.close(code=1008, reason="Invalid room session")
-            return
+    # if token:
+    #     session = await session_manager.get_session(token)
+    #     if not session or session.get("room_id") != roomid:
+    #         await websocket.close(code=1008, reason="Invalid room session")
+    #         return
 
     logger.info("WebSocket connected: %s", websocket.client)
     clients.push(roomid, websocket)
