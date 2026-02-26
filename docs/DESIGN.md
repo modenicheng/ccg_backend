@@ -112,6 +112,7 @@
 6. **判分环节**：
    - 触发条件：队列为空且房间内所有玩家均已作答，或房主点击“结束回合”，或歌曲播放完毕且无人抢答。
    - 后端广播 `judging` 事件，房主界面显示标准答案区：展示所有标签组供勾选（考虑组内互斥），以及精准描述候选列表（根据历史标注或空列表），房主可手动添加新描述选项。
+   - 此时会显示当前播放的歌曲信息（名称、歌手、封面），以及当前的标签组和精准描述候选列表。
    - 房主提交正确答案（含选中的标签 ID 列表和选中的精准描述 ID 列表，或“无描述”）。后端进行计分。
 7. **计分**：
    - 遍历每个抢答玩家的答案：
@@ -197,6 +198,7 @@
 | `/api/room/create`   | POST   | 创建房间                               | `{ username: string, tagGroups?: [...] }`  | `{ roomId: string, token: string }` |
 | `/api/room/join`     | POST   | 加入房间                               | `{ roomId: string, username: string }`     | `{ token: string, roomState: ... }` |
 | `/api/room/:roomId`  | GET    | 获取房间公开信息（用于展示）           | -                                          | 房间基本信息                        |
+| `/api/room/:roomId`  | PATCH  | 更新房间设置                           | `{ title?: string, description?: string, songQueue?: string[], tagGroups?: object }` | 房间信息                            |
 | `/api/song/search`   | GET    | 搜索歌曲（备用）                       | `q: string`                                | 歌曲列表                            |
 | `/api/song/playlist` | POST   | 导入QQ音乐歌单                         | `{ playlistId: string }`                   | 歌曲列表                            |
 | `/api/user/reconnect`| POST   | 通过Cookie重连（获取最新状态）         | Cookie中包含token                          | 房间状态                            |
@@ -822,6 +824,11 @@ Cookie: token=eyJhbGci...
 - **UI 状态机**：根据房间状态展示不同界面（准备区、播放区、作答区、判分区）。作答区需显示剩余时间、标签组（每组单选）和精准描述输入框。
 - **排队展示**：前端应展示当前抢答队列，让玩家了解自己排在第几位。
 - **房主权限控制**：房主界面显示额外控件（开始游戏、结束回合、判分提交），判分界面展示所有玩家的答案，以及标签组勾选框和描述候选列表。
+- **前端路由**：
+  - `/` - 首页（创建/加入房间）
+  - `/room/:roomid` - 房间游戏页面
+  - `/room/:roomid/manage` - 房间管理页面（仅房主可访问）
+- **UI 库**：使用 daisyUI 组件库，提供现代化的界面设计
 
 ## 9. 部署方案
 
