@@ -12,6 +12,44 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class SonglistBase(BaseModel):
+    """Base schema for songlist data."""
+
+    platform: Optional[str] = Field(
+        default=None,
+        description="Platform identifier (e.g., 'qqmusic', 'netease')"
+    )
+    platform_songlist_id: Optional[str] = Field(
+        default=None,
+        description="Platform-specific songlist ID"
+    )
+    title: Optional[str] = Field(
+        default=None,
+        description="Songlist title"
+    )
+    creator_name: Optional[str] = Field(
+        default=None,
+        description="Creator/author name"
+    )
+    cover_url: Optional[str] = Field(
+        default=None,
+        description="Cover image URL"
+    )
+    metadata_json: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Additional metadata as JSON"
+    )
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+class SonglistCreate(SonglistBase):
+    """Schema for creating a new songlist."""
+    pass
+
+
 class SonglistFetchRequest(BaseModel):
     """Request schema for fetching a songlist from a platform."""
     
@@ -80,20 +118,11 @@ class SonglistCreateRequest(BaseModel):
     )
 
 
-class SonglistResponse(BaseModel):
+class SonglistResponse(SonglistBase):
     """Response schema for songlist details."""
-    
+
     id: int = Field(description="Database ID")
-    platform: Optional[str] = Field(description="Platform identifier")
-    platform_songlist_id: Optional[str] = Field(description="Platform-specific ID")
-    title: Optional[str] = Field(description="Songlist title")
-    creator_name: Optional[str] = Field(description="Creator name")
-    cover_url: Optional[str] = Field(description="Cover URL")
     song_count: int = Field(description="Number of songs in this list")
-    metadata_json: Optional[dict[str, Any]] = Field(
-        default=None,
-        description="Additional metadata"
-    )
 
     model_config = ConfigDict(
         from_attributes=True,

@@ -10,16 +10,16 @@ from client_manager import ClientManager
 from cache.connection import redis_client
 from cache.utils import RedisKeys, room_manager, session_manager
 from utils import get_event_type, get_logger, init_logging
-from utils.enumerations import EventType
+from utils.enumerations import EventType, GameEventType
 from utils.memory_monitor import MemoryMonitor
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from handlers import handle
+from handlers import handle, handle_json
 from pathlib import Path
 from schemas.room import RoomStateInitMessage, RoomStateInitData, RoomStatePlayerItem, RoomStateTagGroupItem, RoomStateTagItem
 
-from router import room_router, tag_router
+from router import room_router, tag_router, song_router, songlist_router
 
 init_logging(level=logging.DEBUG)
 logger = get_logger(__name__)
@@ -35,6 +35,8 @@ app.add_middleware(
 ##############################
 app.include_router(room_router)
 app.include_router(tag_router)
+app.include_router(song_router)
+app.include_router(songlist_router)
 
 ##############################
 
@@ -204,6 +206,7 @@ async def websocket_endpoint(websocket: WebSocket,
     )
 
     await websocket.accept()
+    websocket.state.user = user
 
     logger.info("WebSocket connected: %s", websocket.client)
     clients.push(roomid, websocket)
@@ -230,12 +233,56 @@ async def websocket_endpoint(websocket: WebSocket,
         while True:
             data = await websocket.receive()
             if "text" in data:
-                data = data["text"]
-                # // use pydantic to validate and parse the incoming JSON data directly into a python object.
+                payload_text = data["text"]
+                try:
+                    payload_json = json.loads(payload_text)
+                except json.JSONDecodeError as e:
+                    await clients.send(websocket, {
+                        "type": "error",
+                        "reason": f"Invalid JSON payload: {e}"
+                    })
+                    continue
+
+                event_value = payload_json.get("event")
+                if not isinstance(event_value, int):
+                    await clients.send(websocket, {
+                        "type": "error",
+                        "reason": "Missing event field"
+                    })
+                    continue
+
+                try:
+                    game_event = GameEventType(event_value)
+                except ValueError:
+                    await clients.send(websocket, {
+                        "type": "error",
+                        "reason": f"Unsupported game event: {event_value}"
+                    })
+                    continue
+
+                try:
+                    await handle_json(
+                        game_event,
+                        payload_json,
+                        clients=clients,
+                        websocket=websocket,
+                        room_id=roomid,
+                        user=user,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to handle JSON event: %s, error: %s",
+                        game_event.name,
+                        e,
+                    )
+                    await clients.send(websocket, {
+                        "type": "error",
+                        "event": game_event.value,
+                        "reason": f"Failed to handle event: {e}"
+                    })
             elif "bytes" in data:
                 data = data["bytes"]
                 event: EventType = get_event_type(data)
-                logger.debug("Received event: %s", event.name)
                 try:
                     await handle(event,
                                  data,

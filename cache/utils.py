@@ -305,6 +305,52 @@ class RedisRoomManager:
             print(f"Error updating play progress: {e}")
             return False
 
+    async def update_playback_state(
+        self,
+        room_id: str,
+        round_state: str,
+        progress_ms: int,
+        offset_ts: int,
+        audio_url: str | None,
+        event_ts: int,
+        event_name: str,
+    ) -> bool:
+        """更新播放控制状态
+
+        Args:
+            room_id: 房间 ID
+            round_state: 当前轮次状态（playing/paused/seeking）
+            progress_ms: 当前播放进度（毫秒）
+            offset_ts: 进度采样时刻（校准后的毫秒时间戳）
+            audio_url: 当前音频链接
+            event_ts: 事件发送时间戳
+            event_name: 事件名称（PLAY/PAUSE/SEEK）
+
+        Returns:
+            bool: 是否更新成功
+        """
+        redis = await get_redis()
+        if not redis:
+            return False
+
+        try:
+            room_key = RedisKeys.room(room_id)
+            mapping = {
+                "current_round_state": round_state,
+                "play_progress": int(progress_ms),
+                "play_offset_ts": int(offset_ts),
+                "last_control_ts": int(event_ts),
+                "last_control_event": event_name,
+            }
+            if audio_url is not None:
+                mapping["audio_url"] = audio_url
+
+            await redis.hset(room_key, mapping=mapping)
+            return True
+        except Exception as e:
+            print(f"Error updating playback state: {e}")
+            return False
+
     async def get_play_progress(self, room_id: str) -> int:
         """获取播放进度
         

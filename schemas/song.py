@@ -12,29 +12,52 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class SongResponse(BaseModel):
-    """Response schema for song details."""
-    
-    id: int = Field(description="Database ID")
-    platform: Optional[str] = Field(description="Platform identifier")
-    platform_song_id: Optional[str] = Field(description="Platform-specific song ID")
-    title: Optional[str] = Field(description="Song title")
-    subtitle: Optional[str] = Field(description="Song subtitle/description")
-    artist: Optional[str] = Field(description="Artist/performer name")
-    album_name: Optional[str] = Field(description="Album name")
-    cover_url: Optional[str] = Field(description="Cover image URL")
-    audio_url: Optional[str] = Field(description="Audio stream URL")
+class SongBase(BaseModel):
+    """Base schema for song data."""
+
+    platform: Optional[str] = Field(
+        default=None,
+        description="Platform identifier (e.g., 'qqmusic', 'netease')")
+    platform_song_id: Optional[str] = Field(
+        default=None, description="Platform-specific song ID")
+    title: Optional[str] = Field(default=None, description="Song title")
+    subtitle: Optional[str] = Field(default=None,
+                                    description="Song subtitle/description")
+    artist: Optional[str] = Field(default=None,
+                                  description="Artist/performer name")
+    album_name: Optional[str] = Field(default=None, description="Album name")
+    album_id: Optional[int] = Field(
+        default=None,
+        description="Foreign key referencing the album table"
+    )
+    cover_url: Optional[str] = Field(default=None,
+                                     description="Cover image URL")
+    audio_url: Optional[str] = Field(default=None,
+                                     description="Audio stream URL")
     cached_path: Optional[str] = Field(
         default=None,
-        description="Local filesystem path where audio is cached (null if not cached)"
-    )
+        description=
+        "Local filesystem path where audio is cached (null if not cached)")
     metadata_json: Optional[dict[str, Any]] = Field(
-        default=None,
-        description="Additional metadata"
-    )
-    is_cached: bool = Field(
+        default=None, description="Additional metadata")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SongCreate(SongBase):
+    """Schema for creating a new song."""
+    pass
+
+
+
+class SongResponse(SongBase):
+    """Response schema for song details."""
+
+    id: int = Field(description="Database ID")
+    cached: bool = Field(
         description="Whether this song has been cached locally",
-        default=False
+        default=False,
+        alias="is_cached"
     )
 
     model_config = ConfigDict(
@@ -51,7 +74,7 @@ class SongResponse(BaseModel):
                 "cover_url": "https://example.com/cover.jpg",
                 "audio_url": "https://stream.example.com/song.mp3",
                 "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                "is_cached": True,
+                "cached": True,
                 "metadata_json": None
             }
         }
@@ -65,22 +88,14 @@ class SongResponse(BaseModel):
 
 class SongCacheUpdateRequest(BaseModel):
     """Request schema for updating a song's cached audio path."""
-    
-    song_id: int = Field(
-        description="Database ID of the song to update"
-    )
+
+    song_id: int = Field(description="Database ID of the song to update")
     cached_path: str = Field(
-        description="Filesystem path where audio file is now stored"
-    )
-    format: Optional[str] = Field(
-        default="mp3",
-        description="Audio format/codec"
-    )
+        description="Filesystem path where audio file is now stored")
+    format: Optional[str] = Field(default="mp3",
+                                  description="Audio format/codec")
     file_size_bytes: Optional[int] = Field(
-        default=None,
-        ge=0,
-        description="Optional: file size in bytes"
-    )
+        default=None, ge=0, description="Optional: file size in bytes")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -90,5 +105,4 @@ class SongCacheUpdateRequest(BaseModel):
                 "format": "mp3",
                 "file_size_bytes": 5242880
             }
-        }
-    )
+        })
