@@ -130,6 +130,8 @@ class Song(Base):
                                        name="uq_song_platform_id"), )
 
     rooms: Mapped[list[RoomSong]] = relationship(back_populates="song")
+    album: Mapped[Album | None] = relationship(back_populates="songs",
+                                               uselist=False)
     songlists: Mapped[list[SonglistSong]] = relationship(back_populates="song")
     song_tag_histories: Mapped[list[SongTagHistory]] = relationship(
         back_populates="song")
@@ -137,6 +139,28 @@ class Song(Base):
         list[SongDescriptionHistory]] = relationship(back_populates="song")
     player_answers: Mapped[list[PlayerAnswer]] = relationship(
         back_populates="song")
+
+
+class Album(Base):
+    __tablename__ = "albums"
+
+    id: Mapped[int] = mapped_column(Integer,
+                                    primary_key=True,
+                                    autoincrement=True)
+    platform: Mapped[str | None] = mapped_column(String, nullable=True)
+    platform_album_id: Mapped[str | None] = mapped_column(String,
+                                                          nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    artist: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
+                                                                 nullable=True)
+
+    __table_args__ = (UniqueConstraint("platform",
+                                       "platform_album_id",
+                                       name="uq_album_platform_id"), )
+
+    songs: Mapped[list[Song]] = relationship(back_populates="album")
 
 
 class Room(Base):
@@ -153,14 +177,14 @@ class Room(Base):
         DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    __table_args__ = (
-        CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
-    )
+    __table_args__ = (CheckConstraint("status in (0, 1, 2)",
+                                      name="ck_rooms_status"), )
 
     users: Mapped[list[User]] = relationship(back_populates="room",
                                              cascade="all, delete-orphan")
     room_songs: Mapped[list[RoomSong]] = relationship(back_populates="room")
-    tag_group: Mapped[list[TagGroup]] = relationship(back_populates="rooms", secondary="tag_groups_rooms")
+    tag_groups: Mapped[list[TagGroup]] = relationship(
+        back_populates="rooms", secondary="tag_groups_rooms")
     scores: Mapped[list[Score]] = relationship(back_populates="room")
     player_answers: Mapped[list[PlayerAnswer]] = relationship(
         back_populates="room")
@@ -181,7 +205,7 @@ class RoomSong(Base):
     song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
                                                     ondelete="CASCADE"),
                                          primary_key=True)
-    
+
     # 这里用于记录歌曲在房间内的顺序，数值越小表示越靠前。可以为 null，表示没有特定顺序要求。
     song_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -204,15 +228,21 @@ class TagGroup(Base):
 
     tags: Mapped[list[Tag]] = relationship(secondary="tag_group_tags",
                                            back_populates="groups")
-    rooms: Mapped[list[Room]] = relationship(back_populates="tag_group", secondary="tag_groups_rooms")
+    rooms: Mapped[list[Room]] = relationship(back_populates="tag_groups",
+                                             secondary="tag_groups_rooms")
+
 
 class TagGroupRoom(Base):
     """标签组与房间关联表 tag_groups_rooms"""
 
     __tablename__ = "tag_groups_rooms"
 
-    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id", ondelete="CASCADE"), primary_key=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id",
+                                                     ondelete="CASCADE"),
+                                          primary_key=True)
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
+                                                    ondelete="CASCADE"),
+                                         primary_key=True)
 
 
 class TagGroupTag(Base):
@@ -220,12 +250,12 @@ class TagGroupTag(Base):
 
     __tablename__ = "tag_group_tags"
 
-    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id", ondelete="CASCADE"), primary_key=True)
-
-
-
-
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id",
+                                                   ondelete="CASCADE"),
+                                        primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id",
+                                                     ondelete="CASCADE"),
+                                          primary_key=True)
 
 
 class Tag(Base):

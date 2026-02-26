@@ -9,7 +9,7 @@ Handles:
 
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SonglistFetchRequest(BaseModel):
@@ -29,14 +29,15 @@ class SonglistFetchRequest(BaseModel):
         description="Optional override for max retry attempts"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "platform_songlist_id": "123456789",
                 "platform": "qqmusic",
                 "max_retries": 5
             }
         }
+    )
 
 
 class SonglistCreateRequest(BaseModel):
@@ -65,8 +66,8 @@ class SonglistCreateRequest(BaseModel):
         description="Additional metadata as JSON"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "platform": "qqmusic",
                 "platform_songlist_id": "123456789",
@@ -76,6 +77,7 @@ class SonglistCreateRequest(BaseModel):
                 "metadata_json": {"description": "A collection of classics"}
             }
         }
+    )
 
 
 class SonglistResponse(BaseModel):
@@ -93,9 +95,9 @@ class SonglistResponse(BaseModel):
         description="Additional metadata"
     )
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": 1,
                 "platform": "qqmusic",
@@ -107,3 +109,4 @@ class SonglistResponse(BaseModel):
                 "metadata_json": None
             }
         }
+    )
