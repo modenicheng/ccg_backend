@@ -68,3 +68,12 @@ class ScoreUpdateMessage(BaseModel):
     event: Literal[42] = GameEventType.SCORE_UPDATE.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: ScoreUpdateData
+
+class AttemptAnswerData(BaseModel):
+    offset_ts: int = Field(..., ge=0)
+    user_id: int = Field(..., ge=0)
+
+class AttemptAnswerMessage(BaseModel):
+    event: Literal[33] = GameEventType.ATTEMPT_ANSWER.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: AttemptAnswerData

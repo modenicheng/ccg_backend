@@ -4,6 +4,8 @@ from . import enumerations
 from .dataframe import get_event_type
 from .logger import get_logger, init_logging
 from .cookie import parse_cookie_string
+from . import payloads
+
 # 导入内存监控模块
 try:
     from .memory_monitor import (
@@ -22,6 +24,7 @@ __all__ = [
     "get_logger",
     "init_logging",
     "parse_cookie_string",
+    "payloads",
 ]
 
 # 如果有内存监控模块，添加到导出列表
