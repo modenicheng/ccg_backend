@@ -1,5 +1,5 @@
 from time import time
-from typing import Literal
+from typing import Literal, Any
 
 from pydantic import BaseModel, Field
 
@@ -45,3 +45,26 @@ class JudgingMessage(BaseModel):
     event: Literal[40] = GameEventType.JUDGING.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: JudgingData
+
+
+class JudgeSubmitData(BaseModel):
+    correct_tags: list[int] = Field(default_factory=list)
+    correct_description_ids: list[int] = Field(default_factory=list)
+    new_correct_descriptions: list[str] = Field(default_factory=list)
+    skip_scoring: bool = False
+
+
+class JudgeSubmitMessage(BaseModel):
+    event: Literal[41] = GameEventType.JUDGE_SUBMIT.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: JudgeSubmitData
+
+
+class ScoreUpdateData(BaseModel):
+    scores: list[dict[str, Any]]
+
+
+class ScoreUpdateMessage(BaseModel):
+    event: Literal[42] = GameEventType.SCORE_UPDATE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: ScoreUpdateData

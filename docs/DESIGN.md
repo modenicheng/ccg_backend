@@ -678,10 +678,14 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "correct_tags": [101, 201],
-    "correct_description_ids": [1001],  // 空数组表示无正确描述
-    "new_correct_descriptions": ["歌手早年经典", "电影主题曲"], // 手动输入的新描述，会被添加到历史中，同时生成description_id供未来选择
-    "skip_scoring": false
+    "event": 41,
+    "ts": 1620000000000,
+    "data": {
+      "correct_tags": [101, 201],
+      "correct_description_ids": [1001],  // 空数组表示无正确描述
+      "new_correct_descriptions": ["歌手早年经典", "电影主题曲"], // 手动输入的新描述，会被添加到历史中，同时生成description_id供未来选择
+      "skip_scoring": false
+    }
   }
   ```
 
@@ -689,10 +693,14 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "scores": [
-      { "player_id": 42, "username": "bob", "score": 15 },
-      { "player_id": 37, "username": "alice", "score": 10 }
-    ]
+    "event": 42,
+    "ts": 1620000000000,
+    "data": {
+      "scores": [
+        { "player_id": 42, "username": "bob", "score": 15 },
+        { "player_id": 37, "username": "alice", "score": 10 }
+      ]
+    }
   }
   ```
 
