@@ -131,7 +131,7 @@ $$
 
 仅当偏差超过阈值才 seek：
 
-- `AUDIO_SYNC_THRESHOLD_MS = 200`
+- `AUDIO_SYNC_THRESHOLD_MS = 50`
 
 ### 4.4 防拖动闪动
 

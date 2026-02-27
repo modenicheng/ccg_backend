@@ -1,22 +1,33 @@
-import json
-from typing import Any, Awaitable, Callable, TypeVar
+from datetime import datetime
+from enum import Enum
+from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 from urllib.parse import urlparse
 
 from huey import RedisHuey
 import os
 import httpx
+import threading
 
 import qqmusic_api as qapi
 
-from db.crud import create_or_update_songlist, create_or_update_songs, update_song_cached_path
-from db.session import AsyncSessionLocal
-import utils
+from db.crud import create_or_update_songlist, create_or_update_songs, update_song_cached_path, create_task_record
+from db.session import AsyncSessionLocal, engine
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
+from utils import parse_cookie_string
+from dotenv import load_dotenv
+import asyncio
+import logging
 
+load_dotenv()
 # from db.session import AsyncSessionLocal
 # from db.models import Song
 
-logger = utils.logger.get_logger(__name__)
-http_client = httpx.AsyncClient()
+logger = logging.getLogger('huey')
+
+_ASYNC_LOOP_LOCK = threading.Lock()
+_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
+_ASYNC_LOOP_THREAD: threading.Thread | None = None
 
 REDIS_URI = os.getenv("CCG_REDIS_URL", "localhost")
 huey = RedisHuey('ccg-backend', host=REDIS_URI)
@@ -41,6 +52,91 @@ QQ_MUSIC_COOKIE = os.getenv("CCG_QQ_MUSIC_COOKIE", "").strip()
 T = TypeVar("T")
 
 
+def _to_jsonable(value: Any):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+
+    if hasattr(value, "__table__"):
+        table = getattr(value, "__table__", None)
+        if table is not None and hasattr(table, "columns"):
+            return {
+                column.name: _to_jsonable(getattr(value, column.name, None))
+                for column in table.columns
+            }
+
+    return str(value)
+
+
+async def _persist_task_state(task_id: str,
+                              status: str,
+                              task_name: str,
+                              result: Any = None,
+                              error: str | None = None) -> None:
+    payload: dict[str, Any] = {}
+    if result is not None:
+        normalized = _to_jsonable(result)
+        payload["result"] = normalized
+    if error is not None:
+        payload["error"] = error
+
+    async with AsyncSessionLocal() as session:
+        try:
+            await create_task_record(
+                session=session,
+                task_id=task_id,
+                task_name=task_name,
+                status=status,
+                result_json=payload or None,
+            )
+            await session.commit()
+        except Exception as db_err:
+            await session.rollback()
+            logger.error(
+                f"Failed to persist task state for {task_id} ({task_name}): {db_err}",
+                exc_info=True,
+            )
+
+
+def _ensure_background_event_loop() -> asyncio.AbstractEventLoop:
+    global _ASYNC_LOOP, _ASYNC_LOOP_THREAD
+    with _ASYNC_LOOP_LOCK:
+        if _ASYNC_LOOP is not None and not _ASYNC_LOOP.is_closed():
+            return _ASYNC_LOOP
+
+        loop = asyncio.new_event_loop()
+
+        def _run_loop_forever() -> None:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        thread = threading.Thread(
+            target=_run_loop_forever,
+            name="huey-async-loop",
+            daemon=True,
+        )
+        thread.start()
+
+        _ASYNC_LOOP = loop
+        _ASYNC_LOOP_THREAD = thread
+        return loop
+
+
+def _run_async(coro: Coroutine[Any, Any, T]) -> T:
+    loop = _ensure_background_event_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
+
+
 async def _with_retry(operation_name: str,
                       task_factory: Callable[[], Awaitable[T]], retries: int,
                       backoff_seconds: float) -> T:
@@ -60,20 +156,6 @@ async def _with_retry(operation_name: str,
 
     assert last_error is not None
     raise last_error
-
-
-def _parse_cookie_string(cookie_str: str) -> dict[str, str]:
-    cookies: dict[str, str] = {}
-    for item in cookie_str.split(";"):
-        part = item.strip()
-        if not part or "=" not in part:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        cookies[key] = value.strip()
-    return cookies
 
 
 def _resolve_audio_download_path(mid: str,
@@ -99,7 +181,7 @@ def _resolve_audio_download_path(mid: str,
 
 
 if QQ_MUSIC_COOKIE:
-    cookies = _parse_cookie_string(QQ_MUSIC_COOKIE)
+    cookies = parse_cookie_string(QQ_MUSIC_COOKIE)
     if cookies:
         credential = qapi.Credential.from_cookies_dict(cookies)
         qapi.get_session().credential = credential
@@ -133,10 +215,9 @@ def convert_to_opus(input_path, output_path=None, bitrate='128k'):
 
 
 @huey.task()
-async def download_audio_file(url, save_path=None, mid: str | None = None):
-    return await _download_audio_file_impl(url=url,
-                                           save_path=save_path,
-                                           mid=mid)
+def download_audio_file(url, save_path=None, mid: str | None = None):
+    return _run_async(
+        _download_audio_file_impl(url=url, save_path=save_path, mid=mid))
 
 
 async def _download_audio_file_impl(url,
@@ -151,12 +232,13 @@ async def _download_audio_file_impl(url,
         final_save_path = _resolve_audio_download_path(target_mid, url,
                                                        save_path)
 
-        response = await _with_retry(
-            operation_name=f"download audio from {url}",
-            task_factory=lambda: http_client.get(url),
-            retries=DOWNLOAD_RETRIES,
-            backoff_seconds=DOWNLOAD_BACKOFF_SECONDS,
-        )
+        async with httpx.AsyncClient() as http_client:
+            response = await _with_retry(
+                operation_name=f"download audio from {url}",
+                task_factory=lambda: http_client.get(url),
+                retries=DOWNLOAD_RETRIES,
+                backoff_seconds=DOWNLOAD_BACKOFF_SECONDS,
+            )
         response.raise_for_status()
         with open(final_save_path, 'wb') as f:
             f.write(response.content)
@@ -173,6 +255,7 @@ async def _get_song_url(
     filetype: qapi.song.SongFileType = qapi.song.SongFileType.OGG_320
 ) -> str | None:
     try:
+
         async def _fetch_song_urls() -> dict[str, Any]:
             return await qapi.song.get_song_urls(
                 [mid],
@@ -196,7 +279,7 @@ async def _get_song_url(
 
 
 @huey.task()
-async def download_and_cache_song(mid: str, save_path: str | None = None):
+def download_and_cache_song(mid: str, save_path: str | None = None):
     """A function that wrap the inner func. Run this func will push the task to huey.
     Run the inner func will directly execute the logic, which is more suitable for testing and debugging.
 
@@ -207,7 +290,8 @@ async def download_and_cache_song(mid: str, save_path: str | None = None):
     Returns:
         _type_: _description_
     """
-    return await _download_and_cache_song_impl(mid=mid, save_path=save_path)
+    return _run_async(_download_and_cache_song_impl(mid=mid,
+                                                    save_path=save_path))
 
 
 async def _download_and_cache_song_impl(mid: str,
@@ -253,11 +337,46 @@ async def _download_and_cache_song_impl(mid: str,
 
 
 @huey.task()
-async def fetch_songlist(songlist_id: int):
-    return await _fetch_songlist_impl(songlist_id=songlist_id)
+def fetch_songlist(songlist_id: int,
+                   cookie_str: str | None = None,
+                   task_id: str | None = None):
+    if task_id:
+        _run_async(
+            _persist_task_state(task_id=task_id,
+                                task_name="fetch_songlist",
+                                status="running"))
+
+    try:
+        result = _run_async(
+            _fetch_songlist_impl(songlist_id=songlist_id,
+                                 cookie_str=cookie_str))
+
+        if task_id:
+            if result is None:
+                _run_async(
+                    _persist_task_state(task_id=task_id,
+                                        task_name="fetch_songlist",
+                                        status="failed",
+                                        error="fetch_songlist returned no result"))
+            else:
+                _run_async(
+                    _persist_task_state(task_id=task_id,
+                                        task_name="fetch_songlist",
+                                        status="success",
+                                        result=result))
+        return result
+    except Exception as err:
+        if task_id:
+            _run_async(
+                _persist_task_state(task_id=task_id,
+                                    task_name="fetch_songlist",
+                                    status="failed",
+                                    error=str(err)))
+        raise
 
 
-async def _fetch_songlist_impl(songlist_id: int):
+async def _fetch_songlist_impl(songlist_id: int,
+                               cookie_str: str | None = None):
     """
     使用 qqmusic_api 获取歌单信息。
     {
@@ -318,79 +437,108 @@ async def _fetch_songlist_impl(songlist_id: int):
         "orderlist": []
     }
     """
-    async with AsyncSessionLocal() as session:
-        try:
-            first_songlist = await _with_retry(
-                operation_name=f"fetch songlist detail {songlist_id}",
-                task_factory=lambda: qapi.songlist.get_detail(songlist_id),
-                retries=SONGLIST_FETCH_RETRIES,
-                backoff_seconds=SONGLIST_FETCH_BACKOFF_SECONDS,
-            )
-            dirinfo = first_songlist["dirinfo"]
-            total: int = first_songlist["total_song_num"]
-            title: str = dirinfo["title"]
-            songs: list = first_songlist["songlist"]
+    if cookie_str:
+        credential = qapi.Credential.from_cookies_dict(
+            parse_cookie_string(cookie_str))
+        qapi.get_session().credential = credential
+        logger.info(
+            f"Using custom credential from provided cookie string for fetching songlist {songlist_id}"
+        )
 
-            songlist = await create_or_update_songlist(
-                session=session,
-                platform="qq",
-                platform_songlist_id=songlist_id,
-                title=title,
-                cover_url=dirinfo.get("picurl"),
-                metadata_json=first_songlist,
-                creator_name=dirinfo.get("host_nick"),
-            )
+    try:
+        first_songlist = await _with_retry(
+            operation_name=f"fetch songlist detail {songlist_id}",
+            task_factory=lambda: qapi.songlist.get_detail(songlist_id),
+            retries=SONGLIST_FETCH_RETRIES,
+            backoff_seconds=SONGLIST_FETCH_BACKOFF_SECONDS,
+        )
+        dirinfo = first_songlist["dirinfo"]
+        total: int = first_songlist["total_song_num"]
+        title: str = dirinfo["title"]
+        songs: list = first_songlist["songlist"]
 
-            semaphore = asyncio.Semaphore(max(1, SONGLIST_FETCH_CONCURRENCY))
+        semaphore = asyncio.Semaphore(max(1, SONGLIST_FETCH_CONCURRENCY))
 
-            async def fetch_page(page: int) -> list:
-                async with semaphore:
-                    for attempt in range(1, SONGLIST_FETCH_RETRIES + 1):
-                        try:
-                            songlist_page = await qapi.songlist.get_detail(
-                                songlist_id, page=page)
-                            return songlist_page["songlist"]
-                        except Exception as page_err:
-                            if attempt >= SONGLIST_FETCH_RETRIES:
-                                logger.error(
-                                    f"Failed to fetch page {page} of songlist {songlist_id} after {attempt} attempts: {page_err}"
-                                )
-                                raise
-                            sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (
-                                2**(attempt - 1))
-                            logger.warning(
-                                f"Fetch page {page} failed on attempt {attempt}/{SONGLIST_FETCH_RETRIES}, retrying in {sleep_seconds:.2f}s: {page_err}"
+        async def fetch_page(page: int) -> list:
+            async with semaphore:
+                for attempt in range(1, SONGLIST_FETCH_RETRIES + 1):
+                    try:
+                        songlist_page = await qapi.songlist.get_detail(
+                            songlist_id, page=page)
+                        return songlist_page["songlist"]
+                    except Exception as page_err:
+                        if attempt >= SONGLIST_FETCH_RETRIES:
+                            logger.error(
+                                f"Failed to fetch page {page} of songlist {songlist_id} after {attempt} attempts: {page_err}"
                             )
-                            await asyncio.sleep(sleep_seconds)
+                            raise
+                        sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (
+                            2**(attempt - 1))
+                        logger.warning(
+                            f"Fetch page {page} failed on attempt {attempt}/{SONGLIST_FETCH_RETRIES}, retrying in {sleep_seconds:.2f}s: {page_err}"
+                        )
+                        await asyncio.sleep(sleep_seconds)
 
-                return []
+            return []
 
-            total_pages = (total + 9) // 10
-            pages = range(2, total_pages + 1)
-            results = await asyncio.gather(
-                *[fetch_page(page) for page in pages])
-            for result in results:
-                songs.extend(result)
+        total_pages = (total + 9) // 10
+        pages = range(2, total_pages + 1)
+        results = await asyncio.gather(*[fetch_page(page) for page in pages])
+        for result in results:
+            songs.extend(result)
 
-            db_songs = await create_or_update_songs(
-                session=session,
-                songlist_id=songlist.id,
-                songs=songs,
-            )
-            await session.commit()
+        db_retries = max(2, SONG_URL_RETRIES)
+        for attempt in range(1, db_retries + 1):
+            async with AsyncSessionLocal() as session:
+                try:
+                    songlist = await create_or_update_songlist(
+                        session=session,
+                        platform="qq",
+                        platform_songlist_id=songlist_id,
+                        title=title,
+                        cover_url=dirinfo.get("picurl"),
+                        metadata_json=first_songlist,
+                        creator_name=dirinfo.get("host_nick"),
+                    )
 
-            logger.info(
-                f"Fetched songlist {songlist_id}: {title} with {total} songs, persisted {len(db_songs)} songs"
-            )
-            return db_songs, songlist
-        except KeyError as e:
-            await session.rollback()
-            logger.error(f"KeyError fetching songlist: {e}", exc_info=True)
-            return None
-        except Exception as e:
-            await session.rollback()
-            logger.error(f"Error fetching songlist: {e}", exc_info=True)
-            return None
+                    db_songs = await create_or_update_songs(
+                        session=session,
+                        songlist_id=songlist.id,
+                        songs=songs,
+                    )
+                    await session.commit()
+
+                    logger.info(
+                        f"Fetched songlist {songlist_id}: {title} with {total} songs, persisted {len(db_songs)} songs"
+                    )
+                    return {
+                        "songlist": songlist,
+                        "songs": db_songs,
+                    }
+                except SQLAlchemyInterfaceError as db_err:
+                    await session.rollback()
+                    err_text = str(db_err).lower()
+                    if "another operation is in progress" not in err_text:
+                        raise
+
+                    if attempt >= db_retries:
+                        raise
+
+                    logger.warning(
+                        f"DB operation hit asyncpg busy-connection error on attempt {attempt}/{db_retries}, disposing engine and retrying: {db_err}"
+                    )
+                    await engine.dispose()
+                    sleep_seconds = max(0.1,
+                                        SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
+                    await asyncio.sleep(sleep_seconds)
+
+        return None
+    except KeyError as e:
+        logger.error(f"KeyError fetching songlist: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching songlist: {e}", exc_info=True)
+        return None
 
 
 # if __name__ == "__main__":

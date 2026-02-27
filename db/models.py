@@ -391,3 +391,24 @@ class PlayerAnswer(Base):
     room: Mapped[Room] = relationship(back_populates="player_answers")
     user: Mapped[User] = relationship(back_populates="player_answers")
     song: Mapped[Song] = relationship(back_populates="player_answers")
+
+
+class Tasks(Base):
+    """任务表 tasks"""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer,
+                                    primary_key=True,
+                                    autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    task_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
+                                                               nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp())

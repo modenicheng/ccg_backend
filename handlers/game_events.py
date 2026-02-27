@@ -4,7 +4,8 @@ from typing import Any
 
 from cache.utils import room_manager
 from client_manager import ClientManager
-from schemas.game_events import PauseMessage, PlayMessage, SeekMessage, JudgingMessage, JudgeSubmitMessage, ScoreUpdateMessage
+from schemas.game_events import PauseMessage, PlayMessage, SeekMessage, JudgingMessage
+from schemas.song import WebSocketErrorResponse
 from utils import get_logger
 from utils.enumerations import GameEventType
 
@@ -20,12 +21,34 @@ def _ensure_owner(websocket: WebSocket | None) -> bool:
     return bool(user and getattr(user, "is_owner", False))
 
 
-def _build_error(event: GameEventType, reason: str):
-    return {
-        "type": "error",
-        "event": event.value,
-        "reason": reason,
-    }
+def _build_error(event: GameEventType, reason: str) -> WebSocketErrorResponse:
+    return WebSocketErrorResponse(
+        type="error",
+        event=event.value,
+        reason=reason,
+    )
+
+
+def _to_int_if_number(value: Any) -> Any:
+    if isinstance(value, (int, float)):
+        return int(round(value))
+    return value
+
+
+def _normalize_play_control_payload(data: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = dict(data)
+    normalized["ts"] = _to_int_if_number(normalized.get("ts"))
+
+    raw_data = normalized.get("data")
+    if isinstance(raw_data, dict):
+        normalized_data: dict[str, Any] = dict(raw_data)
+        normalized_data["offset_ts"] = _to_int_if_number(
+            normalized_data.get("offset_ts"))
+        normalized_data["progress_ms"] = _to_int_if_number(
+            normalized_data.get("progress_ms"))
+        normalized["data"] = normalized_data
+
+    return normalized
 
 
 async def _safe_send_error(
@@ -38,7 +61,7 @@ async def _safe_send_error(
         logger.warning("Skip send error: clients/websocket missing, event=%s",
                        event.name)
         return
-    await clients.send(websocket, _build_error(event, reason))
+    await clients.send(websocket, _build_error(event, reason).model_dump())
 
 
 async def _safe_broadcast(
@@ -72,15 +95,17 @@ async def _handle_play_control(
                                "Only owner can control playback")
         return
 
+    normalized_data = _normalize_play_control_payload(data)
+
     try:
         if event == GameEventType.PLAY:
-            payload = PlayMessage.model_validate(data)
+            payload = PlayMessage.model_validate(normalized_data)
             round_state = "playing"
         elif event == GameEventType.PAUSE:
-            payload = PauseMessage.model_validate(data)
+            payload = PauseMessage.model_validate(normalized_data)
             round_state = "paused"
         else:
-            payload = SeekMessage.model_validate(data)
+            payload = SeekMessage.model_validate(normalized_data)
             round_state = "seeking"
     except ValidationError as exc:
         logger.warning("Invalid %s payload: %s", event.name, exc)
@@ -161,6 +186,9 @@ async def handle_judging(data,
     if not isinstance(data, dict):
         await _safe_send_error(clients, websocket, GameEventType.JUDGING,
                                "Expected JSON object")
+        return
+    
+    if websocket is None or room_id is None:
         return
     
     try:
