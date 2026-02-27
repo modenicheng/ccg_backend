@@ -28,3 +28,20 @@ class PauseMessage(BaseModel):
     event: Literal[21] = GameEventType.PAUSE.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: PlayControlData
+
+
+class SongInfo(BaseModel):
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    cover_url: str | None = None
+
+
+class JudgingData(BaseModel):
+    song: SongInfo
+
+
+class JudgingMessage(BaseModel):
+    event: Literal[40] = GameEventType.JUDGING.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: JudgingData

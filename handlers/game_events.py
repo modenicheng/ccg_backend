@@ -4,7 +4,7 @@ from typing import Any
 
 from cache.utils import room_manager
 from client_manager import ClientManager
-from schemas.game_events import PauseMessage, PlayMessage, SeekMessage
+from schemas.game_events import PauseMessage, PlayMessage, SeekMessage, JudgingMessage
 from utils import get_logger
 from utils.enumerations import GameEventType
 
@@ -174,3 +174,26 @@ async def handle_seek(data,
                                clients=clients,
                                websocket=websocket,
                                room_id=room_id)
+
+
+@regist(GameEventType.JUDGING)
+async def handle_judging(data,
+                        clients=None,
+                        websocket=None,
+                        room_id=None,
+                        **kwargs):
+    if not isinstance(data, dict):
+        await _safe_send_error(clients, websocket, GameEventType.JUDGING,
+                               "Expected JSON object")
+        return
+    
+    try:
+        payload = JudgingMessage.model_validate(data)
+    except ValidationError as exc:
+        logger.warning("Invalid JUDGING payload: %s", exc)
+        await _safe_send_error(clients, websocket, GameEventType.JUDGING,
+                               f"Invalid payload: {exc.errors()}")
+        return
+    
+    # 广播 JUDGING 事件给所有客户端
+    await _safe_broadcast(clients, room_id, payload.model_dump(), websocket)
