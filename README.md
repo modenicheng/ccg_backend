@@ -16,7 +16,12 @@
 - 进程/系统内存定时监控能力
 - 前端静态资源托管与 SPA 回退路由
 - Rich + 文件滚动日志
-- Redis 缓存集成（房间状态管理、会话管理）
+- Redis 缓存集成（房间状态管理、会话管理、抢答队列、播放状态）
+- PostgreSQL 数据库集成（房间、用户、歌单、歌曲、标签、标签组、评分、任务等）
+- RESTful API 端点（房间管理、歌单管理、歌曲管理、标签管理、房间歌曲管理）
+- 异步任务队列（Huey + Redis）：歌单抓取、音频下载、格式转换
+- 游戏事件处理器（播放控制、抢答、评分、判断等）
+- 客户端连接管理（按房间分组、广播、单播、踢出）
 
 ## 运行方式
 
@@ -80,9 +85,9 @@ uv run uvicorn main:app --reload --port 8000
 4. 本地执行：`uv run alembic upgrade head`
 5. 提交代码：模型 + 迁移脚本一起提交
 
-## Redis 缓存集成
+## 缓存集成（Redis）
 
-本项目已集成 Redis 缓存，用于房间状态管理和会话管理。
+本项目已集成 Redis 缓存，用于房间状态管理、会话管理、抢答队列和播放状态管理。
 
 ### 配置方式
 
@@ -121,30 +126,36 @@ uv run uvicorn main:app --reload --port 8000
 - **房间状态管理**：存储房间基本信息、玩家列表、准备状态、歌曲队列等
 - **会话管理**：存储用户令牌与房间/玩家的映射关系
 - **抢答队列**：管理玩家抢答顺序
+- **播放状态管理**：记录当前播放进度、播放状态（播放/暂停/跳转）
 - **过期时间**：房间数据默认 6 小时过期，会话数据默认 24 小时过期
 
 ### 目录结构
 
-- `redis/connection.py`：Redis 连接管理
-- `redis/utils.py`：Redis 操作工具类（房间管理、会话管理）
+- `cache/connection.py`：Redis 连接管理
+- `cache/utils.py`：Redis 操作工具类（房间管理、会话管理、抢答队列、播放状态）
+- `cache/schemas.py`：缓存数据结构定义
 
 ### 使用方式
 
 ```python
-from redis.connection import get_redis
-from redis.utils import room_manager, session_manager
+from cache.connection import redis_client
+from cache.utils import room_manager, session_manager
 
-# 获取 Redis 客户端
-redis_client = get_redis()
+# 获取 Redis 客户端（异步）
+redis = await redis_client.get_client()
+if redis:
+    # 执行 Redis 命令
+    await redis.ping()
 
 # 房间管理
-room_manager.create_room(room_id, host_player_id)
-room_manager.add_player(room_id, player_id)
-room_manager.set_player_ready(room_id, player_id, True)
+await room_manager.create_room(room_id, host_player_id)
+await room_manager.add_player(room_id, player_id)
+await room_manager.set_player_ready(room_id, player_id, True)
+await room_manager.update_playback_state(room_id, round_state="playing", progress_ms=0)
 
 # 会话管理
-session_manager.create_session(token, room_id, player_id)
-session_data = session_manager.get_session(token)
+await session_manager.create_session(token, room_id, player_id)
+session_data = await session_manager.get_session(token)
 ```
 
 ### 注意事项
@@ -155,50 +166,77 @@ session_data = session_manager.get_session(token)
 
 ## HTTP / WebSocket 接口
 
-### `POST /api/room/`
+### 房间管理 (`/api/room`)
 
-- 创建房间。
-- 返回：`roomId`、`playerId`、`token`。
+- `POST /api/room/`：创建房间，返回 `room_id`、`host`（房主信息）
+- `POST /api/room/{roomid}`：加入房间，需要 `username`，返回 `room_id`、`user`（用户信息）
+- `GET /api/room/{roomid}`：获取房间详细信息（房主、状态、玩家列表、标签组等）
+- `PATCH /api/room/{roomid}`：更新房间设置，支持 `song_queue`、`title`、`tag_group_ids`、`tag_groups`
 
-### `GET /api/room/{roomid}`
+### 标签管理 (`/api/tags`)
 
-- 获取房间信息（房主、状态、玩家列表、歌单队列、标签配置等）。
+- `POST /api/tags/`：批量创建标签
+- `GET /api/tags/`：获取标签列表（分页）
+- `PATCH /api/tags/{tag_id}`：更新标签名称
+- `DELETE /api/tags/{tag_id}`：删除标签
 
-### `PATCH /api/room/{roomid}`
+### 标签组管理 (`/api/tags/groups/`)
 
-- 更新房间设置。
-- 当前支持：`songQueue`、`title`、`description`、`tagGroups`。
+- `GET /api/tags/groups/`：获取标签组列表（分页）
+- `POST /api/tags/groups/`：创建标签组，可关联现有标签或新建标签
+- `PATCH /api/tags/groups/`：更新标签组（添加/移除标签、修改名称/描述）
+- `DELETE /api/tags/groups/{group_id}`：删除标签组
 
-### `GET /`
+### 歌曲管理 (`/api/songs`)
 
-- 若存在前端构建产物 `../ccg_frontend/dist/index.html`，返回该页面。
-- 若不存在，返回后端状态 JSON。
+- `GET /api/songs/`：获取歌曲列表（分页、关键词搜索）
+- `POST /api/songs/`：创建歌曲记录
+- `GET /api/songs/{song_id}`：获取歌曲详情
+- `PUT /api/songs/{song_id}`：更新歌曲信息
+- `DELETE /api/songs/{song_id}`：删除歌曲
 
-### `GET /{full_path:path}`（Catch-all）
+### 歌单管理 (`/api/songlists`)
 
-- 优先返回 `dist` 下对应静态文件。
-- 目录请求会尝试返回目录内 `index.html`。
-- 不存在时回退到根 `index.html`（用于前端路由）。
-- 包含路径越界防护（`resolve()` + 前缀校验）。
+- `GET /api/songlists/`：获取歌单列表（分页、关键词搜索）
+- `POST /api/songlists/`：从 QQ 音乐歌单 ID 创建歌单（异步任务）
+- `GET /api/songlists/task/{task_id}`：查询歌单创建任务状态
+- `GET /api/songlists/{songlist_id}`：获取歌单详情（包含歌曲列表）
+- `PUT /api/songlists/{songlist_id}`：更新歌单信息
+- `DELETE /api/songlists/{songlist_id}`：删除歌单
+
+### 房间歌曲管理 (`/api/rooms/{roomid}/songs`)
+
+- `GET /api/rooms/{roomid}/songs/`：获取房间内的歌曲列表（分页）
+- `POST /api/rooms/{roomid}/songs/`：添加歌曲到房间
+- `DELETE /api/rooms/{roomid}/songs/`：从房间移除指定歌曲
+- `PUT /api/rooms/{roomid}/songs/`：批量更新歌曲顺序
+- `DELETE /api/rooms/{roomid}/songs/all`：清空房间所有歌曲
+- `GET /api/rooms/{roomid}/songs/{songid}`：获取房间内特定歌曲详情
+
+### 静态文件服务
+
+- `GET /`：若存在前端构建产物 `../ccg_frontend/dist/index.html`，返回该页面；否则返回后端状态 JSON
+- `GET /{full_path:path}`（Catch-all）：优先返回 `dist` 下对应静态文件；目录请求尝试返回 `index.html`；不存在时回退到根 `index.html`（用于前端路由）；包含路径越界防护（`resolve()` + 前缀校验）
 
 ### `WebSocket /ws/{roomid}`
 
 连接后流程：
 
 1. 服务端 `accept()` 并校验房间是否存在
-2. 可选校验 `token`（存在时要求与 `roomid` 匹配）
+2. 校验 `token`、`user_id`、`username`（通过 cookie）
 3. 加入对应房间的 `ClientManager`
 4. 循环读取 `receive()` 消息
-5. 二进制消息按首字节解析 `EventType`
-6. 分发到 `handlers.handle(event, data, clients, websocket, room_id)`
+5. 二进制消息按首字节解析 `EventType`，分发到 `handlers.handle()`
+6. 文本消息（JSON）解析 `GameEventType`，分发到 `handlers.handle_json()`
 7. 断连后从对应房间移除客户端
 
-> 当前文本消息分支仅保留占位（未实现 JSON 业务解析）。
+> 当前已实现 JSON 业务解析，支持多种游戏事件（播放控制、抢答、评分等）。
 
 ## 事件系统
 
 ### 事件枚举（`utils/enumerations.py`）
 
+#### 底层事件（二进制帧）
 - `OMIT = 0`
 - `AUDIO_FRAME = 1`
 - `META_DATA = 2`
@@ -206,9 +244,22 @@ session_data = session_manager.get_session(token)
 - `TIME_SYNC = 4`
 - `MESSAGE = 255`（错误处理保留值）
 
-当前已注册处理器：
+#### 游戏事件（JSON 消息）
+- `ROOM_CREATE = 10`, `ROOM_JOIN = 11`, `ROOM_STATE = 12`, `GAME_OVER = 13`, `START_POS_UPDATE = 14`
+- `PLAY = 20`, `PAUSE = 21`, `SEEK = 22`
+- `PLAYER_READY = 30`, `GAME_START = 31`, `COUNTDOWN = 32`, `ATTEMPT_ANSWER = 33`, `YOUR_TURN = 34`, `SUBMIT_ANSWER = 35`, `ANSWER_BROADCAST = 36`, `ANSWER_QUEUE = 37`, `ROUND_END = 38`
+- `JUDGING = 40`, `JUDGE_SUBMIT = 41`, `SCORE_UPDATE = 42`
 
-- `HEARTBEAT`（见 `handlers/heartbeats.py`）
+### 已注册处理器
+
+#### 二进制事件处理器
+- `HEARTBEAT`（`handlers/heartbeats.py`）：处理心跳帧（PING/PONG）
+
+#### 游戏事件处理器（`handlers/game_events.py`）
+- `PLAY`、`PAUSE`、`SEEK`：播放控制，仅房主可操作
+- `JUDGING`：广播评分事件
+- `JUDGE_SUBMIT`：提交评分结果，计算玩家得分并更新排行榜
+- `ATTEMPT_ANSWER`：处理玩家抢答尝试
 
 未注册的事件会在分发层抛出 `ValueError`。
 
@@ -290,28 +341,58 @@ session_data = session_manager.get_session(token)
 
 ### 自动化测试
 
-- `tests/test_audio_frame_encoding.py`
-  - 验证 `AudioFrame.dump()/load()` 一致性
+- `tests/test_audio_frame_encoding.py`：验证 `AudioFrame.dump()/load()` 一致性
+- `tests/test_db_crud.py`：数据库 CRUD 操作测试
+- `tests/test_db_session.py`：数据库会话管理测试
+- `tests/test_qapi.py`：QQ 音乐 API 客户端测试
+- `tests/test_tags_api.py`：标签 API 端点测试
 
 ### 手动/示例脚本
 
 - `test_memory_monitor.py`：内存监控功能脚本化验证
 - `examples/memory_monitor_example.py`：集成示例
+- `load_test.py`：WebSocket 负载测试工具
+- `mock_load_test.py`：模拟负载测试工具
 
 ## 目录结构（核心）
 
 - `main.py`：FastAPI 入口、WebSocket、静态资源路由、生命周期钩子
+- `router/`：RESTful API 路由定义
+  - `room.py`：房间管理
+  - `tags.py`：标签与标签组管理
+  - `song.py`：歌曲管理
+  - `songlist.py`：歌单管理
+  - `room_songs.py`：房间歌曲管理
 - `handlers/`：事件处理器与注册机制
+  - `heartbeats.py`：心跳帧处理
+  - `game_events.py`：游戏事件处理（播放控制、抢答、评分等）
 - `client_manager/`：WebSocket 客户端集合管理
-- `utils/`：协议帧、枚举、日志、内存监控、错误定义
+- `utils/`：协议帧、枚举、日志、内存监控、错误定义、负载构建工具
+- `db/`：数据库模型、会话管理、CRUD 操作
+  - `models.py`：SQLAlchemy ORM 模型定义
+  - `session.py`：异步数据库会话工厂
+  - `crud.py`：常用数据库操作
+- `schemas/`：Pydantic 模型定义（请求/响应格式）
+- `cache/`：Redis 缓存集成
+  - `connection.py`：Redis 连接管理
+  - `utils.py`：房间管理、会话管理、抢答队列、播放状态
+  - `schemas.py`：缓存数据结构定义
+- `mq/`：异步任务队列（Huey + Redis）
+  - `tasks.py`：歌单抓取、音频下载、格式转换等异步任务
+- `qq_api/`：QQ 音乐 API 客户端（外部依赖）
 - `tests/`：单元测试
 - `docs/`：功能文档
-  - `docs/songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
+  - `songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
+  - `database_migration_guide.md`：数据库迁移指南
+  - `memory_monitor_usage.md`：内存监控使用说明
 
 ## 当前边界与说明
 
-- 文档中提到的房间/歌单业务流程目前**尚未在本仓库实现**。
-- `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler。
+- 房间/歌单业务流程**已实现**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
+- `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler（保留供未来扩展）。
+- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`JUDGING`、`JUDGE_SUBMIT`、`ATTEMPT_ANSWER` 等关键事件。
+- 音频缓存与下载功能已实现，但需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
+- 标签组评分逻辑已实现基础版本，但标签组映射和答案存储仍需根据实际游戏逻辑完善。
 
 ## 局内流程设计
 
