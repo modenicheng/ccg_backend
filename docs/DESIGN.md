@@ -4,7 +4,7 @@
 
 猜猜歌系统是一个基于 Web 的多人实时竞猜游戏。玩家可以创建房间（成为房主）或加入已有房间，在播放歌曲片段的过程中抢答，从预设的标签列表中勾选正确答案，并输入“精准描述”字段，房主最终确认评分。系统强调实时性、公平性和趣味性，支持断线重连、历史标注复用，以及灵活的标签组（组内互斥、组间不互斥）计分规则。
 
-本项目基于现有 FastAPI 后端框架（`ccg_backend`）进行扩展，该框架已提供 WebSocket 二进制事件、心跳、客户端管理、内存监控等基础设施。本蓝图补充完整的游戏业务逻辑、数据持久化（使用 SQLite）、外部服务集成及前端交互设计，同时保证良好的可扩展性和易部署性。
+本项目基于现有 FastAPI 后端框架（`ccg_backend`）进行扩展，该框架已提供 WebSocket 二进制事件、心跳、客户端管理、内存监控等基础设施。本蓝图补充完整的游戏业务逻辑、数据持久化（使用 PostgreSQL）、外部服务集成（如 QQ 音乐 API）及前端交互设计，同时保证良好的可扩展性和易部署性。
 
 ## 2. 核心功能需求
 
@@ -587,15 +587,16 @@ class PlayerAnswer(Base):
 
   ```json
   {
-    "song_id": 123,
-    "title": "歌曲名",
-    "artist": "歌手",
-    "cover_url": "https://...",
-    "audio_url": "/static/audio/abc.mp3",
-    "round_index": 1,
-    "start_position_ms": 45000
+    "event": 20,
+    "ts": 1620000000000,
+    "data": {
+      "progress_ms": 0,
+      "offset_ts": 1620000000000,
+      "audio_url": "/static/audio/abc.mp3"
+    }
   }
   ```
+  注：PLAY 事件只包含播放控制数据，不包含曲目名称、封面等信息，以防止提前泄露答案。
 
 - **`START_POS_UPDATE`** (C→S / S→C)
 
@@ -713,6 +714,33 @@ class PlayerAnswer(Base):
     ]
   }
   ```
+
+- **`JUDGING`** (S→C)
+
+  ```json
+  {
+    "event": 40,
+    "ts": 1620000000000,
+    "data": {
+      "song": {
+        "title": "歌曲名",
+        "artist": "歌手",
+        "album": "专辑名",
+        "cover_url": "https://..."
+      },
+      "tag_groups": [
+        { "group_id": 1, "name": "年代", "tags": [{"id":101,"name":"80年代"}] }
+      ],
+      "description_candidates": [
+        { "id": 1001, "text": "这是一首经典摇滚", "count": 3 }
+      ],
+      "answers": [
+        { "player_id": "42", "username": "bob", "selected_tags": [101,201], "description": "这是一首经典摇滚" }
+      ]
+    }
+  }
+  ```
+  注：JUDGING 事件包含完整的曲目信息，在判分环节显示给所有玩家。
 
 ### 7.2 HTTP API 示例
 
