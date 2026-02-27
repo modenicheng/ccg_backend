@@ -106,3 +106,121 @@ class SongCacheUpdateRequest(BaseModel):
                 "file_size_bytes": 5242880
             }
         })
+
+
+class TaskResponse(BaseModel):
+    """Response schema for task status."""
+
+    task_id: str = Field(description="Unique task identifier")
+    task_name: str = Field(description="Name of the task")
+    status: str = Field(description="Current task status")
+    result: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Task result JSON, if any"
+    )
+    created_at: Optional[datetime] = Field(
+        default=None,
+        description="Task creation timestamp"
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        description="Task last update timestamp"
+    )
+    huey_task_id: Optional[str] = Field(
+        default=None,
+        description="Optional Huey task ID for queue tracking"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "task_name": "fetch_songlist",
+                "status": "pending",
+                "result": None,
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+                "huey_task_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        }
+    )
+
+
+class WebSocketErrorResponse(BaseModel):
+    """Error response schema for WebSocket events."""
+
+    type: str = Field(default="error", description="Message type")
+    event: Optional[str] = Field(
+        default=None,
+        description="Event type that caused the error"
+    )
+    reason: str = Field(description="Error reason/message")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "type": "error",
+                "event": "play",
+                "reason": "Only owner can control playback"
+            }
+        }
+    )
+
+
+class HttpErrorResponse(BaseModel):
+    """Error response schema for HTTP API errors."""
+
+    error: str = Field(description="Error type/message")
+    detail: Optional[str] = Field(
+        default=None,
+        description="Additional error details"
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Request path that caused the error"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "error": "Not found",
+                "detail": "The requested resource was not found",
+                "path": "/api/nonexistent"
+            }
+        }
+    )
+
+
+class SonglistFetchResult(BaseModel):
+    """Result schema for songlist fetch operation."""
+
+    songlist: dict[str, Any] = Field(description="Fetched songlist metadata")
+    songs: list[dict[str, Any]] = Field(description="List of songs in the songlist")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "songlist": {
+                    "platform": "qqmusic",
+                    "platform_songlist_id": "123456789",
+                    "title": "My Favorite Songs",
+                    "creator_name": "John Doe",
+                    "cover_url": "https://example.com/cover.jpg"
+                },
+                "songs": [
+                    {
+                        "platform": "qqmusic",
+                        "platform_song_id": "001",
+                        "title": "Song 1",
+                        "artist": "Artist 1"
+                    },
+                    {
+                        "platform": "qqmusic",
+                        "platform_song_id": "002",
+                        "title": "Song 2",
+                        "artist": "Artist 2"
+                    }
+                ]
+            }
+        }
+    )

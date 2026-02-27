@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from handlers import handle, handle_json
 from pathlib import Path
 from schemas.room import RoomStateInitMessage, RoomStateInitData, RoomStatePlayerItem, RoomStateTagGroupItem, RoomStateTagItem
+from schemas.song import HttpErrorResponse
 
 from router import room_router, tag_router, song_router, songlist_router
 
@@ -331,7 +332,7 @@ async def serve_frontend(full_path: str):
             raise HTTPException(status_code=404, detail="Not found")
     except Exception as e:
         logger.warning(f"Path resolution error: {e}")
-        return {"error": "Invalid path"}
+        return HttpErrorResponse(error="Invalid path", detail=None, path=full_path)
 
     if file_path.exists() and file_path.is_file():
         logger.debug(f"Serving static file: {file_path}")
@@ -354,7 +355,7 @@ async def serve_frontend(full_path: str):
 
     # 前端文件不存在
     logger.warning(f"Not found: {full_path}, index.html also not found")
-    return {"error": "Not found", "path": full_path}
+    return HttpErrorResponse(error="Not found", detail=None, path=full_path)
 
 
 if __name__ == "__main__":

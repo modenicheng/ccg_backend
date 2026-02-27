@@ -5,6 +5,7 @@ from typing import Any
 from cache.utils import room_manager
 from client_manager import ClientManager
 from schemas.game_events import PauseMessage, PlayMessage, SeekMessage, JudgingMessage
+from schemas.song import WebSocketErrorResponse
 from utils import get_logger
 from utils.enumerations import GameEventType
 
@@ -20,12 +21,12 @@ def _ensure_owner(websocket: WebSocket | None) -> bool:
     return bool(user and getattr(user, "is_owner", False))
 
 
-def _build_error(event: GameEventType, reason: str):
-    return {
-        "type": "error",
-        "event": event.value,
-        "reason": reason,
-    }
+def _build_error(event: GameEventType, reason: str) -> WebSocketErrorResponse:
+    return WebSocketErrorResponse(
+        type="error",
+        event=event.value,
+        reason=reason,
+    )
 
 
 def _to_int_if_number(value: Any) -> Any:
@@ -60,7 +61,7 @@ async def _safe_send_error(
         logger.warning("Skip send error: clients/websocket missing, event=%s",
                        event.name)
         return
-    await clients.send(websocket, _build_error(event, reason))
+    await clients.send(websocket, _build_error(event, reason).model_dump())
 
 
 async def _safe_broadcast(
@@ -185,6 +186,9 @@ async def handle_judging(data,
     if not isinstance(data, dict):
         await _safe_send_error(clients, websocket, GameEventType.JUDGING,
                                "Expected JSON object")
+        return
+    
+    if websocket is None or room_id is None:
         return
     
     try:

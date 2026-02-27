@@ -26,7 +26,6 @@ async def handle(event: EventType,
                  websocket=None,
                  room_id: str | None = None,
                  **kwargs):
-    logger.debug("Current handlers: %s", list(_handlers.keys()))
     if event.name in _handlers:
         result = _handlers[event.name](data,
                                        clients=clients,
