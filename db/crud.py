@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 
-from sqlalchemy import and_, select, tuple_
+from sqlalchemy import and_, select, tuple_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,8 @@ from utils.enumerations import MusicPlatform
 
 l = logger.get_logger(__name__)
 
-def _apply_songlist_fields(songlist: models.Songlist,
-                           title: Optional[str],
+
+def _apply_songlist_fields(songlist: models.Songlist, title: Optional[str],
                            creator_name: Optional[str],
                            cover_url: Optional[str],
                            metadata_json: Optional[dict[str, Any]]) -> None:
@@ -23,14 +23,10 @@ def _apply_songlist_fields(songlist: models.Songlist,
     songlist.metadata_json = metadata_json
 
 
-def _apply_song_fields(song: models.Song,
-                       title: Optional[str],
-                       subtitle: Optional[str],
-                       artist: Optional[str],
-                       cover_url: Optional[str],
-                       audio_url: Optional[str],
-                       cached_path: Optional[str],
-                       album_name: Optional[str],
+def _apply_song_fields(song: models.Song, title: Optional[str],
+                       subtitle: Optional[str], artist: Optional[str],
+                       cover_url: Optional[str], audio_url: Optional[str],
+                       cached_path: Optional[str], album_name: Optional[str],
                        metadata_json: Optional[dict[str, Any]]) -> None:
     song.title = title
     song.subtitle = subtitle
@@ -60,50 +56,69 @@ def _join_singer_names(raw_singers: Any) -> Optional[str]:
     return None
 
 
-def _normalize_song_input(song_data: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _normalize_song_input(
+        song_data: dict[str, Any]) -> Optional[dict[str, Any]]:
     platform = _to_platform_value(song_data.get("platform") or "qq")
 
-    platform_song_id = (
-        song_data.get("platform_song_id")
-        or song_data.get("songmid")
-        or song_data.get("mid")
-        or song_data.get("id")
-    )
+    platform_song_id = (song_data.get("platform_song_id")
+                        or song_data.get("songmid") or song_data.get("mid")
+                        or song_data.get("id"))
     if platform_song_id is None:
         return None
     platform_song_id = str(platform_song_id)
 
     album_raw = song_data.get("album")
-    album_info: dict[str, Any] = album_raw if isinstance(album_raw, dict) else {}
+    album_info: dict[str,
+                     Any] = album_raw if isinstance(album_raw, dict) else {}
 
     return {
-        "platform": platform,
-        "platform_song_id": platform_song_id,
-        "title": song_data.get("title") or song_data.get("songname") or song_data.get("name"),
-        "subtitle": song_data.get("subtitle") or song_data.get("subTitle") or song_data.get("subtitle_name"),
-        "artist": song_data.get("artist") or _join_singer_names(song_data.get("singer")),
-        "cover_url": song_data.get("cover_url") or song_data.get("cover") or song_data.get("picurl"),
-        "audio_url": song_data.get("audio_url") or song_data.get("url"),
-        "cached_path": song_data.get("cached_path"),
-        "album_name": song_data.get("album_name") or song_data.get("albumname") or album_info.get("name"),
-        "metadata_json": song_data.get("metadata_json") if "metadata_json" in song_data else song_data,
+        "platform":
+        platform,
+        "platform_song_id":
+        platform_song_id,
+        "title":
+        song_data.get("title") or song_data.get("songname")
+        or song_data.get("name"),
+        "subtitle":
+        song_data.get("subtitle") or song_data.get("subTitle")
+        or song_data.get("subtitle_name"),
+        "artist":
+        song_data.get("artist") or _join_singer_names(song_data.get("singer")),
+        "cover_url":
+        song_data.get("cover_url") or song_data.get("cover")
+        or song_data.get("picurl"),
+        "audio_url":
+        song_data.get("audio_url") or song_data.get("url"),
+        "cached_path":
+        song_data.get("cached_path"),
+        "album_name":
+        song_data.get("album_name") or song_data.get("albumname")
+        or album_info.get("name"),
+        "metadata_json":
+        song_data.get("metadata_json")
+        if "metadata_json" in song_data else song_data,
     }
 
 
 async def create_or_update_songlist(session: AsyncSession,
-                          platform: Optional[Literal["qq", "netease"]],
-                          platform_songlist_id: Optional[int | str],
-                          title: Optional[str] = None,
-                          creator_name: Optional[str] = None,
-                          cover_url: Optional[str] = None,
-                          metadata_json: Optional[dict[str, Any]] = None):
+                                    platform: Optional[Literal["qq",
+                                                               "netease"]],
+                                    platform_songlist_id: Optional[int | str],
+                                    title: Optional[str] = None,
+                                    creator_name: Optional[str] = None,
+                                    cover_url: Optional[str] = None,
+                                    metadata_json: Optional[dict[str,
+                                                                 Any]] = None):
     """创建新的歌单记录"""
-    normalized_platform_songlist_id = (
-        str(platform_songlist_id) if platform_songlist_id is not None else None)
+    normalized_platform_songlist_id = (str(platform_songlist_id)
+                                       if platform_songlist_id is not None else
+                                       None)
 
     query = select(models.Songlist).where(
-        and_(models.Songlist.platform_songlist_id == normalized_platform_songlist_id,
-             models.Songlist.platform == platform))
+        and_(
+            models.Songlist.platform_songlist_id ==
+            normalized_platform_songlist_id,
+            models.Songlist.platform == platform))
     res = await session.execute(query)
     existing = res.scalars().first()
     if existing:
@@ -115,8 +130,9 @@ async def create_or_update_songlist(session: AsyncSession,
         await session.flush()
         return existing
 
-    songlist = models.Songlist(platform=platform,
-                               platform_songlist_id=normalized_platform_songlist_id)
+    songlist = models.Songlist(
+        platform=platform,
+        platform_songlist_id=normalized_platform_songlist_id)
     _apply_songlist_fields(songlist,
                            title=title,
                            creator_name=creator_name,
@@ -159,7 +175,8 @@ async def create_or_update_song(session: AsyncSession,
         if relation:
             return
 
-        session.add(models.SonglistSong(songlist_id=songlist_id, song_id=song_id))
+        session.add(
+            models.SonglistSong(songlist_id=songlist_id, song_id=song_id))
 
     if existing:
         _apply_song_fields(existing,
@@ -175,8 +192,7 @@ async def create_or_update_song(session: AsyncSession,
         await session.flush()
         return existing
 
-    song = models.Song(platform=platform,
-                       platform_song_id=platform_song_id)
+    song = models.Song(platform=platform, platform_song_id=platform_song_id)
     _apply_song_fields(song,
                        title=title,
                        subtitle=subtitle,
@@ -194,9 +210,9 @@ async def create_or_update_song(session: AsyncSession,
     return song
 
 
-async def create_or_update_songs(session: AsyncSession,
-                                  songlist_id: Optional[int],
-                                songs: list[dict[str, Any]]) -> list[models.Song]:
+async def create_or_update_songs(
+        session: AsyncSession, songlist_id: Optional[int],
+        songs: list[dict[str, Any]]) -> list[models.Song]:
     """批量创建或更新歌曲记录"""
     if not songs:
         return []
@@ -220,7 +236,8 @@ async def create_or_update_songs(session: AsyncSession,
         return []
 
     existing_query = select(models.Song).where(
-        tuple_(models.Song.platform, models.Song.platform_song_id).in_(ordered_keys))
+        tuple_(models.Song.platform,
+               models.Song.platform_song_id).in_(ordered_keys))
     existing_res = await session.execute(existing_query)
     existing_songs = existing_res.scalars().all()
     song_map: dict[tuple[str, str], models.Song] = {
@@ -276,12 +293,14 @@ async def create_or_update_songs(session: AsyncSession,
                      models.SonglistSong.song_id.in_(song_ids)))
             relation_res = await session.execute(relation_query)
             existing_relations = relation_res.scalars().all()
-            existing_song_ids = {relation.song_id for relation in existing_relations}
+            existing_song_ids = {
+                relation.song_id
+                for relation in existing_relations
+            }
 
             new_relations = [
                 models.SonglistSong(songlist_id=songlist_id, song_id=song_id)
-                for song_id in song_ids
-                if song_id not in existing_song_ids
+                for song_id in song_ids if song_id not in existing_song_ids
             ]
             if new_relations:
                 session.add_all(new_relations)
@@ -290,13 +309,15 @@ async def create_or_update_songs(session: AsyncSession,
     return result_songs
 
 
-async def update_song_cached_path(session: AsyncSession,
-                                  platform: Optional[Literal["qq", "netease"]],
-                                  platform_song_id: Optional[str],
-                                  cached_path: Optional[str]) -> Optional[models.Song]:
+async def update_song_cached_path(
+        session: AsyncSession, platform: Optional[Literal["qq", "netease"]],
+        platform_song_id: Optional[str],
+        cached_path: Optional[str]) -> Optional[models.Song]:
     """仅更新歌曲缓存路径，不覆盖其它业务字段。"""
     if not platform or not platform_song_id:
-        l.warning(f"Missing platform or platform_song_id for cache path update: {platform}, {platform_song_id}, skip updating")
+        l.warning(
+            f"Missing platform or platform_song_id for cache path update: {platform}, {platform_song_id}, skip updating"
+        )
         return None
 
     query = select(models.Song).where(
@@ -312,12 +333,12 @@ async def update_song_cached_path(session: AsyncSession,
     return existing
 
 
-async def create_task_record(session: AsyncSession,
-                             task_id: str,
-                             task_name: str,
-                             status: str,
-                             result_json: Optional[dict[str, Any]] = None
-                             ) -> models.Tasks:
+async def create_task_record(
+        session: AsyncSession,
+        task_id: str,
+        task_name: str,
+        status: str,
+        result_json: Optional[dict[str, Any]] = None) -> models.Tasks:
     """创建任务记录。并发场景下使用 UPSERT 防止 task_id 唯一键冲突。"""
     bind = session.get_bind()
     dialect_name = bind.dialect.name if bind is not None else ""
@@ -337,7 +358,8 @@ async def create_task_record(session: AsyncSession,
             },
         )
         await session.execute(stmt)
-        task = await get_task_record_by_task_id(session=session, task_id=task_id)
+        task = await get_task_record_by_task_id(session=session,
+                                                task_id=task_id)
         assert task is not None
         return task
 
@@ -380,11 +402,12 @@ async def get_task_record_by_task_id(session: AsyncSession,
     return res.scalars().first()
 
 
-async def update_task_record(session: AsyncSession,
-                             task_id: str,
-                             status: Optional[str] = None,
-                             result_json: Optional[dict[str, Any]] = None
-                             ) -> Optional[models.Tasks]:
+async def update_task_record(
+        session: AsyncSession,
+        task_id: str,
+        status: Optional[str] = None,
+        result_json: Optional[dict[str,
+                                   Any]] = None) -> Optional[models.Tasks]:
     """更新任务状态与结果。"""
     task = await get_task_record_by_task_id(session=session, task_id=task_id)
     if not task:
@@ -397,3 +420,316 @@ async def update_task_record(session: AsyncSession,
 
     await session.flush()
     return task
+
+
+# ============================================================================
+# Room Songs CRUD Functions
+# ============================================================================
+
+
+async def get_room_songs(
+        session: AsyncSession,
+        room_id: str,
+        offset: int = 0,
+        limit: int = 20,
+        include_song_details: bool = True) -> list[models.RoomSong]:
+    """Get all songs associated with a room."""
+    from sqlalchemy.orm import selectinload
+
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
+
+    if include_song_details:
+        stmt = stmt.options(selectinload(models.RoomSong.song))
+
+    # Order by song_order if available, then by song_id
+    stmt = stmt.order_by(models.RoomSong.song_order.nulls_last(),
+                         models.RoomSong.song_id)
+
+    # Apply offset and limit
+    stmt = stmt.offset(offset)
+    stmt = stmt.limit(limit)
+
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def shuffle_room_songs(session: AsyncSession, room_id: str) -> None:
+    """Randomly shuffle the order of songs in a room."""
+    # Get all songs in the room with their current order
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
+    result = await session.execute(stmt)
+    room_songs = list(result.scalars().all())
+
+    if not room_songs:
+        return
+
+    import random
+    random.shuffle(room_songs)
+
+    # Update song_order based on new shuffled order
+    for index, room_song in enumerate(room_songs, start=1):
+        room_song.song_order = index
+
+    await session.flush()
+
+
+async def add_songs_to_room(
+        session: AsyncSession,
+        room_id: str,
+        song_ids: list[int],
+        append_to_end: bool = True) -> list[models.RoomSong]:
+    """Add songs to a room.
+
+    Args:
+        session: Async database session
+        room_id: Room ID
+        song_ids: List of song IDs to add
+        append_to_end: If True, append to end; if False, insert at beginning
+
+    Returns:
+        List of created RoomSong associations
+    """
+    if not song_ids:
+        return []
+
+    # Query database to get existing room songs (not just from session)
+    from sqlalchemy.orm import selectinload
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
+    result = await session.execute(stmt)
+    existing_songs = list(result.scalars().all())
+    existing_song_ids = {rs.song_id for rs in existing_songs}
+
+    # Filter out songs already in room
+    new_song_ids = [sid for sid in song_ids if sid not in existing_song_ids]
+    if not new_song_ids:
+        return []
+
+    # Determine order for new songs
+    existing_ordered = [
+        rs for rs in existing_songs if rs.song_order is not None
+    ]
+    max_order: int = max([
+        rs.song_order for rs in existing_ordered if rs.song_order is not None
+    ],
+                         default=0)
+
+    room_songs = []
+    for i, song_id in enumerate(new_song_ids):
+        song_order = None
+
+        # If there are ordered songs, assign order
+        if existing_ordered:
+            if append_to_end:
+                # Append to end
+                song_order = max_order + i + 1
+            else:
+                # Insert at beginning - need to shift existing orders
+                song_order = i + 1
+
+        room_song = models.RoomSong(room_id=room_id,
+                                    song_id=song_id,
+                                    song_order=song_order)
+        room_songs.append(room_song)
+
+    # If inserting at beginning, need to update existing orders
+    if not append_to_end and existing_ordered:
+        # Shift all existing orders by number of new songs
+        for rs in existing_ordered:
+            if rs.song_order is not None:
+                rs.song_order += len(new_song_ids)
+
+    session.add_all(room_songs)
+    await session.flush()
+
+    await shuffle_room_songs(session, room_id)
+
+    return room_songs
+
+
+async def remove_songs_from_room(session: AsyncSession, room_id: str,
+                                 song_ids: list[int]) -> int:
+    """Remove songs from a room.
+
+    Args:
+        session: Async database session
+        room_id: Room ID
+        song_ids: List of song IDs to remove
+
+    Returns:
+        Number of songs removed
+    """
+    if not song_ids:
+        return 0
+
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
+                                         models.RoomSong.song_id.in_(song_ids))
+    result = await session.execute(stmt)
+    room_songs = list(result.scalars().all())
+
+    if not room_songs:
+        return 0
+
+    # Get ordered songs that will be removed
+    removed_ordered = [rs for rs in room_songs if rs.song_order is not None]
+
+    # Delete the associations
+    for rs in room_songs:
+        await session.delete(rs)
+
+    # If we removed ordered songs, need to reorder remaining songs
+    if removed_ordered:
+        # Get all remaining ordered songs
+        remaining_stmt = select(models.RoomSong).where(
+            models.RoomSong.room_id == room_id,
+            models.RoomSong.song_order.is_not(None)).order_by(
+                models.RoomSong.song_order)
+
+        remaining_result = await session.execute(remaining_stmt)
+        remaining = list(remaining_result.scalars().all())
+
+        # Reorder sequentially starting from 1
+        for i, rs in enumerate(remaining, start=1):
+            rs.song_order = i
+
+    await session.flush()
+    await shuffle_room_songs(session, room_id)
+    return len(room_songs)
+
+
+async def update_room_song_order(
+        session: AsyncSession, room_id: str, song_id: int,
+        new_order: int | None) -> models.RoomSong | None:
+    """Update the order of a song in a room.
+
+    Args:
+        session: Async database session
+        room_id: Room ID
+        song_id: Song ID
+        new_order: New order position (None to remove ordering)
+
+    Returns:
+        Updated RoomSong or None if not found
+    """
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
+                                         models.RoomSong.song_id == song_id)
+    result = await session.execute(stmt)
+    room_song = result.scalar_one_or_none()
+
+    if not room_song:
+        return None
+
+    old_order = room_song.song_order
+
+    if new_order == old_order:
+        return room_song
+
+    # If setting to None (unordered)
+    if new_order is None:
+        room_song.song_order = None
+        # No need to reorder others
+        await session.flush()
+        return room_song
+
+    # If song was previously unordered
+    if old_order is None:
+        room_song.song_order = new_order
+        # Need to shift other songs to make room
+        stmt = select(models.RoomSong).where(
+            models.RoomSong.room_id == room_id, models.RoomSong.song_order
+            >= new_order, models.RoomSong.song_id != song_id)
+        result = await session.execute(stmt)
+        affected = list(result.scalars().all())
+
+        for rs in affected:
+            if rs.song_order is not None:
+                rs.song_order += 1
+
+    # If song had an order and is changing
+    else:
+        # Get all ordered songs in room
+        stmt = select(models.RoomSong).where(
+            models.RoomSong.room_id == room_id,
+            models.RoomSong.song_order.is_not(None)).order_by(
+                models.RoomSong.song_order)
+
+        result = await session.execute(stmt)
+        all_ordered = list(result.scalars().all())
+
+        # Remove the moving song from list temporarily
+        moving_song = room_song
+        other_ordered = [rs for rs in all_ordered if rs.song_id != song_id]
+
+        # Reorder all songs
+        updated = []
+        current_order = 1
+
+        for rs in other_ordered:
+            if current_order == new_order:
+                # Insert moving song here
+                moving_song.song_order = current_order
+                current_order += 1
+
+            rs.song_order = current_order
+            current_order += 1
+
+        # If moving song hasn't been placed yet (moving to end)
+        if moving_song.song_order is None:
+            moving_song.song_order = current_order
+
+    await session.flush()
+    await shuffle_room_songs(session, room_id)
+    return room_song
+
+
+async def clear_room_songs(session: AsyncSession, room_id: str) -> int:
+    """Remove all songs from a room.
+
+    Args:
+        session: Async database session
+        room_id: Room ID
+
+    Returns:
+        Number of songs removed
+    """
+    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
+    result = await session.execute(stmt)
+    room_songs = list(result.scalars().all())
+
+    if not room_songs:
+        return 0
+
+    for rs in room_songs:
+        await session.delete(rs)
+
+    await session.flush()
+    return len(room_songs)
+
+
+async def get_room_song(session: AsyncSession, room_id: str,
+                        song_id: int) -> models.RoomSong | None:
+    """Get a specific room song association."""
+    from sqlalchemy.orm import selectinload
+
+    stmt = select(
+        models.RoomSong).where(models.RoomSong.room_id == room_id,
+                               models.RoomSong.song_id == song_id).options(
+                                   selectinload(models.RoomSong.song))
+
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def count_room_songs(session: AsyncSession, room_id: str) -> int | None:
+    """Count total number of songs in a room."""
+    stmt = select(func.count()).where(models.RoomSong.room_id == room_id)
+    result = await session.execute(stmt)
+    return result.scalar()
+
+
+async def count_songlist_songs(session: AsyncSession,
+                               songlist_id: int) -> int | None:
+    """Count total number of songs in a songlist."""
+    stmt = select(
+        func.count()).where(models.SonglistSong.songlist_id == songlist_id)
+    result = await session.execute(stmt)
+    return result.scalar()

@@ -8,10 +8,11 @@ Handles:
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from utils.enumerations import MusicPlatform
+from schemas.song import SongResponse
 
 
 class SonglistBase(BaseModel):
@@ -96,7 +97,14 @@ class SonglistResponse(SonglistBase):
     """Response schema for songlist details."""
 
     id: int = Field(description="Database ID")
+    cover_url: Optional[str] = Field(default=None,
+                                     description="Cover image URL")
     count: int = Field(description="Number of songs in this list")
+    songs: Optional[List[SongResponse]] = Field(
+        default=None,
+        description=
+        "List of songs in this songlist (optional, only included in detail view)"
+    )
 
     model_config = ConfigDict(from_attributes=True,
                               json_schema_extra={
@@ -109,6 +117,7 @@ class SonglistResponse(SonglistBase):
                                       "cover_url":
                                       "https://example.com/cover.jpg",
                                       "count": 50,
+                                      "songs": None,
                                       "metadata_json": None
                                   }
                               })
@@ -117,8 +126,8 @@ class SonglistResponse(SonglistBase):
 class SonglistListResponse(BaseModel):
     """Response schema for a list of songlists."""
 
-    total: Optional[int] = Field(description="Total number of songlists available")
-    songlists: list[SonglistResponse] = Field(
+    total: int = Field(description="Total number of songlists available")
+    list: List[SonglistResponse] = Field(
         description="List of songlist details")
 
     model_config = ConfigDict(
@@ -126,7 +135,7 @@ class SonglistListResponse(BaseModel):
             "example": {
                 "total":
                 2,
-                "songlists": [{
+                "list": [{
                     "id": 1,
                     "platform": "qqmusic",
                     "platform_songlist_id": "123456789",
@@ -151,7 +160,7 @@ class SonglistListResponse(BaseModel):
         })
 
 
-class SconglistFromMidRequest(BaseModel):
+class SonglistFromMidRequest(BaseModel):
     """Request schema for creating a songlist from a platform-specific ID."""
 
     platform: MusicPlatform = Field(description="Platform identifier")

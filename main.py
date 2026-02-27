@@ -1,5 +1,6 @@
 import logging
 import json
+from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -20,12 +21,60 @@ from pathlib import Path
 from schemas.room import RoomStateInitMessage, RoomStateInitData, RoomStatePlayerItem, RoomStateTagGroupItem, RoomStateTagItem
 from schemas.song import HttpErrorResponse
 
-from router import room_router, tag_router, song_router, songlist_router
+from router import *
 
 init_logging(level=logging.DEBUG)
 logger = get_logger(__name__)
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理：启动和关闭事件处理"""
+    global memory_monitor
+
+    # 启动逻辑
+    # 连接 Redis
+    try:
+        redis_connected = await redis_client.connect()
+        if redis_connected:
+            logger.info("Redis connected successfully")
+        else:
+            logger.warning(
+                "Failed to connect to Redis, some features may be unavailable")
+    except Exception as e:
+        logger.error(f"Error connecting to Redis: {e}")
+
+    # 启动内存监控
+    try:
+        memory_monitor = MemoryMonitor(
+            interval=30.0,  # 每30秒报告一次
+            report_threshold_mb=20.0,  # 内存变化超过20MB时报告
+            detailed_report=True,  # 输出详细报告
+        )
+        await memory_monitor.start()
+        logger.info("Memory monitor started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start memory monitor: {e}")
+
+    # 应用运行
+    yield
+
+    # 关闭逻辑
+    # 断开 Redis 连接
+    try:
+        await redis_client.disconnect()
+        logger.info("Redis disconnected successfully")
+    except Exception as e:
+        logger.error(f"Failed to disconnect Redis: {e}")
+
+    # 停止内存监控
+    if memory_monitor:
+        try:
+            await memory_monitor.stop()
+            logger.info("Memory monitor stopped successfully")
+        except Exception as e:
+            logger.error(f"Failed to stop memory monitor: {e}")
+
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,10 +83,12 @@ app.add_middleware(
 ##############################
 # Regist the API routers
 ##############################
+
 app.include_router(room_router)
 app.include_router(tag_router)
 app.include_router(song_router)
 app.include_router(songlist_router)
+app.include_router(room_songs_router)
 
 ##############################
 
@@ -77,76 +128,27 @@ def build_roomstate_init_payload(room: Room) -> RoomStateInitMessage:
                 tags=group_tags,
             ))
 
-    message = RoomStateInitMessage(
-        data=RoomStateInitData(
-            room_id=room.id,
-            title=room.title,
-            status=int(room.status),
-            host=host_user.username if host_user else None,
-            owner=host_user.username if host_user else None,
-            host_player_id=str(host_user.id) if host_user else "",
-            players=[
-                RoomStatePlayerItem(
-                    id=u.id,
-                    username=u.username,
-                    is_owner=u.is_owner,
-                ) for u in room.users
-            ],
-            tag_groups=tag_groups,
-            tags=list(unique_tags.values()),
-        ))
+    message = RoomStateInitMessage(data=RoomStateInitData(
+        room_id=room.id,
+        title=room.title,
+        status=int(room.status),
+        host=host_user.username if host_user else None,
+        owner=host_user.username if host_user else None,
+        host_player_id=str(host_user.id) if host_user else "",
+        players=[
+            RoomStatePlayerItem(
+                id=u.id,
+                username=u.username,
+                is_owner=u.is_owner,
+            ) for u in room.users
+        ],
+        tag_groups=tag_groups,
+        tags=list(unique_tags.values()),
+    ))
 
     return message
 
 
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时的事件处理：启动测试音频播放任务和内存监控"""
-    global memory_monitor
-
-    # 连接 Redis
-    try:
-        redis_connected = await redis_client.connect()
-        if redis_connected:
-            logger.info("Redis connected successfully")
-        else:
-            logger.warning(
-                "Failed to connect to Redis, some features may be unavailable")
-    except Exception as e:
-        logger.error(f"Error connecting to Redis: {e}")
-
-    # 启动内存监控
-    try:
-        memory_monitor = MemoryMonitor(
-            interval=30.0,  # 每30秒报告一次
-            report_threshold_mb=20.0,  # 内存变化超过20MB时报告
-            detailed_report=True,  # 输出详细报告
-        )
-        await memory_monitor.start()
-        logger.info("Memory monitor started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start memory monitor: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时的事件处理：停止内存监控"""
-    global memory_monitor
-
-    # 断开 Redis 连接
-    try:
-        await redis_client.disconnect()
-        logger.info("Redis disconnected successfully")
-    except Exception as e:
-        logger.error(f"Failed to disconnect Redis: {e}")
-
-    # 停止内存监控
-    if memory_monitor:
-        try:
-            await memory_monitor.stop()
-            logger.info("Memory monitor stopped successfully")
-        except Exception as e:
-            logger.error(f"Failed to stop memory monitor: {e}")
 
 
 @app.get("/")
@@ -212,14 +214,10 @@ async def websocket_endpoint(websocket: WebSocket,
     logger.info("WebSocket connected: %s", websocket.client)
     clients.push(roomid, websocket)
 
-    room_stmt = (
-        select(Room)
-        .where(Room.id == roomid)
-        .options(
-            selectinload(Room.users),
-            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
-        )
-    )
+    room_stmt = (select(Room).where(Room.id == roomid).options(
+        selectinload(Room.users),
+        selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+    ))
     room_result = await session.execute(room_stmt)
     room = room_result.scalar_one_or_none()
     if not room:
@@ -255,10 +253,11 @@ async def websocket_endpoint(websocket: WebSocket,
                 try:
                     game_event = GameEventType(event_value)
                 except ValueError:
-                    await clients.send(websocket, {
-                        "type": "error",
-                        "reason": f"Unsupported game event: {event_value}"
-                    })
+                    await clients.send(
+                        websocket, {
+                            "type": "error",
+                            "reason": f"Unsupported game event: {event_value}"
+                        })
                     continue
 
                 try:
@@ -276,11 +275,12 @@ async def websocket_endpoint(websocket: WebSocket,
                         game_event.name,
                         e,
                     )
-                    await clients.send(websocket, {
-                        "type": "error",
-                        "event": game_event.value,
-                        "reason": f"Failed to handle event: {e}"
-                    })
+                    await clients.send(
+                        websocket, {
+                            "type": "error",
+                            "event": game_event.value,
+                            "reason": f"Failed to handle event: {e}"
+                        })
             elif "bytes" in data:
                 data = data["bytes"]
                 event: EventType = get_event_type(data)
@@ -332,7 +332,9 @@ async def serve_frontend(full_path: str):
             raise HTTPException(status_code=404, detail="Not found")
     except Exception as e:
         logger.warning(f"Path resolution error: {e}")
-        return HttpErrorResponse(error="Invalid path", detail=None, path=full_path)
+        return HttpErrorResponse(error="Invalid path",
+                                 detail=None,
+                                 path=full_path)
 
     if file_path.exists() and file_path.is_file():
         logger.debug(f"Serving static file: {file_path}")

@@ -8,7 +8,7 @@ Handles:
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -38,8 +38,6 @@ class SongBase(BaseModel):
         default=None,
         description=
         "Local filesystem path where audio is cached (null if not cached)")
-    metadata_json: Optional[dict[str, Any]] = Field(
-        default=None, description="Additional metadata")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -84,6 +82,31 @@ class SongResponse(SongBase):
     def is_cached(self) -> bool:
         """Compute whether song is cached based on cached_path."""
         return self.cached_path is not None and len(self.cached_path) > 0
+
+
+class SongListResponse(BaseModel):
+    """Response schema for paginated song list."""
+
+    total: int = Field(description="Total number of songs available")
+    list: List[SongResponse] = Field(description="Current page songs")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total": 120,
+                "list": [
+                    {
+                        "id": 1,
+                        "platform": "qqmusic",
+                        "platform_song_id": "004R6Kl32YDHxe",
+                        "title": "Song Title",
+                        "artist": "Artist Name",
+                        "cached": True
+                    }
+                ]
+            }
+        }
+    )
 
 
 class SongCacheUpdateRequest(BaseModel):
