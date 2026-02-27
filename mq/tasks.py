@@ -1,4 +1,3 @@
-import json
 from typing import Any, Awaitable, Callable, TypeVar
 from urllib.parse import urlparse
 
@@ -10,8 +9,12 @@ import qqmusic_api as qapi
 
 from db.crud import create_or_update_songlist, create_or_update_songs, update_song_cached_path
 from db.session import AsyncSessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
 import utils
+from dotenv import load_dotenv
+import asyncio
 
+load_dotenv()
 # from db.session import AsyncSessionLocal
 # from db.models import Song
 
