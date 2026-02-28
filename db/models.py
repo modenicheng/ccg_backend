@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, CheckConstraint, Index
+from sqlalchemy import Float, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, CheckConstraint, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -44,6 +44,9 @@ class User(Base):
                                        nullable=False,
                                        unique=True,
                                        comment="用于用户身份验证的唯一令牌")
+    online: Mapped[bool] = mapped_column(Boolean,
+                                         default=False,
+                                         nullable=False)
 
     __table_args__ = (
         Index("idx_users_room_id", "room_id"),
@@ -179,6 +182,13 @@ class Room(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    song_start_range_percent: Mapped[float | None] = mapped_column(
+        Float, nullable=True)
+
+    current_song_index: Mapped[int | None] = mapped_column(Integer,
+                                                           nullable=True,
+                                                           default=None)
 
     __table_args__ = (CheckConstraint("status in (0, 1, 2)",
                                       name="ck_rooms_status"), )

@@ -157,7 +157,7 @@
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `PLAYER_READY`       | 30     | C→S      | 玩家准备/取消准备                                            | state & broadcast |
+| `PLAYER_READY`       | 30     | C→S      | 玩家准备/取消准备   弃用                                     | state & broadcast |
 | `GAME_START`         | 31     | S→C      | 房主开始游戏，禁止新玩家加入（断线重连可以）                 | state & broadcast |
 | `COUNTDOWN`          | 32     | S→C      | 倒计时更新（3,2,1）  【可以不要？】                          | state & broadcast |
 | `ATTEMPT_ANSWER`     | 33     | C→S      | 玩家抢答，触发暂停和入队                                     | state & broadcast |
