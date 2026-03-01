@@ -76,6 +76,8 @@ async def on_connect(
     if playback_state:
         message.playback_status = RoomSchema.PlaybackState.model_validate(
             playback_state)
+    queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(room_id)
+    message.answer_queue = queue
     join_message = RoomSchema.PlayerJoinMessage(
         data=RoomSchema.RoomStatePlayerItem.model_validate(cl.user))
     res = await asyncio.gather(*[
@@ -359,7 +361,8 @@ async def handle_attempt_answer(data: AttemptAnswerMessage,
         pause_message = PauseMessage(data=pause_data)
 
         # 使用_safe_broadcast发送（排除发送者）
-        await clients.broadcast(room_id, pause_message.model_dump(),
+        await clients.broadcast(room_id,
+                                pause_message.model_dump(),
                                 excluded_clients={client})
 
         logger.info(

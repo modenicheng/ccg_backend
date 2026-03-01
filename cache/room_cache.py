@@ -305,7 +305,7 @@ async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
         return None
 
 
-async def get_answer_queue(room_id: str) -> list[AnswerQueueItem]:
+async def get_answer_queue(room_id: str) -> list[RoomSchemas.AnswerQueueItem]:
     """
     Retrieve the answer queue for a given room from Redis.
 
@@ -326,7 +326,7 @@ async def get_answer_queue(room_id: str) -> list[AnswerQueueItem]:
         entries = await cast(Awaitable[list],
                              redis.zrange(key, 0, -1, withscores=True))
         answer_queue = [
-            AnswerQueueItem.model_validate_json(
+            RoomSchemas.AnswerQueueItem.model_validate_json(
                 p, strict=False).model_copy(update={"order": o})
             for o, (p, _) in enumerate(entries)
         ]
