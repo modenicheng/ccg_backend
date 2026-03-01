@@ -42,7 +42,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from schemas.ws_messages import room_schemas as RoomSchema
 from utils.ts import get_ts_ms
 from . import regist
-from schemas.ws_messages.game_event_schemas import *
+from schemas.ws_messages.judge_schemas import *
+from schemas.ws_messages.playback_schemas import *
 from schemas.ws_messages.room_schemas import *
 
 logger = get_logger(__name__)

@@ -56,5 +56,6 @@ async def handle(event: EventType | GameEventType,
 
 # Import handler modules to trigger decorator registration.
 from . import heartbeats  # noqa: E402,F401
-from . import game_events  # noqa: E402,F401
+# from . import game_events  # noqa: E402,F401
 from . import audio_events_2x  # noqa: E402,F401
+from . import round_events_3x  # noqa: E402,F401

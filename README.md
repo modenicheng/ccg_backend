@@ -2,6 +2,190 @@
 
 本文档仅描述当前代码仓库**已经实现**的能力，不包含未来规划。
 
+## 项目架构与设计
+
+### 整体架构概览
+
+CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用异步架构设计，支持 WebSocket 实时通信、Redis 缓存、PostgreSQL 数据库和分布式任务队列。系统采用分层设计，分为接入层、业务逻辑层、数据访问层和基础设施层。
+
+### 核心模块结构
+
+#### 1. 项目入口 (`main.py`)
+
+- **FastAPI 应用入口**：配置生命周期管理、中间件、路由注册
+- **WebSocket 端点** (`/ws/{roomid}`)：处理实时游戏事件连接
+- **静态文件服务**：支持前端 SPA 应用托管和路由回退
+- **生命周期管理**：使用 `@asynccontextmanager` 管理启动/关闭事件
+- **内存监控集成**：自动启动 `MemoryMonitor` 进行性能监控
+
+#### 2. 数据库入口 (`db/`)
+
+- **`models.py`**：SQLAlchemy ORM 模型定义（User、Room、Song、Songlist、TagGroup、Score、PlayerAnswer 等）
+- **`session.py`**：异步数据库会话工厂，支持 SQLite/PostgreSQL 连接池
+- **`crud.py`**：通用数据库操作函数，提供常用查询封装
+- **设计特点**：使用 SQLAlchemy 2.0+ 异步 API，支持自动外键约束和索引
+
+#### 3. 缓存入口 (`cache/`)
+
+- **`connection.py`**：`RedisClient` 类管理 Redis 连接池
+- **`room_cache.py`**：房间状态缓存操作（6小时 TTL）
+- **`schemas.py`**：缓存数据结构 Pydantic 定义，部分模型可以继承 `schemas/` 目录下的已有模型并与 `RedisModel` Mixin
+- **`utils.py`**：~~缓存工具函数（房间管理、会话管理、抢答队列、播放状态）~~【这个目前不用，大部分状态直接落库】
+- **设计模式**：统一键命名规范 (`RedisKeys`)，自动过期管理
+
+#### 4. 数据格式定义 (`schemas/`)
+
+- **集中定义约定**：所有数据格式统一定义在 `schemas/` 目录下
+- **分离原则**：
+  - `schemas/*.py`：HTTP API 请求/响应格式（使用 `ConfigDict(from_attributes=True)` 支持 ORM 转换）
+  - `schemas/ws_messages/*.py`：WebSocket 专用消息格式（继承 `MessageBase` 基类）
+- **目录结构**：
+  - `base_message.py`：WebSocket 消息基类和通用消息定义
+  - `ws_messages/`：按功能模块划分（`room_schemas.py`、`playback_schemas.py`、`judge_schemas.py`、`round_event_schemas.py`、`error_schemas.py`）
+  - API schemas：`room.py`、`song.py`、`songlist.py`、`tag.py`、`user.py`
+- **类型安全**：严格的事件类型枚举映射，前后端数据格式一致性保证
+
+#### 5. WebSocket 处理器 (`handlers/`)
+
+- **注册机制**：使用装饰器模式，`@regist(event, data_validator)` 注册事件处理器
+- **事件分发**：`handle()` 函数根据事件类型调用注册处理器，支持前置 Pydantic 验证
+- **模块组织**：
+  - `__init__.py`：事件注册和分发核心逻辑
+  - ~~`game_events.py`：游戏核心事件处理（播放控制、抢答、评分等）~~ 【弃用，这里需要大量重构，且数据结构可能有大规模变更，所以目前别动】
+  - `audio_events_2x.py`：音频控制事件（20-29）
+  - `round_events_3x.py`：回合事件（30-39）
+  - `heartbeats.py`：心跳事件处理（PING/PONG）
+- **前置校验设计**：处理器注册时 **必须** 指定 `data_validator`，在业务逻辑执行前自动进行 Pydantic 数据验证，提前发现格式错误
+
+#### 6. 路由 (`router/`)
+
+- **模块化设计**：使用 FastAPI `APIRouter` 按功能划分
+- **路由文件**：
+  - `room.py`：房间管理 API
+  - `song.py`：歌曲管理 API
+  - `songlist.py`：歌单管理 API
+  - `tags.py`：标签管理 API
+  - `room_songs.py`：房间歌曲管理 API
+- **设计特点**：依赖注入数据库会话，统一错误处理，RESTful API 设计
+
+#### 7. 工具类 (`utils/`)
+
+- **`enumerations.py`**：枚举类型定义（`EventType`、`GameEventType`、`ErrorEventType`、`AudioEncoding`、`HeartbeatType`、`MusicPlatform`、`RoomStatus`）
+- **`logger.py`**：Rich 控制台输出 + 文件滚动日志，`init_logging()` 幂等初始化
+- **`memory_monitor.py`**：异步内存监控器，支持阈值报告和上下文监控
+- **`dataframe.py`**：二进制数据帧处理（心跳帧、音频帧等协议实现）
+- **`cookie.py`**：Cookie 解析工具
+- **`ts.py`**：时间戳工具函数
+
+#### 8. 异步任务队列 (`mq/`)
+
+- **技术栈**：Huey + Redis
+- **`tasks.py`**：异步任务定义（歌单抓取、音频下载、格式转换等）
+- **环境配置**：支持并发控制、重试策略、退避时间等参数配置
+
+#### 9. QQ音乐API客户端 (`qq_api/`)
+
+- **技术栈**：Node.js + Express
+- **功能**：QQ 音乐 API 代理，处理歌曲元数据获取和音频链接解析
+
+#### 10. 客户端管理 (`client_manager/`)
+
+- **`__init__.py`**：`ClientManager` 类管理 WebSocket 客户端集合
+- **核心能力**：
+  - 按房间连接集合管理：`push()` / `pop()`
+  - 单播：`send(client, bytes|dict)`
+  - 房间广播：`broadcast(room_id, message, except_clients=...)`
+  - 踢出连接：`kick(room_id, client, code, reason)`
+
+### 设计规范与约定
+
+#### 数据格式集中定义
+
+- **约定**：所有数据格式定义在 `schemas/` 目录
+- **分离**：API schemas 和 WebSocket 消息 schemas 分开维护
+- **验证**：使用 Pydantic 进行数据验证和序列化
+- **一致性**：前后端共享相同的 schema 定义，确保类型安全
+
+#### WebSocket 事件注册处理机制
+
+- **装饰器模式**：使用 `@regist` 装饰器注册事件处理器
+- **类型映射**：事件类型与 `GameEventType` 枚举严格对应
+- **数据验证**：支持前置 Pydantic 验证，自动处理验证错误
+- **错误处理**：统一的错误响应格式 (`WebSocketErrorEvent`)
+
+#### 前置 Pydantic 校验原理
+
+- **设计思路**：在事件处理器调用前进行数据验证，减少业务逻辑中的验证代码
+- **实现方式**：`handle()` 函数根据注册的 `data_validator` 自动调用 `model_validate()`
+- **优势**：提前发现数据格式错误，提供清晰的错误信息，提高代码健壮性
+
+#### 缓存策略设计
+
+- **房间状态**：6 小时 TTL，存储玩家列表、准备状态、歌曲队列等
+- **会话管理**：24 小时 TTL，存储用户令牌与房间/玩家映射
+- **播放状态**：实时记录播放进度、播放状态（播放/暂停/跳转）
+- **抢答队列**：管理玩家抢答顺序，支持队列操作
+
+#### 数据库迁移管理
+
+- **工具**：Alembic 迁移框架
+- **配置**：`alembic.ini` 读取 `.env` 中的 `CCG_DATABASE_URL`
+- **工作流**：ORM 模型变更 → 自动生成迁移脚本 → 人工检查 → 执行迁移
+
+### 工作流程
+
+#### WebSocket 连接流程
+
+1. 客户端通过 HTTP API 创建/加入房间，获取认证信息
+2. 建立 WebSocket 连接 (`/ws/{roomid}`)，携带认证凭证
+3. 服务端验证房间存在性和用户权限
+4. 加入对应房间的 `ClientManager`，触发 `on_connect` 事件
+5. 循环接收消息，根据消息类型（二进制/JSON）解析事件类型
+6. 调用 `handlers.handle()` 分发给注册的事件处理器
+7. 处理器执行业务逻辑，可能更新数据库、缓存，并广播状态变更
+8. 断连后从 `ClientManager` 移除，触发 `on_disconnect` 事件
+
+#### 事件处理流程
+
+1. 客户端发送 JSON 或二进制消息
+2. 服务端解析事件类型 (`GameEventType` 或 `EventType`)
+3. 查找注册的处理器和对应的数据验证器
+4. 执行前置 Pydantic 数据验证
+5. 调用处理器函数，传入验证后的数据
+6. 处理器执行业务逻辑，可能涉及：
+   - 数据库 CRUD 操作
+   - Redis 缓存更新
+   - 通过 `ClientManager` 广播消息
+   - 状态同步和持久化
+7. 返回处理结果或错误信息
+
+#### 歌单处理流程
+
+1. 房主提交 QQ 音乐歌单 ID
+2. 创建异步任务（`mq.tasks.fetch_songlist_task`）
+3. 任务执行：分页抓取歌单元数据 → 歌曲信息入库 → 生成随机播放顺序
+4. 任务状态可通过 API 查询
+5. 歌曲音频预下载和缓存管理
+
+### 技术栈总结
+
+- **Web 框架**：FastAPI（异步支持、自动 OpenAPI 文档）
+- **数据库**：SQLAlchemy 2.0+（异步 ORM）、PostgreSQL/SQLite
+- **缓存**：Redis（房间状态、会话管理、任务队列）
+- **消息协议**：自定义二进制帧协议 + JSON 事件协议
+- **任务队列**：Huey（异步任务处理）
+- **监控**：自定义内存监控、Rich 日志系统
+- **外部集成**：QQ 音乐 API（通过 Node.js 代理）
+- **部署**：Uvicorn ASGI 服务器
+
+### 扩展性与维护性
+
+- **模块化设计**：各功能模块独立，便于维护和测试
+- **类型安全**：全面使用 Pydantic 和枚举，减少运行时错误
+- **配置驱动**：环境变量统一前缀 (`CCG_`)，支持灵活部署
+- **文档完整**：详细的 API 文档、设计文档和迁移指南
+- **测试覆盖**：单元测试、集成测试、负载测试工具
+
 ## 整体设计
 
 ### 设计规范
@@ -284,9 +468,8 @@ session_data = await session_manager.get_session(token)
 2. 校验 `token`、`user_id`、`username`（通过 cookie）
 3. 加入对应房间的 `ClientManager`
 4. 循环读取 `receive()` 消息
-5. 二进制消息按首字节解析 `EventType`，分发到 `handlers.handle()`
-6. 文本消息（JSON）解析 `GameEventType`，分发到 `handlers.handle_json()`
-7. 断连后从对应房间移除客户端
+5. 消息按首字节解析 `EventType | GameEventType`，二进制和 JSON 都统一分发到 `handlers.handle()`
+6. 断连后从对应房间移除客户端
 
 > 当前已实现 JSON 业务解析，支持多种游戏事件（播放控制、抢答、评分等）。
 
@@ -408,45 +591,14 @@ session_data = await session_manager.get_session(token)
 - `tests/test_db_session.py`：数据库会话管理测试
 - `tests/test_qapi.py`：QQ 音乐 API 客户端测试
 - `tests/test_tags_api.py`：标签 API 端点测试
+- `tests/ws_conn.py`：WebSocket 集成测试工厂，封装“创建房间 →（可选）加入房间 → 组装鉴权 Cookie → 建立 WS 连接”，返回可复用连接句柄
+- `tests/test_playback_message_ws.py`：真实 WebSocket 播放信令集成测试（`PLAY` / `PAUSE` / `SEEK`），支持模块级共享 room/连接复用，并通过 `rich.print` 输出收发消息和 Redis 状态便于人工核对
 
-### 手动/示例脚本
+#### WebSocket 集成测试复用约定
 
-- `test_memory_monitor.py`：内存监控功能脚本化验证
-- `examples/memory_monitor_example.py`：集成示例
-- `load_test.py`：WebSocket 负载测试工具
-- `mock_load_test.py`：模拟负载测试工具
-
-## 目录结构（核心）
-
-- `main.py`：FastAPI 入口、WebSocket、静态资源路由、生命周期钩子
-- `router/`：RESTful API 路由定义
-  - `room.py`：房间管理
-  - `tags.py`：标签与标签组管理
-  - `song.py`：歌曲管理
-  - `songlist.py`：歌单管理
-  - `room_songs.py`：房间歌曲管理
-- `handlers/`：事件处理器与注册机制
-  - `heartbeats.py`：心跳帧处理
-  - `game_events.py`：游戏事件处理（播放控制、抢答、评分等）
-- `client_manager/`：WebSocket 客户端集合管理
-- `utils/`：协议帧、枚举、日志、内存监控、错误定义、负载构建工具
-- `db/`：数据库模型、会话管理、CRUD 操作
-  - `models.py`：SQLAlchemy ORM 模型定义
-  - `session.py`：异步数据库会话工厂
-  - `crud.py`：常用数据库操作
-- `schemas/`：Pydantic 模型定义（请求/响应格式）
-- `cache/`：Redis 缓存集成
-  - `connection.py`：Redis 连接管理
-  - `utils.py`：房间管理、会话管理、抢答队列、播放状态
-  - `schemas.py`：缓存数据结构定义
-- `mq/`：异步任务队列（Huey + Redis）
-  - `tasks.py`：歌单抓取、音频下载、格式转换等异步任务
-- `qq_api/`：QQ 音乐 API 客户端（外部依赖）
-- `tests/`：单元测试
-- `docs/`：功能文档
-  - `songlist_cache_flow.md`：歌单入库与首曲缓存链路（含设计思路、优势与排障）
-  - `database_migration_guide.md`：数据库迁移指南
-  - `memory_monitor_usage.md`：内存监控使用说明
+- 推荐通过 `tests/ws_conn.py` 中的工厂函数创建连接，避免在每个测试里重复写建房、入房、鉴权 Cookie 逻辑。
+- `tests/test_playback_message_ws.py` 采用模块级共享连接（单文件复用同一个 room 与 ws），同时提供“pipe 风格”串行用例（同一连接内按顺序发送多条消息）。
+- 当前实现下 `SEEK` 事件会广播完整消息，但 Redis 播放状态仅更新 `progress_ms` / `offset_ts`，不会覆盖已存在的 `audio_url`（测试断言已按此行为对齐）。
 
 ## 当前边界与说明
 
