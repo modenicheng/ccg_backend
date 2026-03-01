@@ -31,6 +31,7 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 - **`room_cache.py`**：房间状态缓存操作（6小时 TTL）
 - **`schemas.py`**：缓存数据结构 Pydantic 定义，部分模型可以继承 `schemas/` 目录下的已有模型并与 `RedisModel` Mixin
 - **`utils.py`**：~~缓存工具函数（房间管理、会话管理、抢答队列、播放状态）~~【这个目前不用，大部分状态直接落库】
+- **`file_cache.py`**：音频文件内存缓存管理（LRU 缓存，支持文件内容缓存和范围请求）
 - **设计模式**：统一键命名规范 (`RedisKeys`)，自动过期管理
 
 #### 4. 数据格式定义 (`schemas/`)
@@ -217,6 +218,7 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 | `PLAY`               | 20     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构      | state & broadcast |
 | `PAUSE`              | 21     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
 | `SEEK`               | 22     | S→C      | 调整播放进度，但不改变播放状态                               | broadcast         |
+| `PRELOAD_AUDIO`      | 23     | S→C      | 音频预加载事件，通知客户端预加载下一首歌曲                     | state & broadcast |
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
@@ -259,6 +261,7 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 - 前端静态资源托管与 SPA 回退路由
 - Rich + 文件滚动日志
 - Redis 缓存集成（房间状态管理、会话管理、抢答队列、播放状态）
+- 音频文件内存缓存（LRU 缓存，支持 Range 请求，减少磁盘 IO）
 - PostgreSQL 数据库集成（房间、用户、歌单、歌曲、标签、标签组、评分、任务等）
 - RESTful API 端点（房间管理、歌单管理、歌曲管理、标签管理、房间歌曲管理）
 - 异步任务队列（Huey + Redis）：歌单抓取、音频下载、格式转换
@@ -347,6 +350,7 @@ uv run uvicorn main:app --reload --port 8000
 - `CCG_AUDIO_DOWNLOAD_DIR`：音频默认下载目录（默认 `assets/audio`，未显式传 `save_path` 时保存为 `assets/audio/<mid>.<ext>`）
 - `CCG_SONG_URL_RETRIES`：歌曲 URL 获取重试次数（默认 `3`）
 - `CCG_SONG_URL_BACKOFF_SECONDS`：歌曲 URL 获取重试退避基数秒数（默认 `0.4`）
+- `CCG_ASSET_CACHE_MAX_ITEMS`：音频文件内存缓存最大条目数（默认 `64`）
 
 端到端链路文档（歌单 ID → 入库 → 首曲缓存）：`docs/songlist_cache_flow.md`
 
@@ -369,6 +373,7 @@ uv run uvicorn main:app --reload --port 8000
 - **会话管理**：存储用户令牌与房间/玩家的映射关系
 - **抢答队列**：管理玩家抢答顺序
 - **播放状态管理**：记录当前播放进度、播放状态（播放/暂停/跳转）
+- **音频文件缓存**：内存 LRU 缓存音频文件内容，支持 Range 请求，减少磁盘 IO
 - **过期时间**：房间数据默认 6 小时过期，会话数据默认 24 小时过期
 
 ### 目录结构
@@ -376,6 +381,7 @@ uv run uvicorn main:app --reload --port 8000
 - `cache/connection.py`：Redis 连接管理
 - `cache/utils.py`：Redis 操作工具类（房间管理、会话管理、抢答队列、播放状态）
 - `cache/schemas.py`：缓存数据结构定义
+- `cache/file_cache.py`：音频文件内存缓存管理（LRU 缓存，支持文件内容缓存和范围请求）
 
 ### 使用方式
 
@@ -436,6 +442,8 @@ session_data = await session_manager.get_session(token)
 - `GET /api/songs/{song_id}`：获取歌曲详情
 - `PUT /api/songs/{song_id}`：更新歌曲信息
 - `DELETE /api/songs/{song_id}`：删除歌曲
+- `GET /api/songs/cache/{song_id}`：获取缓存的音频文件（支持 Range 请求）
+- `POST /api/songs/cache/{song_id}`：触发音频缓存任务
 
 ### 歌单管理 (`/api/songlists`)
 
@@ -489,7 +497,7 @@ session_data = await session_manager.get_session(token)
 #### 游戏事件（JSON 消息）
 
 - `ROOM_CREATE = 10`, `ROOM_JOIN = 11`, `ROOM_STATE = 12`, `GAME_OVER = 13`, `START_POS_UPDATE = 14`
-- `PLAY = 20`, `PAUSE = 21`, `SEEK = 22`
+- `PLAY = 20`, `PAUSE = 21`, `SEEK = 22`, `PRELOAD_AUDIO = 23`
 - `PLAYER_READY = 30`, `GAME_START = 31`, `COUNTDOWN = 32`, `ATTEMPT_ANSWER = 33`, `YOUR_TURN = 34`, `SUBMIT_ANSWER = 35`, `ANSWER_BROADCAST = 36`, `ANSWER_QUEUE = 37`, `ROUND_END = 38`
 - `JUDGING = 40`, `JUDGE_SUBMIT = 41`, `SCORE_UPDATE = 42`
 
@@ -505,6 +513,7 @@ session_data = await session_manager.get_session(token)
 - `JUDGING`：广播评分事件
 - `JUDGE_SUBMIT`：提交评分结果，计算玩家得分并更新排行榜
 - `ATTEMPT_ANSWER`：处理玩家抢答尝试
+- `PRELOAD_AUDIO`：音频预加载事件（已定义消息格式，处理器待实现）
 
 未注册的事件会在分发层抛出 `ValueError`。
 
@@ -604,8 +613,9 @@ session_data = await session_manager.get_session(token)
 
 - 房间/歌单业务流程**已实现**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
 - `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler（保留供未来扩展）。
-- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`JUDGING`、`JUDGE_SUBMIT`、`ATTEMPT_ANSWER` 等关键事件。
+- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`JUDGING`、`JUDGE_SUBMIT`、`ATTEMPT_ANSWER` 等关键事件，`PRELOAD_AUDIO` 事件消息格式已定义（处理器待实现）。
 - 音频缓存与下载功能已实现，但需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
+- 音频文件缓存 API 已实现：支持通过 `/api/songs/cache/{song_id}` 获取缓存的音频文件（支持 Range 请求），以及触发缓存任务的端点。
 - 标签组评分逻辑已实现基础版本，但标签组映射和答案存储仍需根据实际游戏逻辑完善。
 
 ## 局内流程设计

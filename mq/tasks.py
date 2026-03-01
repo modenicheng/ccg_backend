@@ -30,6 +30,10 @@ _ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
 _ASYNC_LOOP_THREAD: threading.Thread | None = None
 
 REDIS_URI = os.getenv("CCG_REDIS_URL", "localhost")
+
+if REDIS_URI.startswith("redis://") or REDIS_URI.startswith("rediss://"):
+    REDIS_URI = REDIS_URI.split("://", 1)[1]
+
 huey = RedisHuey('ccg-backend', host=REDIS_URI)
 
 from pydub import AudioSegment

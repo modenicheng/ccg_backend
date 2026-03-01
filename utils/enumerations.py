@@ -27,6 +27,7 @@ class GameEventType(Enum):
     PLAY = 20
     PAUSE = 21
     SEEK = 22
+    PRELOAD_AUDIO = 23
 
     PLAYER_READY = 30
     GAME_START = 31

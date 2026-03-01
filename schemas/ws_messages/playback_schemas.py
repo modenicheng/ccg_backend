@@ -12,11 +12,6 @@ class PlayControlData(BaseModel):
     audio_url: str | None = Field(default=None)
 
 
-class SeekMessage(MessageBase):
-    event: Literal[22] = GameEventType.SEEK.value
-    data: PlayControlData
-
-
 class PlayMessage(MessageBase):
     event: Literal[20] = GameEventType.PLAY.value
     data: PlayControlData
@@ -24,4 +19,14 @@ class PlayMessage(MessageBase):
 
 class PauseMessage(MessageBase):
     event: Literal[21] = GameEventType.PAUSE.value
+    data: PlayControlData
+
+
+class SeekMessage(MessageBase):
+    event: Literal[22] = GameEventType.SEEK.value
+    data: PlayControlData
+
+
+class PreloadAudioMessage(MessageBase):
+    event: Literal[23] = GameEventType.PRELOAD_AUDIO.value
     data: PlayControlData
