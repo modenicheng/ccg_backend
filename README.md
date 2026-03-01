@@ -52,7 +52,7 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 - **事件分发**：`handle()` 函数根据事件类型调用注册处理器，支持前置 Pydantic 验证
 - **模块组织**：
   - `__init__.py`：事件注册和分发核心逻辑
-  - ~~`game_events.py`：游戏核心事件处理（播放控制、抢答、评分等）~~ 【弃用，这里需要大量重构，且数据结构可能有大规模变更，所以目前别动】
+  - `game_events.py`：连接生命周期管理（`on_connect`、`on_disconnect`），原游戏事件处理器已迁移至按事件ID范围组织的文件中
   - `audio_events_2x.py`：音频控制事件（20-29）
   - `round_events_3x.py`：回合事件（30-39）
   - `heartbeats.py`：心跳事件处理（PING/PONG）
@@ -187,6 +187,18 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 - **文档完整**：详细的 API 文档、设计文档和迁移指南
 - **测试覆盖**：单元测试、集成测试、负载测试工具
 
+## 项目功能概览
+
+`ccg_backend` 是一个基于 FastAPI 的实时多人游戏后端，核心功能包括：
+
+- **实时通信**：WebSocket 二进制/JSON 事件接入与分发，心跳帧处理
+- **数据管理**：PostgreSQL 数据库集成，Redis 缓存（房间状态、会话、抢答队列）
+- **音频处理**：音频文件内存缓存（LRU），支持 Range 请求
+- **任务队列**：异步歌单抓取、音频下载、格式转换（Huey + Redis）
+- **游戏逻辑**：播放控制、抢答、评分、回合事件处理
+- **客户端管理**：按房间分组连接，支持广播、单播、踢出
+- **监控日志**：内存监控、Rich 日志系统、性能监控
+
 ## 整体设计
 
 ### 设计规范
@@ -200,10 +212,13 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 
 #### 有关 WebSocket 事件处理器（handlers）
 
-基本依据 `DESING.md` 里表格和事件id的划分方式分文件，避免单文件过长难以维护
+基本依据 `DESIGN.md` 里表格和事件id的划分方式分文件，避免单文件过长难以维护。当前实际组织方式：
+- **按事件ID范围分文件**：`audio_events_2x.py`（事件20-29）、`round_events_3x.py`（事件30-39）
+- **生命周期管理**：`game_events.py` 包含 `on_connect`、`on_disconnect` 函数
+- **心跳处理**：`heartbeats.py` 处理 `HEARTBEAT` 事件
 
 > [!IMPORTANT]
-> 这个表更新可能不及时，务必依据 `DESING.md` 的设计进行！
+> 这个表更新可能不及时，务必依据 `DESIGN.md` 的设计进行！
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
@@ -250,23 +265,6 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 
 `9561851623` 是可用于测试的 QQ 音乐的歌单 ID
 
-## 项目概览
-
-`ccg_backend` 是一个基于 FastAPI 的实时后端，当前提供：
-
-- WebSocket 二进制事件接入与分发
-- 心跳帧（PING/PONG）编解码与回包
-- 音频帧二进制编解码工具（供协议层使用）
-- 进程/系统内存定时监控能力
-- 前端静态资源托管与 SPA 回退路由
-- Rich + 文件滚动日志
-- Redis 缓存集成（房间状态管理、会话管理、抢答队列、播放状态）
-- 音频文件内存缓存（LRU 缓存，支持 Range 请求，减少磁盘 IO）
-- PostgreSQL 数据库集成（房间、用户、歌单、歌曲、标签、标签组、评分、任务等）
-- RESTful API 端点（房间管理、歌单管理、歌曲管理、标签管理、房间歌曲管理）
-- 异步任务队列（Huey + Redis）：歌单抓取、音频下载、格式转换
-- 游戏事件处理器（播放控制、抢答、评分、判断等）
-- 客户端连接管理（按房间分组、广播、单播、踢出）
 
 ## 运行方式
 
@@ -379,7 +377,7 @@ uv run uvicorn main:app --reload --port 8000
 ### 目录结构
 
 - `cache/connection.py`：Redis 连接管理
-- `cache/utils.py`：Redis 操作工具类（房间管理、会话管理、抢答队列、播放状态）
+- `cache/utils.py`：Redis 操作工具类（目前大部分状态直接落库，Redis主要用于实时状态同步）
 - `cache/schemas.py`：缓存数据结构定义
 - `cache/file_cache.py`：音频文件内存缓存管理（LRU 缓存，支持文件内容缓存和范围请求）
 
@@ -501,19 +499,36 @@ session_data = await session_manager.get_session(token)
 - `PLAYER_READY = 30`, `GAME_START = 31`, `COUNTDOWN = 32`, `ATTEMPT_ANSWER = 33`, `YOUR_TURN = 34`, `SUBMIT_ANSWER = 35`, `ANSWER_BROADCAST = 36`, `ANSWER_QUEUE = 37`, `ROUND_END = 38`
 - `JUDGING = 40`, `JUDGE_SUBMIT = 41`, `SCORE_UPDATE = 42`
 
+> 注：各事件的详细说明、方向和服务端行为参见[设计规范中的事件表](#整体设计)。
+
 ### 已注册处理器
 
 #### 二进制事件处理器
 
 - `HEARTBEAT`（`handlers/heartbeats.py`）：处理心跳帧（PING/PONG）
 
-#### 游戏事件处理器（`handlers/game_events.py`）
+#### 游戏事件处理器（按事件ID范围分布）
 
-- `PLAY`、`PAUSE`、`SEEK`：播放控制，仅房主可操作
-- `JUDGING`：广播评分事件
-- `JUDGE_SUBMIT`：提交评分结果，计算玩家得分并更新排行榜
-- `ATTEMPT_ANSWER`：处理玩家抢答尝试
-- `PRELOAD_AUDIO`：音频预加载事件（已定义消息格式，处理器待实现）
+事件处理器按事件ID范围组织在多个文件中：
+
+- **`audio_events_2x.py`**（事件20-29）：
+  - `PLAY` (20)：开始播放，仅房主可操作
+  - `PAUSE` (21)：暂停播放，由抢答或房主触发
+  - `SEEK` (22)：调整播放进度
+  - `PRELOAD_AUDIO` (23)：音频预加载事件（消息格式已定义，**处理器待实现**）
+
+- **`round_events_3x.py`**（事件30-39）：
+  - `GAME_START` (31)：房主开始游戏，禁止新玩家加入
+  - `ATTEMPT_ANSWER` (33)：处理玩家抢答尝试，触发暂停和入队
+  - `ROUND_END` (38)：回合结束，准备下一轮
+  - 以下事件**处理器待实现**：`SUBMIT_ANSWER` (35)、`YOUR_TURN` (34)、`ANSWER_BROADCAST` (36)、`ANSWER_QUEUE` (37)、`CLEAR_ANSWER_QUEUE` (38)
+
+- **`game_events.py`**：
+  - 包含连接生命周期管理函数：`on_connect`、`on_disconnect`
+  - 原游戏事件处理器已迁移，以下事件**处理器待实现**：`JUDGING` (40)、`JUDGE_SUBMIT` (41)、`SCORE_UPDATE` (42)
+
+- **`heartbeats.py`**：
+  - `HEARTBEAT`：处理心跳帧（PING/PONG）
 
 未注册的事件会在分发层抛出 `ValueError`。
 
@@ -613,7 +628,7 @@ session_data = await session_manager.get_session(token)
 
 - 房间/歌单业务流程**已实现**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
 - `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler（保留供未来扩展）。
-- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`JUDGING`、`JUDGE_SUBMIT`、`ATTEMPT_ANSWER` 等关键事件，`PRELOAD_AUDIO` 事件消息格式已定义（处理器待实现）。
+- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`GAME_START`、`ATTEMPT_ANSWER`、`ROUND_END` 等关键事件。以下事件消息格式已定义但**处理器待实现**：`PRELOAD_AUDIO`、`JUDGING`、`JUDGE_SUBMIT`、`SUBMIT_ANSWER`、`YOUR_TURN`、`ANSWER_BROADCAST`、`ANSWER_QUEUE`、`CLEAR_ANSWER_QUEUE`、`SCORE_UPDATE`。
 - 音频缓存与下载功能已实现，但需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
 - 音频文件缓存 API 已实现：支持通过 `/api/songs/cache/{song_id}` 获取缓存的音频文件（支持 Range 请求），以及触发缓存任务的端点。
 - 标签组评分逻辑已实现基础版本，但标签组映射和答案存储仍需根据实际游戏逻辑完善。
