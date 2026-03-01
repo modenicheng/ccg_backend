@@ -22,8 +22,13 @@ from handlers import handle
 from pathlib import Path
 from schemas.song import HttpErrorResponse
 from router import *
+from utils.logger import log_level_map
+import os
 
-init_logging(level=logging.DEBUG)
+log_level = log_level_map.get(
+    os.getenv("CCG_LOG_LEVEL", "INFO").upper(), logging.INFO)
+
+init_logging(level=log_level)
 logger = get_logger(__name__)
 
 
@@ -39,14 +44,6 @@ async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
         redis_connected = await redis_client.connect()
         if redis_connected:
             logger.info("Redis connected successfully")
-            #启动时做一次全量离线纠偏，避免非优雅退出导致的在线状态残留
-            # flushed = await room_cache.set_all_offline()
-            # if flushed:
-            #     logger.info(
-            #         "Redis online states flushed to offline on startup")
-            # else:
-            #     logger.warning(
-            #         "Failed to flush Redis online states on startup")
         else:
             logger.warning(
                 "Failed to connect to Redis, some features may be unavailable")
@@ -77,24 +74,7 @@ async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
     yield
 
     # 关闭逻辑
-    # 主动关闭 WebSocket 并维护 Redis 在线状态（避免服务器关闭时状态残留）
     try:
-        # room_snapshot = clients.get_room_snapshot()
-        # for room_id, _clients in room_snapshot.items():
-        #     for _client in _clients:
-        #         user = _client.user
-        #         if user is not None:
-        #             await room_manager.set_player_offline(
-        #                 room_id, str(user.id))
-        #         try:
-        #             await _client.ws.close(code=1001,
-        #                                    reason="Server shutting down")
-        #         except Exception:
-        #             pass
-
-        #     # 双保险：将该房间缓存中的在线玩家统一置离线
-        #     await room_manager.set_all_offline_by_room(room_id)
-
         await clients.clear()
         logger.info("All websocket clients closed and online states flushed")
     except Exception as e:

@@ -4,6 +4,7 @@ from fastapi import WebSocket
 from db.models import Room, User
 from utils import get_logger
 from schemas.base_message import ErrorMessage, ErrorMessageData
+from enum import Enum
 
 logger = get_logger(__name__)
 
@@ -33,8 +34,13 @@ class Client:
             )
 
     async def send_error(self, event_type, message: str):
+        event = event_type
+        if isinstance(event_type, Enum):
+            event: int = event_type.value
+        elif not isinstance(event_type, int):
+            raise TypeError(f"Unsupported event_type type: {type(event_type)}")
         error_message = ErrorMessage(
-            data=ErrorMessageData(message=message, error_event=event_type))
+            data=ErrorMessageData(message=message, error_event=event))
         await self.send(error_message.model_dump())
 
 

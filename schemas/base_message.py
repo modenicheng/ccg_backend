@@ -1,7 +1,7 @@
 from time import time
 from utils.enumerations import EventType
 from typing import Literal, Any, List, Dict
-
+from enum import Enum
 from pydantic import BaseModel, Field
 
 from utils.enumerations import GameEventType
@@ -13,6 +13,20 @@ class MessageBase(BaseModel):
     ts: int = Field(default_factory=get_ts_ms, description="事件发生的时间戳（毫秒）")
 
 
+class AutoEventConvertMixin(BaseModel):
+
+    def model_dump(self, *args, **kwargs) -> dict:
+        """
+        重写 model_dump 方法，自动将事件类型枚举转换为对应的值。
+        这样在创建消息对象时可以直接使用枚举类型，调用 model_dump 时会自动转换。
+        """
+        data = super().model_dump(*args, **kwargs)
+        event = data.get("event")
+        if isinstance(event, Enum):
+            data["event"] = event.value
+        return data
+
+
 class AttemptAnswerData(BaseModel):
     offset_ts: int = Field(..., ge=0)
     user_id: int = Field(..., ge=0)
@@ -21,25 +35,6 @@ class AttemptAnswerData(BaseModel):
 class AttemptAnswerMessage(MessageBase):
     event: Literal[33] = GameEventType.ATTEMPT_ANSWER.value
     data: AttemptAnswerData
-
-
-class AnswerQueueEntry(BaseModel):
-    """抢答队列条目"""
-    player_id: str = Field(..., description="玩家ID")
-    offset_ts: int = Field(..., ge=0, description="客户端校准时间戳")
-    server_ts: int = Field(..., ge=0, description="服务器接收时间戳")
-    added_at: str = Field(..., description="加入队列时间")
-
-
-class AnswerQueueData(BaseModel):
-    """抢答队列数据"""
-    queue: List[AnswerQueueEntry] = Field(default_factory=list,
-                                          description="抢答队列")
-
-
-class AnswerQueueMessage(MessageBase):
-    event: Literal[37] = GameEventType.ANSWER_QUEUE.value
-    data: AnswerQueueData
 
 
 class YourTurnData(BaseModel):
@@ -78,12 +73,12 @@ class AnswerBroadcastMessage(MessageBase):
     data: AnswerBroadcastData
 
 
-class ErrorMessageData(BaseModel):
+class ErrorMessageData(AutoEventConvertMixin):
     message: str = Field(..., description="错误消息内容")
-    error_event: EventType | GameEventType = Field(...,
-                                                   description="引发错误的事件类型")
+    error_event: int | EventType | GameEventType = Field(
+        ..., description="引发错误的事件类型")
 
 
-class ErrorMessage(MessageBase):
+class ErrorMessage(MessageBase, AutoEventConvertMixin):
     event: Literal[255] = EventType.ERROR.value
     data: ErrorMessageData = Field(..., description="错误消息数据")

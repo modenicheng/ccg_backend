@@ -4,7 +4,7 @@ from typing import Any, Optional, Self
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from time import time
-from utils.enumerations import RoomStatus, GameEventType
+from utils.enumerations import RoomStatus
 from schemas.ws_messages import room_schemas as RoomSchemas
 from pydantic import BaseModel, Field
 

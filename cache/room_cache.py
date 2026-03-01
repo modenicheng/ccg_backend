@@ -57,8 +57,7 @@ async def save_room_state(room_id: str, state: RoomBaseStateCache):
         logger.error(f"Error saving room state for room {room_id}: {e}")
 
 
-async def set_room_playback_state(room_id: str,
-                                   playback_state: PlaybackState):
+async def set_room_playback_state(room_id: str, playback_state: PlaybackState):
     """将房间播放状态保存到 Redis
 
     Args:
@@ -76,7 +75,9 @@ async def set_room_playback_state(room_id: str,
     except Exception as e:
         logger.error(f"Error saving playback state for room {room_id}: {e}")
 
-async def set_room_playback_progress(room_id: str, progress_ms: int, offset_ts: int):
+
+async def set_room_playback_progress(room_id: str, progress_ms: int,
+                                     offset_ts: int):
     """更新房间播放进度（仅 progress_ms 和 offset_ts）
 
     Args:
@@ -88,15 +89,19 @@ async def set_room_playback_progress(room_id: str, progress_ms: int, offset_ts: 
 
     try:
         key = RedisKeys.playback_state(room_id)
-        await cast(Awaitable, redis.hset(key, mapping={
-            "progress_ms": str(progress_ms),
-            "offset_ts": str(offset_ts),
-        }))
+        await cast(
+            Awaitable,
+            redis.hset(key,
+                       mapping={
+                           "progress_ms": str(progress_ms),
+                           "offset_ts": str(offset_ts),
+                       }))
         logger.debug(
             f"Updated playback progress for room {room_id}: progress_ms={progress_ms}, offset_ts={offset_ts}"
         )
     except Exception as e:
-        logger.error(f"Error updating playback progress for room {room_id}: {e}")
+        logger.error(
+            f"Error updating playback progress for room {room_id}: {e}")
 
 
 async def get_room_playback_state(room_id: str) -> PlaybackState | None:
@@ -288,20 +293,37 @@ async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
     key = RedisKeys.answer_queue(room_id)
     try:
         member_key = data.model_dump_json()  # 将整个对象序列化为 JSON 字符串作为成员值
-        # 将玩家添加到答题队列（有序集合），score 为 server_ts * 0.001 + offset_ts
+        # 将玩家添加到答题队列（有序集合），score 为 server_ts * 0.0001 + offset_ts
         # 即以 offset_ts 为主，server_ts 作为微调，确保同一毫秒内的玩家顺序由服务器时间决定
         # 这样可以保证队列顺序的唯一性和时间精度，防止同一毫秒内多玩家并发导致顺序冲突
+        # First, check if player already exists in queue
+        entries = await cast(Awaitable[list], redis.zrange(key, 0, -1))
+        key_player_prefix = '{"player_id":' + str(data.player_id) + ','
+        logger.debug(
+            f"Current answer queue keys for room {room_id}: {entries}, checking for player_id {data.player_id} with prefix {key_player_prefix}"
+        )
+        if any(k.startswith(key_player_prefix) for k in entries):
+            logger.warning(
+                f"Player {data.player_id} is already in the answer queue for room {room_id}, skipping append"
+            )
+            raise ValueError(
+                f"Player {data.player_id} is already in the answer queue")
+
+        # Then add to queue
         result = await cast(
             Awaitable,
             redis.zadd(key,
-                       {member_key: data.server_ts * 0.001 + data.offset_ts}))
+                       {member_key: data.server_ts * 0.0001 + data.offset_ts}))
         logger.debug(
             f"Appended player {data.player_id} to answer queue for room {room_id}, result: {result}"
         )
         return result
+    except ValueError as ve:
+        raise ve  # 业务逻辑错误，抛出给调用方处理
     except Exception as e:
         logger.error(
-            f"Error appending player to answer queue for room {room_id}: {e}")
+            f"Error appending player to answer queue for room {room_id}: {e}",
+            exc_info=True)
         return None
 
 
@@ -322,13 +344,12 @@ async def get_answer_queue(room_id: str) -> list[RoomSchemas.AnswerQueueItem]:
     redis = await get_redis()
     key = RedisKeys.answer_queue(room_id)
     try:
-        # 获取有序集合中的所有玩家ID和score（offset_ts）
-        entries = await cast(Awaitable[list],
-                             redis.zrange(key, 0, -1, withscores=True))
+        # 获取有序集合中的所有玩家ID（offset_ts）
+        entries = await cast(Awaitable[list], redis.zrange(key, 0, -1))
         answer_queue = [
             RoomSchemas.AnswerQueueItem.model_validate_json(
-                p, strict=False).model_copy(update={"order": o})
-            for o, (p, _) in enumerate(entries)
+                p, strict=False).model_copy(update={"order": o + 1})
+            for o, p in enumerate(entries)
         ]
         logger.debug(
             f"Retrieved answer queue for room {room_id}: {answer_queue}")
