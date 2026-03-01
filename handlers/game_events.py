@@ -40,6 +40,13 @@ async def on_connect(
     await room_cache.set_room_player(room_id, player_item)
 
     cl.user.online = True
+
+    # 确保数据库中的在线状态在当前 session 内被持久化（cl.user 可能是跨 session 对象）
+    user_stmt = select(models.User).where(models.User.id == cl.user.id)
+    user_result = await session.execute(user_stmt)
+    user_obj = user_result.scalar_one_or_none()
+    if user_obj:
+        user_obj.online = True
     await session.commit()
 
     stmt = select(models.Room).where(models.Room.id == room_id).options(
@@ -47,6 +54,10 @@ async def on_connect(
         selectinload(models.Room.scores))
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
+    if room is None:
+        logger.warning("Room %s not found during on_connect for client %s", room_id,
+                       cl)
+        return
 
     await room_cache.update_room_player_online_status(room_id, cl.user.id,
                                                       True)
@@ -59,10 +70,12 @@ async def on_connect(
             playback_state)
     queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(room_id)
     message.answer_queue = queue
+
+    room_state_message = RoomSchema.RoomStateMessage(data=message)
     join_message = RoomSchema.PlayerJoinMessage(
-        data=RoomSchema.RoomStatePlayerItem.model_validate(cl.user))
+        data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
     res = await asyncio.gather(*[
-        cl.ws.send_json(message.model_dump()),
+        cl.ws.send_json(room_state_message.model_dump()),
         clients.broadcast(room_id,
                           join_message.model_dump(),
                           excluded_clients={cl})
@@ -79,9 +92,19 @@ async def on_disconnect(
     clients: ClientManager,
     room_id: str,
 ):
+    try:
+        await cl.ws.close(code=1000, reason="Client disconnected")
+    except Exception:
+        logger.warning("Failed to close websocket for client %s", cl)
+
     player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
     player_item.online = False
-    await session.commit()
+    user = select(models.User).where(models.User.id == cl.user.id)
+    result = await session.execute(user)
+    user_obj = result.scalar_one_or_none()
+    if user_obj:
+        user_obj.online = False
+        await session.commit()
     await room_cache.set_room_player(room_id, player_item)
     cl.user.online = False  # 同步更新数据库在线状态（如果有这个字段的话）
     await room_cache.update_room_player_online_status(room_id, cl.user.id,
@@ -268,238 +291,120 @@ async def on_disconnect(
 
 #     logger.info("Scoring completed for room %s", room_id)
 
+# @regist(GameEventType.SUBMIT_ANSWER)
+# async def handle_submit_answer(data,
+#                                clients: ClientManager,
+#                                websocket=None,
+#                                room_id=None,
+#                                **kwargs):
+#     """处理玩家提交答案事件"""
+#     if not isinstance(data, dict):
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "Expected JSON object")
+#         return
 
-@regist(GameEventType.ATTEMPT_ANSWER, AttemptAnswerMessage)
-async def handle_attempt_answer(data: AttemptAnswerMessage,
-                                clients: ClientManager, client: Client,
-                                room_id: str, **kwargs):
+#     if websocket is None or room_id is None:
+#         return
 
-    if client is None or room_id is None:
-        return
+#     # 验证当前玩家是否为当前作答者
+#     user = getattr(websocket.state, 'user', None)
+#     if not user:
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "User not authenticated")
+#         return
 
-    # 获取玩家ID和offset_ts
-    player_id = str(data.data.user_id)
-    offset_ts = data.data.offset_ts
+#     player_id = str(user.id)
+#     current_answerer = await room_manager.get_current_answerer(room_id)
+#     if current_answerer != player_id:
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "Not your turn to answer")
+#         return
 
-    # 生成服务器时间戳
-    server_ts = get_ts_ms()
+#     try:
+#         payload = SubmitAnswerMessage.model_validate(data)
+#     except ValidationError as exc:
+#         logger.warning("Invalid SUBMIT_ANSWER payload: %s", exc)
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                f"Invalid payload: {exc.errors()}")
+#         return
 
-    # 获取当前队列（检查是否为空）
-    current_queue = await room_cache.get_answer_queue(room_id)
-    was_empty = len(current_queue) == 0
+#     # 将答案保存到数据库（PlayerAnswer表）
+#     try:
+#         async with AsyncSessionLocal() as db:
+#             # 获取当前歌曲ID和轮次索引
+#             song_index = await room_manager.get_current_song_index(room_id)
+#             song_queue = await room_manager.get_song_queue(room_id)
+#             if song_index is not None and song_queue and 0 <= song_index < len(
+#                     song_queue):
+#                 song_id = int(song_queue[song_index])
+#                 # 创建玩家答案记录
+#                 player_answer = models.PlayerAnswer(
+#                     room_id=room_id,
+#                     user_id=user.id,
+#                     song_id=song_id,
+#                     round_index=song_index,  # 使用歌曲索引作为轮次索引
+#                     selected_tag_ids=payload.data.selected_tag_ids,
+#                     description_text=payload.data.description_text,
+#                     answer_order=None  # 抢答顺序已在handle_judge_submit中设置
+#                 )
+#                 db.add(player_answer)
+#                 await db.commit()
+#                 logger.info("Saved answer for player %s song %d in room %s",
+#                             player_id, song_id, room_id)
+#             else:
+#                 logger.warning(
+#                     "Cannot determine current song for room %s, skipping answer save",
+#                     room_id)
+#     except Exception as e:
+#         logger.error("Failed to save player answer to database: %s", e)
+#         # 继续执行，仍然广播答案
 
-    # 添加到抢答队列 - 使用 room_cache.append_attempt_answer_player
-    # 创建 AnswerQueueItem 对象
-    answer_item = cache.schemas.AnswerQueueItem(player_id=int(player_id),
-                                                offset_ts=offset_ts,
-                                                server_ts=server_ts,
-                                                order=None,
-                                                is_answering=False)
-    try:
-        result = await room_cache.append_attempt_answer_player(
-            room_id, answer_item)
-    except ValueError as ve:
-        logger.warning(
-            f"Player {player_id} attempted to answer in room {room_id} but is already in the queue"
-        )
-        await client.send_error(
-            GameEventType.ATTEMPT_ANSWER.value,
-            "You have already attempted to answer, please wait for next round")
-        return
+#     # 广播答案给所有玩家（ANSWER_BROADCAST事件）
+#     answer_broadcast_data = AnswerBroadcastData(
+#         player_id=player_id,
+#         selected_tag_ids=payload.data.selected_tag_ids,
+#         description_text=payload.data.description_text)
+#     answer_broadcast_message = AnswerBroadcastMessage(
+#         data=answer_broadcast_data)
+#     await clients.broadcast(room_id, answer_broadcast_message.model_dump())
 
-    if result is None:
-        logger.error("Failed to add player %s to answer queue in room %s",
-                     player_id, room_id)
-        await client.send_error(
-            GameEventType.ATTEMPT_ANSWER.value,
-            "Failed to join answer queue, please try again")
-        return
+#     # 从抢答队列中移除当前玩家（已作答）
+#     # 使用 room_cache.remove_from_answer_queue，需要将 player_id 转换为 int
+#     await room_cache.remove_from_answer_queue(room_id, int(player_id))
 
-    logger.info(
-        "Player %s attempted to answer in room %s at offset %d ms (server ts: %d)",
-        player_id, room_id, offset_ts, server_ts)
+#     # 清空当前作答者
+#     await room_manager.set_current_answerer(room_id, "")
 
-    # 如果此前队列为空，暂停播放并设置当前作答玩家
-    if was_empty:
-        # 获取当前播放进度（从Redis房间状态）
-        current_progress = await room_manager.get_play_progress(room_id)
+#     # 获取下一个玩家（如果队列中还有玩家）
+#     # 使用 room_cache.get_answer_queue 获取排序后的 AnswerQueueItem 列表
+#     next_queue = await room_cache.get_answer_queue(room_id)
+#     if next_queue:
+#         # 设置下一个玩家为当前作答者
+#         next_player = str(next_queue[0].player_id)
+#         await room_manager.set_current_answerer(room_id, next_player)
+#         # 发送YOUR_TURN给下一个玩家
+#         # 需要获取下一个玩家的WebSocket，但这里无法直接获取
+#         # 暂时跳过，前端可以通过ANSWER_QUEUE事件知道轮到谁
+#         logger.info("Next player in queue: %s", next_player)
+#     else:
+#         # 队列为空，恢复播放？
+#         # 暂时不处理，由房主控制
+#         logger.info("Answer queue empty after submission in room %s", room_id)
 
-        # 更新Redis播放状态
-        await room_manager.update_playback_state(
-            room_id=room_id,
-            round_state="paused",
-            progress_ms=current_progress,
-            offset_ts=offset_ts,  # 使用抢答时间戳作为offset_ts
-            audio_url=None,
-            event_ts=server_ts,
-            event_name="PAUSE")
+#     # 广播更新后的抢答队列
+#     queue_entries = []
+#     for entry in next_queue:
+#         # 将服务器时间戳转换为ISO格式字符串作为added_at
+#         added_at_str = datetime.fromtimestamp(
+#             entry.server_ts / 1000,
+#             timezone.utc).isoformat().replace("+00:00", "Z")
+#         queue_entries.append(
+#             AnswerQueueEntry(player_id=str(entry.player_id),
+#                              offset_ts=entry.offset_ts,
+#                              server_ts=entry.server_ts,
+#                              added_at=added_at_str))
+#     answer_queue_data = AnswerQueueData(queue=queue_entries)
+#     answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
+#     await clients.broadcast(room_id, answer_queue_message.model_dump())
 
-        # 设置当前作答玩家
-        await room_manager.set_current_answerer(room_id, player_id)
-
-        # 发送YOUR_TURN事件给当前作答玩家
-        your_turn_data = YourTurnData()
-        your_turn_message = YourTurnMessage(data=your_turn_data)
-        await client.send(your_turn_message.model_dump())
-        logger.info("Sent YOUR_TURN to player %s in room %s", player_id,
-                    room_id)
-
-        # # 广播PAUSE事件给所有客户端
-        # # 构造PAUSE消息
-        """
-        ！！！直接前端控制暂停，后端不广播PAUSE事件了，避免网络延迟导致前端无法及时暂停
-         前端在收到抢答事件时立即暂停播放
-        """
-        # pause_data = PlayControlData(progress_ms=current_progress,
-        #                              offset_ts=offset_ts,
-        #                              audio_url=None)
-        # pause_message = PauseMessage(data=pause_data)
-
-        # # 使用_safe_broadcast发送（排除发送者）
-        # await clients.broadcast(room_id,
-        #                         pause_message.model_dump(),
-        #                         excluded_clients={client})
-
-        # logger.info(
-        #     "Paused playback and set current answerer to %s in room %s",
-        #     player_id, room_id)
-
-    # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
-    sorted_queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(
-        room_id)
-
-    # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
-    await clients.broadcast(
-        room_id,
-        data.model_dump(),
-        excluded_clients={client},
-    )
-
-    answer_queue_data = AnswerQueueData(queue=sorted_queue)
-    answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
-
-    await clients.broadcast(
-        room_id,
-        answer_queue_message.model_dump(),
-    )
-
-    logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
-
-
-@regist(GameEventType.SUBMIT_ANSWER)
-async def handle_submit_answer(data,
-                               clients: ClientManager,
-                               websocket=None,
-                               room_id=None,
-                               **kwargs):
-    """处理玩家提交答案事件"""
-    if not isinstance(data, dict):
-        await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
-                               "Expected JSON object")
-        return
-
-    if websocket is None or room_id is None:
-        return
-
-    # 验证当前玩家是否为当前作答者
-    user = getattr(websocket.state, 'user', None)
-    if not user:
-        await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
-                               "User not authenticated")
-        return
-
-    player_id = str(user.id)
-    current_answerer = await room_manager.get_current_answerer(room_id)
-    if current_answerer != player_id:
-        await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
-                               "Not your turn to answer")
-        return
-
-    try:
-        payload = SubmitAnswerMessage.model_validate(data)
-    except ValidationError as exc:
-        logger.warning("Invalid SUBMIT_ANSWER payload: %s", exc)
-        await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
-                               f"Invalid payload: {exc.errors()}")
-        return
-
-    # 将答案保存到数据库（PlayerAnswer表）
-    try:
-        async with AsyncSessionLocal() as db:
-            # 获取当前歌曲ID和轮次索引
-            song_index = await room_manager.get_current_song_index(room_id)
-            song_queue = await room_manager.get_song_queue(room_id)
-            if song_index is not None and song_queue and 0 <= song_index < len(
-                    song_queue):
-                song_id = int(song_queue[song_index])
-                # 创建玩家答案记录
-                player_answer = models.PlayerAnswer(
-                    room_id=room_id,
-                    user_id=user.id,
-                    song_id=song_id,
-                    round_index=song_index,  # 使用歌曲索引作为轮次索引
-                    selected_tag_ids=payload.data.selected_tag_ids,
-                    description_text=payload.data.description_text,
-                    answer_order=None  # 抢答顺序已在handle_judge_submit中设置
-                )
-                db.add(player_answer)
-                await db.commit()
-                logger.info("Saved answer for player %s song %d in room %s",
-                            player_id, song_id, room_id)
-            else:
-                logger.warning(
-                    "Cannot determine current song for room %s, skipping answer save",
-                    room_id)
-    except Exception as e:
-        logger.error("Failed to save player answer to database: %s", e)
-        # 继续执行，仍然广播答案
-
-    # 广播答案给所有玩家（ANSWER_BROADCAST事件）
-    answer_broadcast_data = AnswerBroadcastData(
-        player_id=player_id,
-        selected_tag_ids=payload.data.selected_tag_ids,
-        description_text=payload.data.description_text)
-    answer_broadcast_message = AnswerBroadcastMessage(
-        data=answer_broadcast_data)
-    await clients.broadcast(room_id, answer_broadcast_message.model_dump())
-
-    # 从抢答队列中移除当前玩家（已作答）
-    # 使用 room_cache.remove_from_answer_queue，需要将 player_id 转换为 int
-    await room_cache.remove_from_answer_queue(room_id, int(player_id))
-
-    # 清空当前作答者
-    await room_manager.set_current_answerer(room_id, "")
-
-    # 获取下一个玩家（如果队列中还有玩家）
-    # 使用 room_cache.get_answer_queue 获取排序后的 AnswerQueueItem 列表
-    next_queue = await room_cache.get_answer_queue(room_id)
-    if next_queue:
-        # 设置下一个玩家为当前作答者
-        next_player = str(next_queue[0].player_id)
-        await room_manager.set_current_answerer(room_id, next_player)
-        # 发送YOUR_TURN给下一个玩家
-        # 需要获取下一个玩家的WebSocket，但这里无法直接获取
-        # 暂时跳过，前端可以通过ANSWER_QUEUE事件知道轮到谁
-        logger.info("Next player in queue: %s", next_player)
-    else:
-        # 队列为空，恢复播放？
-        # 暂时不处理，由房主控制
-        logger.info("Answer queue empty after submission in room %s", room_id)
-
-    # 广播更新后的抢答队列
-    queue_entries = []
-    for entry in next_queue:
-        # 将服务器时间戳转换为ISO格式字符串作为added_at
-        added_at_str = datetime.fromtimestamp(
-            entry.server_ts / 1000,
-            timezone.utc).isoformat().replace("+00:00", "Z")
-        queue_entries.append(
-            AnswerQueueEntry(player_id=str(entry.player_id),
-                             offset_ts=entry.offset_ts,
-                             server_ts=entry.server_ts,
-                             added_at=added_at_str))
-    answer_queue_data = AnswerQueueData(queue=queue_entries)
-    answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
-    await clients.broadcast(room_id, answer_queue_message.model_dump())
-
-    logger.info("Answer submitted by player %s in room %s", player_id, room_id)
+#     logger.info("Answer submitted by player %s in room %s", player_id, room_id)

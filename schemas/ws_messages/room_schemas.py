@@ -50,6 +50,15 @@ class PlaybackState(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ScoreItem(BaseModel):
+    player_id: int = Field(..., description="玩家ID", alias="user_id")
+    round_index: int
+    score_delta: int
+    total_score: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClientRoomState(BaseModel):
     room_id: str = Field(alias="id")
     title: str | None = None
@@ -61,6 +70,7 @@ class ClientRoomState(BaseModel):
     answer_queue: list[AnswerQueueItem] = Field(default_factory=list)
     playback_status: PlaybackState | None = Field(default=None,
                                                   description="当前播放状态")
+    scores: list[ScoreItem] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

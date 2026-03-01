@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
+from db import models
 from db.crud import fetch_room_object, simple_authentication
 from db.models import User, Room, TagGroup
-from db.session import get_db
+from db.session import get_db, session_scope
 from uuid import uuid4
 from client_manager import ClientManager, Client
 from cache.connection import redis_client
@@ -153,32 +154,63 @@ async def root():
 
 
 @app.websocket("/ws/{roomid}")
-async def websocket_endpoint(websocket: WebSocket,
-                             roomid: str,
-                             session: AsyncSession = Depends(get_db)):
+async def websocket_endpoint(websocket: WebSocket, roomid: str):
 
-    global clients
-    user = await simple_authentication(session, websocket.cookies, roomid)
-    if not user:
-        await websocket.close(code=1008, reason="Authentication failed")
-        return
-    room = await fetch_room_object(session, roomid)
-    if not room:
-        await websocket.close(code=1008, reason="Room not found")
-        return
+    async with session_scope() as session:
+        global clients
+        user = await simple_authentication(session, websocket.cookies, roomid)
+        if not user:
+            await websocket.close(code=1008, reason="Authentication failed")
+            return
+        room = await fetch_room_object(session, roomid)
+        if not room:
+            await websocket.close(code=1008, reason="Room not found")
+            return
 
-    client = Client(websocket, user, room)
+        client = Client(websocket, user, room)
 
-    await client.ws.accept()
+        await client.ws.accept()
 
-    logger.info("WebSocket connected: %s", websocket.client)
-    clients.push(roomid, client)
+        logger.info("WebSocket connected: %s", websocket.client)
+        clients.push(roomid, client)
 
-    await on_connect(session, client, clients, roomid)
+        ## test scores
+        # test_scores = [
+        #     models.Score(user=user,
+        #                  round_index=1,
+        #                  score_delta=10,
+        #                  total_score=10,
+        #                  room=room),
+        #     models.Score(user=user,
+        #                  round_index=2,
+        #                  score_delta=-5,
+        #                  total_score=5,
+        #                  room=room),
+        #     models.Score(user=room.users[1],
+        #                  round_index=3,
+        #                  score_delta=15,
+        #                  total_score=15,
+        #                  room=room),
+        # ]
+
+        # for score in test_scores:
+        #     session.add(score)
+        # await session.commit()
+
+        await on_connect(session, client, clients, roomid)
 
     try:
         while True:
             data = await client.ws.receive()
+            if data.get("type") == "websocket.disconnect":
+                logger.info(
+                    "WebSocket disconnect event received from %s: code=%s reason=%s",
+                    client.ws.client,
+                    data.get("code"),
+                    data.get("reason", ""),
+                )
+                break
+
             if "text" in data:
                 payload_text = data["text"]
                 try:
@@ -243,7 +275,8 @@ async def websocket_endpoint(websocket: WebSocket,
             pass
         clients.pop(roomid, client)
         logger.info("WebSocket removed from clients: %s", client.ws.client)
-        await on_disconnect(session, client, clients, roomid)
+        async with session_scope() as session:
+            await on_disconnect(session, client, clients, roomid)
 
 
 # Catch-all 路由：处理前端的客户端路由（必须放在所有路由的最后）
