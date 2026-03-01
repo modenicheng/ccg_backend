@@ -7,7 +7,14 @@ class EventType(Enum):
     META_DATA = 2
     HEARTBEAT = 3
     TIME_SYNC = 4
-    MESSAGE = 255  # for error handling
+    ERROR = 255  # for error handling
+
+
+class ErrorEventType(Enum):
+    INVALID_JSON = 200
+    MISSING_EVENT_FIELD = 201
+    UNSUPPORTED_EVENT = 202
+    HANDLER_EXCEPTION = 203
 
 
 class GameEventType(Enum):
@@ -46,6 +53,13 @@ class HeartbeatType(Enum):
     PING = 0
     PONG = 1
 
+
 class MusicPlatform(Enum):
     QQ = "qq"
     NETEASE = "netease"
+
+
+class RoomStatus(Enum):
+    WAITING = 0
+    RUNNING = 1
+    ENDED = 2

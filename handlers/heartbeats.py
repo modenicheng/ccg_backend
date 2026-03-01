@@ -1,6 +1,7 @@
 from datetime import datetime
 from fastapi import WebSocket
 
+from client_manager import ClientManager, Client
 from utils import enumerations, get_logger
 from utils.dataframe import HeartbeatFrame
 from . import regist
@@ -10,21 +11,18 @@ logger = get_logger(__name__)
 
 @regist(enumerations.EventType.HEARTBEAT)
 async def handle_heartbeat(data: bytes,
-                           clients=None,
-                           websocket: WebSocket | None = None,
+                           clients: ClientManager,
+                           client: Client,
                            room_id: str | None = None):
     server_recv_ts = int(datetime.now().timestamp() * 1000)
-    frame = HeartbeatFrame.load(data)
+    frame: HeartbeatFrame = HeartbeatFrame.load(data)
     logger.debug(
         "Heartbeat received: uid=%s ts=%s type=%s",
         frame.uid,
         frame.timestamp,
         frame.heartbeat_type.name,
     )
-    if not websocket:
-        logger.warning(
-            "No websocket provided for heartbeat response, skipping.")
-        return
+    websocket: WebSocket = client.ws
 
     if frame.heartbeat_type == enumerations.HeartbeatType.PING:
         logger.debug("Heartbeat ping received: t1=%s t2=%s", frame.t1,

@@ -14,7 +14,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class RoomStatus(IntEnum):
+class RoomStatusORM(IntEnum):
     WAITING = 0
     RUNNING = 1
     ENDED = 2
@@ -176,8 +176,8 @@ class Room(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[RoomStatus] = mapped_column(Integer,
-                                               default=RoomStatus.WAITING,
+    status: Mapped[RoomStatusORM] = mapped_column(Integer,
+                                               default=RoomStatusORM.WAITING,
                                                nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())

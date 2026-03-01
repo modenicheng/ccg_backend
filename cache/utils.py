@@ -1,6 +1,20 @@
+from __future__ import annotations
+
 import json
-from typing import Dict, List, Optional, Set, Any
+import time
+from datetime import datetime, timezone
+from typing import Optional, cast, Awaitable
+
+from pydantic import BaseModel
+
 from .connection import get_redis
+from .schemas import *
+
+ROOM_TTL_SECONDS = 6 * 60 * 60
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class RedisKeys:
@@ -8,153 +22,116 @@ class RedisKeys:
 
     @staticmethod
     def room(room_id: str) -> str:
-        """房间实时状态键"""
         return f"room:{room_id}"
 
     @staticmethod
     def room_players(room_id: str) -> str:
-        """房间玩家集合键"""
         return f"room:{room_id}:players"
 
     @staticmethod
-    def room_ready(room_id: str) -> str:
-        """房间玩家准备状态键"""
-        return f"room:{room_id}:ready"
-
-    @staticmethod
-    def player_ws(player_id: str) -> str:
-        """玩家 WebSocket 连接映射键"""
-        return f"player:{player_id}:ws"
+    def room_player_status(room_id: str, player_id: str) -> str:
+        return f"room:{room_id}:player:{player_id}"
 
     @staticmethod
     def room_song_queue(room_id: str) -> str:
-        """房间歌曲队列键"""
         return f"room:{room_id}:song_queue"
 
     @staticmethod
-    def session(token: str) -> str:
-        """会话映射键"""
-        return f"session:{token}"
+    def room_online(room_id: str) -> str:
+        return f"room:{room_id}:online"
+
+    @staticmethod
+    def playback_state(room_id: str) -> str:
+        return f"room:{room_id}:playback"
+    
+    @staticmethod
+    def answer_queue(room_id: str) -> str:
+        return f"room:{room_id}:answer_queue"
+
+def _model_to_redis_hash(model: BaseModel) -> dict[str, str]:
+    """将 Pydantic 模型序列化为 Redis Hash 兼容字符串映射。"""
+    if isinstance(model, RoomStateCache):
+        return model.to_redis_mapping()
+
+    payload = model.model_dump(mode="json")
+    mapping: dict[str, str] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            mapping[key] = json.dumps(value, ensure_ascii=False)
+        else:
+            mapping[key] = str(value)
+    return mapping
 
 
 class RedisRoomManager:
-    """Redis 房间管理类"""
+    """Redis 房间管理类（异步 + Pydantic 序列化）"""
 
-    async def create_room(self, room_id: str, host_player_id: str) -> bool:
-        """创建房间
-        
-        Args:
-            room_id: 房间 ID
-            host_player_id: 房主玩家 ID
-            
-        Returns:
-            bool: 是否创建成功
-        """
+    def _default_room_state(self) -> RoomStateCache:
+        return RoomStateCache(host_player_id="")
+
+    async def _load_room_state(
+        self,
+        room_id: str,
+        create_if_missing: bool = False,
+    ) -> Optional[RoomStateCache]:
+        redis = await get_redis()
+        if not redis:
+            return None
+
+        room_key = RedisKeys.room(room_id)
+        fields = await redis.hgetall(room_key)
+        if not fields:
+            if create_if_missing:
+                state = self._default_room_state()
+                await self._save_room_state(room_id, state)
+                return state
+            return None
+
+        return RoomStateCache.from_redis_hash(fields)
+
+    async def _save_room_state(self, room_id: str,
+                               state: RoomStateCache) -> bool:
         redis = await get_redis()
         if not redis:
             return False
 
-        try:
-            # 创建房间基本信息
-            room_key = RedisKeys.room(room_id)
-            await redis.hset(room_key,
-                             mapping={
-                                "host_player_id": host_player_id,
-                                "status": "waiting",
-                                "current_song_index": 0,
-                                "current_round_state": "playing",
-                                "play_progress": 0,
-                                "tag_groups": "{}",
-                                "current_answerer": "",
-                            })
+        room_key = RedisKeys.room(room_id)
+        await redis.hset(room_key, mapping=_model_to_redis_hash(state))
+        await redis.expire(room_key, ROOM_TTL_SECONDS)
+        return True
 
-            # 设置房间过期时间（6小时）
-            await redis.expire(room_key, 6 * 60 * 60)
-
-            # 创建玩家集合
-            players_key = RedisKeys.room_players(room_id)
-            await redis.sadd(players_key, host_player_id)
-            await redis.expire(players_key, 6 * 60 * 60)
-
-            # 创建玩家准备状态
-            ready_key = RedisKeys.room_ready(room_id)
-            await redis.hset(ready_key, host_player_id, "true")
-            await redis.expire(ready_key, 6 * 60 * 60)
-
-            # 创建歌曲队列
-            song_queue_key = RedisKeys.room_song_queue(room_id)
-            await redis.expire(song_queue_key, 6 * 60 * 60)
-
-            return True
-        except Exception as e:
-            print(f"Error creating room: {e}")
-            return False
-
-    async def add_player(self, room_id: str, player_id: str) -> bool:
-        """添加玩家到房间
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否添加成功
-        """
+    async def get_room_info(self, room_id: str) -> Optional[RoomInfoCache]:
         redis = await get_redis()
         if not redis:
-            return False
+            return None
 
         try:
-            # 添加到玩家集合
+            state = await self._load_room_state(room_id)
+            if state is None:
+                return None
+
             players_key = RedisKeys.room_players(room_id)
-            await redis.sadd(players_key, player_id)
+            players = sorted(await redis.smembers(players_key))
+            answer_queue = [
+                item.player_id for item in sorted(
+                    state.answer_queue,
+                    key=lambda x: (x.offset_ts, x.server_ts),
+                )
+            ]
 
-            # 设置准备状态为 false
-            ready_key = RedisKeys.room_ready(room_id)
-            await redis.hset(ready_key, player_id, "false")
-
-            return True
+            return RoomInfoCache(
+                room=state,
+                players=players,
+                answer_queue=answer_queue,
+                answers={},
+            )
         except Exception as e:
-            print(f"Error adding player: {e}")
-            return False
+            print(f"Error getting room info: {e}")
+            return None
 
-    async def remove_player(self, room_id: str, player_id: str) -> bool:
-        """从房间移除玩家
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            # 从玩家集合移除
-            players_key = RedisKeys.room_players(room_id)
-            await redis.srem(players_key, player_id)
-
-            # 从准备状态移除
-            ready_key = RedisKeys.room_ready(room_id)
-            await redis.hdel(ready_key, player_id)
-
-            return True
-        except Exception as e:
-            print(f"Error removing player: {e}")
-            return False
-
-    async def get_room_players(self, room_id: str) -> Set[str]:
-        """获取房间玩家列表
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            Set[str]: 玩家 ID 集合
-        """
+    async def get_room_players(self, room_id: str) -> set[str]:
         redis = await get_redis()
         if not redis:
             return set()
@@ -166,144 +143,9 @@ class RedisRoomManager:
             print(f"Error getting room players: {e}")
             return set()
 
-    async def set_player_ready(self, room_id: str, player_id: str,
-                               ready: bool) -> bool:
-        """设置玩家准备状态
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            ready: 是否准备好
-            
-        Returns:
-            bool: 是否设置成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            ready_key = RedisKeys.room_ready(room_id)
-            await redis.hset(ready_key, player_id,
-                             "true" if ready else "false")
-            return True
-        except Exception as e:
-            print(f"Error setting player ready: {e}")
-            return False
-
-    async def get_player_ready(self, room_id: str, player_id: str) -> bool:
-        """获取玩家准备状态
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否准备好
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            ready_key = RedisKeys.room_ready(room_id)
-            value = await redis.hget(ready_key, player_id)
-            return value == "true"
-        except Exception as e:
-            print(f"Error getting player ready: {e}")
-            return False
-
-    async def get_all_players_ready(self, room_id: str) -> bool:
-        """检查所有玩家是否都准备好
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            bool: 是否所有玩家都准备好
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            players = await self.get_room_players(room_id)
-            if not players:
-                return False
-
-            ready_key = RedisKeys.room_ready(room_id)
-            for player_id in players:
-                if not await self.get_player_ready(room_id, player_id):
-                    return False
-
-            return True
-        except Exception as e:
-            print(f"Error checking all players ready: {e}")
-            return False
-
-    async def update_room_status(self, room_id: str, status: str) -> bool:
-        """更新房间状态
-        
-        Args:
-            room_id: 房间 ID
-            status: 房间状态 (waiting/playing/ended)
-            
-        Returns:
-            bool: 是否更新成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            room_key = RedisKeys.room(room_id)
-            await redis.hset(room_key, "status", status)
-            return True
-        except Exception as e:
-            print(f"Error updating room status: {e}")
-            return False
-
-    async def get_room_status(self, room_id: str) -> Optional[str]:
-        """获取房间状态
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            Optional[str]: 房间状态
-        """
-        redis = await get_redis()
-        if not redis:
-            return None
-
-        try:
-            room_key = RedisKeys.room(room_id)
-            return await redis.hget(room_key, "status")
-        except Exception as e:
-            print(f"Error getting room status: {e}")
-            return None
-
-    async def update_play_progress(self, room_id: str, progress: int) -> bool:
-        """更新播放进度
-        
-        Args:
-            room_id: 房间 ID
-            progress: 播放进度（毫秒）
-            
-        Returns:
-            bool: 是否更新成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
-        try:
-            room_key = RedisKeys.room(room_id)
-            await redis.hset(room_key, "play_progress", progress)
-            return True
-        except Exception as e:
-            print(f"Error updating play progress: {e}")
-            return False
+    async def get_current_song_index(self, room_id: str) -> Optional[int]:
+        state = await self._load_room_state(room_id)
+        return None if state is None else state.current_song_index
 
     async def update_playback_state(
         self,
@@ -315,98 +157,59 @@ class RedisRoomManager:
         event_ts: int,
         event_name: str,
     ) -> bool:
-        """更新播放控制状态
-
-        Args:
-            room_id: 房间 ID
-            round_state: 当前轮次状态（playing/paused/seeking）
-            progress_ms: 当前播放进度（毫秒）
-            offset_ts: 进度采样时刻（校准后的毫秒时间戳）
-            audio_url: 当前音频链接
-            event_ts: 事件发送时间戳
-            event_name: 事件名称（PLAY/PAUSE/SEEK）
-
-        Returns:
-            bool: 是否更新成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
         try:
-            room_key = RedisKeys.room(room_id)
-            mapping = {
-                "current_round_state": round_state,
-                "play_progress": int(progress_ms),
-                "play_offset_ts": int(offset_ts),
-                "last_control_ts": int(event_ts),
-                "last_control_event": event_name,
-            }
-            if audio_url is not None:
-                mapping["audio_url"] = audio_url
+            state = await self._load_room_state(room_id,
+                                                create_if_missing=True)
+            if state is None:
+                return False
 
-            await redis.hset(room_key, mapping=mapping)
-            return True
+            state.current_round_state = round_state
+            state.play_progress = int(progress_ms)
+            state.play_offset_ts = int(offset_ts)
+            state.last_control_ts = int(event_ts)
+            state.last_control_event = event_name
+            if audio_url is not None:
+                state.audio_url = audio_url
+
+            return await self._save_room_state(room_id, state)
         except Exception as e:
             print(f"Error updating playback state: {e}")
             return False
 
+    async def get_playback_state(self,
+                                 room_id: str) -> Optional[RoomPlaybackState]:
+        state = await self._load_room_state(room_id)
+        if state is None:
+            return None
+
+        return RoomPlaybackState(
+            round_state=state.current_round_state,
+            progress_ms=state.play_progress,
+            offset_ts=state.play_offset_ts,
+            audio_url=state.audio_url,
+        )
+
     async def get_play_progress(self, room_id: str) -> int:
-        """获取播放进度
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            int: 播放进度（毫秒）
-        """
-        redis = await get_redis()
-        if not redis:
-            return 0
+        state = await self._load_room_state(room_id)
+        return 0 if state is None else state.play_progress
 
-        try:
-            room_key = RedisKeys.room(room_id)
-            value = await redis.hget(room_key, "play_progress")
-            return int(value) if value else 0
-        except Exception as e:
-            print(f"Error getting play progress: {e}")
-            return 0
-
-    async def set_song_queue(self, room_id: str, song_ids: List[str]) -> bool:
-        """设置歌曲队列
-        
-        Args:
-            room_id: 房间 ID
-            song_ids: 歌曲 ID 列表
-            
-        Returns:
-            bool: 是否设置成功
-        """
+    async def set_song_queue(self, room_id: str, song_ids: list[str]) -> bool:
         redis = await get_redis()
         if not redis:
             return False
 
         try:
             song_queue_key = RedisKeys.room_song_queue(room_id)
-            # 清空现有队列
             await redis.delete(song_queue_key)
-            # 添加歌曲到队列
             if song_ids:
-                await redis.lpush(song_queue_key, *song_ids)
+                await redis.rpush(song_queue_key, *song_ids)
+            await redis.expire(song_queue_key, ROOM_TTL_SECONDS)
             return True
         except Exception as e:
             print(f"Error setting song queue: {e}")
             return False
 
-    async def get_song_queue(self, room_id: str) -> List[str]:
-        """获取歌曲队列
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            List[str]: 歌曲 ID 列表
-        """
+    async def get_song_queue(self, room_id: str) -> list[str]:
         redis = await get_redis()
         if not redis:
             return []
@@ -418,201 +221,270 @@ class RedisRoomManager:
             print(f"Error getting song queue: {e}")
             return []
 
-    async def add_to_answer_queue(self, room_id: str, player_id: str) -> bool:
-        """添加玩家到抢答队列
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
+    async def add_to_answer_queue(
+        self,
+        room_id: str,
+        player_id: str,
+        offset_ts: int,
+        server_ts: Optional[int] = None,
+    ) -> bool:
         try:
-            room_key = RedisKeys.room(room_id)
-            # 获取当前队列
-            queue_str = await redis.hget(room_key, "answer_queue")
-            queue = json.loads(queue_str) if queue_str else []
+            state = await self._load_room_state(room_id,
+                                                create_if_missing=True)
+            if state is None:
+                return False
 
-            # 检查玩家是否已经在队列中
-            if player_id not in queue:
-                queue.append(player_id)
-                await redis.hset(room_key, "answer_queue", json.dumps(queue))
+            now_ts = int(time.time() *
+                         1000) if server_ts is None else int(server_ts)
 
-            return True
+            if any(item.player_id == player_id for item in state.answer_queue):
+                return True
+
+            state.answer_queue.append(
+                AnswerQueueItem(
+                    player_id=player_id,
+                    offset_ts=int(offset_ts),
+                    server_ts=now_ts,
+                ))
+            return await self._save_room_state(room_id, state)
         except Exception as e:
             print(f"Error adding to answer queue: {e}")
             return False
 
-    async def get_answer_queue(self, room_id: str) -> List[str]:
-        """获取抢答队列
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            List[str]: 玩家 ID 列表
-        """
-        redis = await get_redis()
-        if not redis:
-            return []
-
+    async def get_answer_queue(self, room_id: str) -> list[str]:
         try:
-            room_key = RedisKeys.room(room_id)
-            queue_str = await redis.hget(room_key, "answer_queue")
-            return json.loads(queue_str) if queue_str else []
+            sorted_items = await self.get_sorted_answer_queue(room_id)
+            return [item.player_id for item in sorted_items]
         except Exception as e:
             print(f"Error getting answer queue: {e}")
             return []
 
-    async def clear_answer_queue(self, room_id: str) -> bool:
-        """清空抢答队列
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            bool: 是否清空成功
-        """
-        redis = await get_redis()
-        if not redis:
+    async def get_sorted_answer_queue(self,
+                                      room_id: str) -> list[AnswerQueueItem]:
+        try:
+            state = await self._load_room_state(room_id)
+            if state is None:
+                return []
+
+            return sorted(
+                state.answer_queue,
+                key=lambda x: (x.offset_ts, x.server_ts),
+            )
+        except Exception as e:
+            print(f"Error getting sorted answer queue: {e}")
+            return []
+
+    async def remove_from_answer_queue(self, room_id: str,
+                                       player_id: str) -> bool:
+        try:
+            state = await self._load_room_state(room_id,
+                                                create_if_missing=True)
+            if state is None:
+                return False
+
+            new_queue = [
+                item for item in state.answer_queue
+                if item.player_id != player_id
+            ]
+            if len(new_queue) == len(state.answer_queue):
+                return True
+
+            state.answer_queue = new_queue
+            return await self._save_room_state(room_id, state)
+        except Exception as e:
+            print(f"Error removing from answer queue: {e}")
             return False
 
+    async def clear_answer_queue(self, room_id: str) -> bool:
         try:
-            room_key = RedisKeys.room(room_id)
-            await redis.hset(room_key, "answer_queue", "[]")
-            return True
+            state = await self._load_room_state(room_id,
+                                                create_if_missing=True)
+            if state is None:
+                return False
+
+            state.answer_queue = []
+            return await self._save_room_state(room_id, state)
         except Exception as e:
             print(f"Error clearing answer queue: {e}")
             return False
 
     async def set_current_answerer(self, room_id: str, player_id: str) -> bool:
-        """设置当前作答玩家
-        
-        Args:
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否设置成功
-        """
-        redis = await get_redis()
-        if not redis:
-            return False
-
         try:
-            room_key = RedisKeys.room(room_id)
-            await redis.hset(room_key, "current_answerer", player_id)
-            return True
+            state = await self._load_room_state(room_id,
+                                                create_if_missing=True)
+            if state is None:
+                return False
+
+            state.current_answerer = player_id
+            return await self._save_room_state(room_id, state)
         except Exception as e:
             print(f"Error setting current answerer: {e}")
             return False
 
     async def get_current_answerer(self, room_id: str) -> Optional[str]:
-        """获取当前作答玩家
-        
-        Args:
-            room_id: 房间 ID
-            
-        Returns:
-            Optional[str]: 玩家 ID
-        """
-        redis = await get_redis()
-        if not redis:
+        state = await self._load_room_state(room_id)
+        if state is None:
             return None
+        return state.current_answerer
 
-        try:
-            room_key = RedisKeys.room(room_id)
-            return await redis.hget(room_key, "current_answerer")
-        except Exception as e:
-            print(f"Error getting current answerer: {e}")
-            return None
-
-
-class RedisSessionManager:
-    """Redis 会话管理类"""
-
-    async def create_session(self, token: str, room_id: str,
-                             player_id: str) -> bool:
-        """创建会话
-        
-        Args:
-            token: 会话令牌
-            room_id: 房间 ID
-            player_id: 玩家 ID
-            
-        Returns:
-            bool: 是否创建成功
-        """
+    async def set_player_online(self, room_id: str, player_id: str) -> bool:
+        """将玩家标记为在线。"""
         redis = await get_redis()
         if not redis:
             return False
 
         try:
-            session_key = RedisKeys.session(token)
-            session_data = f"{room_id}:{player_id}"
-            # 设置会话，过期时间 24 小时
-            await redis.setex(session_key, 24 * 60 * 60, session_data)
+            key = RedisKeys.room_online(room_id)
+            existed_payload = await redis.hget(key, player_id)
+            if existed_payload:
+                existed_state = PlayerOnlineState.model_validate_json(
+                    existed_payload)
+                state = PlayerOnlineState(
+                    player_id=player_id,
+                    room_id=room_id,
+                    is_online=True,
+                    connected_at=existed_state.connected_at,
+                )
+            else:
+                state = PlayerOnlineState(player_id=player_id,
+                                          room_id=room_id,
+                                          is_online=True)
+
+            state.updated_at = _utc_now_iso()
+            await redis.hset(key, player_id, state.model_dump_json())
+            await redis.expire(key, ROOM_TTL_SECONDS)
             return True
         except Exception as e:
-            print(f"Error creating session: {e}")
+            print(f"Error setting player online: {e}")
             return False
 
-    async def get_session(self, token: str) -> Optional[Dict[str, str]]:
-        """获取会话信息
-        
-        Args:
-            token: 会话令牌
-            
-        Returns:
-            Optional[Dict[str, str]]: 包含 room_id 和 player_id 的字典
-        """
-        redis = await get_redis()
-        if not redis:
-            return None
-
-        try:
-            session_key = RedisKeys.session(token)
-            session_data = await redis.get(session_key)
-            if not session_data:
-                return None
-
-            # 解析会话数据
-            parts = session_data.split(":")
-            if len(parts) != 2:
-                return None
-
-            return {"room_id": parts[0], "player_id": parts[1]}
-        except Exception as e:
-            print(f"Error getting session: {e}")
-            return None
-
-    async def delete_session(self, token: str) -> bool:
-        """删除会话
-        
-        Args:
-            token: 会话令牌
-            
-        Returns:
-            bool: 是否删除成功
-        """
+    async def set_player_offline(self, room_id: str, player_id: str) -> bool:
+        """将玩家标记为离线。"""
         redis = await get_redis()
         if not redis:
             return False
 
         try:
-            session_key = RedisKeys.session(token)
-            await redis.delete(session_key)
+            key = RedisKeys.room_online(room_id)
+            existed_payload = await redis.hget(key, player_id)
+            if existed_payload:
+                existed_state = PlayerOnlineState.model_validate_json(
+                    existed_payload)
+                state = PlayerOnlineState(
+                    player_id=player_id,
+                    room_id=room_id,
+                    is_online=False,
+                    connected_at=existed_state.connected_at,
+                )
+            else:
+                state = PlayerOnlineState(player_id=player_id,
+                                          room_id=room_id,
+                                          is_online=False)
+
+            state.updated_at = _utc_now_iso()
+            await redis.hset(key, player_id, state.model_dump_json())
+            await redis.expire(key, ROOM_TTL_SECONDS)
             return True
         except Exception as e:
-            print(f"Error deleting session: {e}")
+            print(f"Error setting player offline: {e}")
+            return False
+
+    async def get_room_online_snapshot(self,
+                                       room_id: str) -> RoomOnlineSnapshot:
+        """获取房间在线玩家快照。"""
+        redis = await get_redis()
+        if not redis:
+            return RoomOnlineSnapshot(room_id=room_id, online_players=[])
+
+        try:
+            key = RedisKeys.room_online(room_id)
+            raw_map = await redis.hgetall(key)
+            online_players: list[str] = []
+            for player_id, payload in raw_map.items():
+                try:
+                    state = PlayerOnlineState.model_validate_json(payload)
+                    if state.is_online:
+                        online_players.append(player_id)
+                except Exception:
+                    continue
+
+            return RoomOnlineSnapshot(
+                room_id=room_id,
+                online_players=sorted(online_players),
+            )
+        except Exception as e:
+            print(f"Error getting room online snapshot: {e}")
+            return RoomOnlineSnapshot(room_id=room_id, online_players=[])
+
+    async def set_all_offline_by_room(self, room_id: str) -> bool:
+        """将房间内所有已记录玩家标记为离线。"""
+        redis = await get_redis()
+        if not redis:
+            return False
+
+        try:
+            key = RedisKeys.room_online(room_id)
+            raw_map = await redis.hgetall(key)
+            if not raw_map:
+                return True
+
+            updates: dict[str, str] = {}
+            for player_id, payload in raw_map.items():
+                try:
+                    state = PlayerOnlineState.model_validate_json(payload)
+                    state.is_online = False
+                    state.updated_at = _utc_now_iso()
+                    updates[player_id] = state.model_dump_json()
+                except Exception:
+                    updates[player_id] = PlayerOnlineState(
+                        player_id=player_id,
+                        room_id=room_id,
+                        is_online=False,
+                    ).model_dump_json()
+
+            await redis.hset(key, mapping=updates)
+            await redis.expire(key, ROOM_TTL_SECONDS)
+            return True
+        except Exception as e:
+            print(f"Error setting all offline by room: {e}")
+            return False
+
+    async def set_all_offline(self) -> bool:
+        """将所有房间的在线状态统一标记为离线（用于服务启动/关闭时纠偏）。"""
+        redis = await get_redis()
+        if not redis:
+            return False
+
+        try:
+            async for key in redis.scan_iter(match="room:*:online"):
+                raw_map = await redis.hgetall(key)
+                if not raw_map:
+                    continue
+
+                key_parts = key.split(":")
+                room_id = key_parts[1] if len(key_parts) >= 3 else ""
+
+                updates: dict[str, str] = {}
+                for player_id, payload in raw_map.items():
+                    try:
+                        state = PlayerOnlineState.model_validate_json(payload)
+                        state.is_online = False
+                        state.updated_at = _utc_now_iso()
+                        updates[player_id] = state.model_dump_json()
+                    except Exception:
+                        updates[player_id] = PlayerOnlineState(
+                            player_id=player_id,
+                            room_id=room_id,
+                            is_online=False,
+                        ).model_dump_json()
+
+                if updates:
+                    await redis.hset(key, mapping=updates)
+                    await redis.expire(key, ROOM_TTL_SECONDS)
+            return True
+        except Exception as e:
+            print(f"Error setting all offline: {e}")
             return False
 
 
-# 创建全局实例
 room_manager = RedisRoomManager()
-session_manager = RedisSessionManager()

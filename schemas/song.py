@@ -27,9 +27,7 @@ class SongBase(BaseModel):
                                   description="Artist/performer name")
     album_name: Optional[str] = Field(default=None, description="Album name")
     album_id: Optional[int] = Field(
-        default=None,
-        description="Foreign key referencing the album table"
-    )
+        default=None, description="Foreign key referencing the album table")
     cover_url: Optional[str] = Field(default=None,
                                      description="Cover image URL")
     audio_url: Optional[str] = Field(default=None,
@@ -47,7 +45,6 @@ class SongCreate(SongBase):
     pass
 
 
-
 class SongResponse(SongBase):
     """Response schema for song details."""
 
@@ -55,28 +52,28 @@ class SongResponse(SongBase):
     cached: bool = Field(
         description="Whether this song has been cached locally",
         default=False,
-        alias="is_cached"
-    )
+        alias="is_cached")
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "id": 1,
-                "platform": "qqmusic",
-                "platform_song_id": "004R6Kl32YDHxe",
-                "title": "Song Title",
-                "subtitle": "Subtitle",
-                "artist": "Artist Name",
-                "album_name": "Album",
-                "cover_url": "https://example.com/cover.jpg",
-                "audio_url": "https://stream.example.com/song.mp3",
-                "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                "cached": True,
-                "metadata_json": None
-            }
-        }
-    )
+    model_config = ConfigDict(from_attributes=True,
+                              json_schema_extra={
+                                  "example": {
+                                      "id": 1,
+                                      "platform": "qqmusic",
+                                      "platform_song_id": "004R6Kl32YDHxe",
+                                      "title": "Song Title",
+                                      "subtitle": "Subtitle",
+                                      "artist": "Artist Name",
+                                      "album_name": "Album",
+                                      "cover_url":
+                                      "https://example.com/cover.jpg",
+                                      "audio_url":
+                                      "https://stream.example.com/song.mp3",
+                                      "cached_path":
+                                      "/assets/audio/004R6Kl32YDHxe.mp3",
+                                      "cached": True,
+                                      "metadata_json": None
+                                  }
+                              })
 
     @property
     def is_cached(self) -> bool:
@@ -93,20 +90,18 @@ class SongListResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "total": 120,
-                "list": [
-                    {
-                        "id": 1,
-                        "platform": "qqmusic",
-                        "platform_song_id": "004R6Kl32YDHxe",
-                        "title": "Song Title",
-                        "artist": "Artist Name",
-                        "cached": True
-                    }
-                ]
+                "total":
+                120,
+                "list": [{
+                    "id": 1,
+                    "platform": "qqmusic",
+                    "platform_song_id": "004R6Kl32YDHxe",
+                    "title": "Song Title",
+                    "artist": "Artist Name",
+                    "cached": True
+                }]
             }
-        }
-    )
+        })
 
 
 class SongCacheUpdateRequest(BaseModel):
@@ -137,22 +132,15 @@ class TaskResponse(BaseModel):
     task_id: str = Field(description="Unique task identifier")
     task_name: str = Field(description="Name of the task")
     status: str = Field(description="Current task status")
-    result: Optional[dict[str, Any]] = Field(
-        default=None,
-        description="Task result JSON, if any"
-    )
+    result: Optional[dict[str,
+                          Any]] = Field(default=None,
+                                        description="Task result JSON, if any")
     created_at: Optional[datetime] = Field(
-        default=None,
-        description="Task creation timestamp"
-    )
+        default=None, description="Task creation timestamp")
     updated_at: Optional[datetime] = Field(
-        default=None,
-        description="Task last update timestamp"
-    )
+        default=None, description="Task last update timestamp")
     huey_task_id: Optional[str] = Field(
-        default=None,
-        description="Optional Huey task ID for queue tracking"
-    )
+        default=None, description="Optional Huey task ID for queue tracking")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -165,8 +153,7 @@ class TaskResponse(BaseModel):
                 "updated_at": "2024-01-01T00:00:00Z",
                 "huey_task_id": "550e8400-e29b-41d4-a716-446655440000"
             }
-        }
-    )
+        })
 
 
 class WebSocketErrorResponse(BaseModel):
@@ -174,9 +161,7 @@ class WebSocketErrorResponse(BaseModel):
 
     type: str = Field(default="error", description="Message type")
     event: Optional[str] = Field(
-        default=None,
-        description="Event type that caused the error"
-    )
+        default=None, description="Event type that caused the error")
     reason: str = Field(description="Error reason/message")
 
     model_config = ConfigDict(
@@ -186,22 +171,17 @@ class WebSocketErrorResponse(BaseModel):
                 "event": "play",
                 "reason": "Only owner can control playback"
             }
-        }
-    )
+        })
 
 
 class HttpErrorResponse(BaseModel):
     """Error response schema for HTTP API errors."""
 
     error: str = Field(description="Error type/message")
-    detail: Optional[str] = Field(
-        default=None,
-        description="Additional error details"
-    )
+    detail: Optional[str] = Field(default=None,
+                                  description="Additional error details")
     path: Optional[str] = Field(
-        default=None,
-        description="Request path that caused the error"
-    )
+        default=None, description="Request path that caused the error")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -210,15 +190,15 @@ class HttpErrorResponse(BaseModel):
                 "detail": "The requested resource was not found",
                 "path": "/api/nonexistent"
             }
-        }
-    )
+        })
 
 
 class SonglistFetchResult(BaseModel):
     """Result schema for songlist fetch operation."""
 
     songlist: dict[str, Any] = Field(description="Fetched songlist metadata")
-    songs: list[dict[str, Any]] = Field(description="List of songs in the songlist")
+    songs: list[dict[str,
+                     Any]] = Field(description="List of songs in the songlist")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -230,20 +210,24 @@ class SonglistFetchResult(BaseModel):
                     "creator_name": "John Doe",
                     "cover_url": "https://example.com/cover.jpg"
                 },
-                "songs": [
-                    {
-                        "platform": "qqmusic",
-                        "platform_song_id": "001",
-                        "title": "Song 1",
-                        "artist": "Artist 1"
-                    },
-                    {
-                        "platform": "qqmusic",
-                        "platform_song_id": "002",
-                        "title": "Song 2",
-                        "artist": "Artist 2"
-                    }
-                ]
+                "songs": [{
+                    "platform": "qqmusic",
+                    "platform_song_id": "001",
+                    "title": "Song 1",
+                    "artist": "Artist 1"
+                }, {
+                    "platform": "qqmusic",
+                    "platform_song_id": "002",
+                    "title": "Song 2",
+                    "artist": "Artist 2"
+                }]
             }
-        }
-    )
+        })
+
+
+class SongItem(SongBase):
+    id: int
+    order: Optional[int] = Field(default=None,
+                                 description="Order in the song queue")
+
+    model_config = ConfigDict(from_attributes=True)

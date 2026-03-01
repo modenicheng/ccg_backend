@@ -2,6 +2,64 @@
 
 本文档仅描述当前代码仓库**已经实现**的能力，不包含未来规划。
 
+## 整体设计
+
+### 设计规范
+
+#### 有关数据格式
+
+**统一定义在 `schemas/` 目录下**！！！
+
+- `schemas/*.py` 原则上讲是只用于 API 的
+- `schemas/ws_messages/*.py` 只用于 WebSocket 信令
+
+#### 有关 WebSocket 事件处理器（handlers）
+
+基本依据 `DESING.md` 里表格和事件id的划分方式分文件，避免单文件过长难以维护
+
+> [!IMPORTANT]
+> 这个表更新可能不及时，务必依据 `DESING.md` 的设计进行！
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `ROOM_CREATE`        | 10     | C→S      | 创建房间，附带用户名                                         | state update      |
+| `ROOM_JOIN`          | 11     | C→S      | 加入房间，附带房间ID、用户名                                 | state update      |
+| `ROOM_STATE`         | 12     | S→C      | 推送完整房间状态（玩家列表、准备状态、歌曲列表、标签组等）   | broadcast         |
+| `START_POS_UPDATE`   | 14     | C→S      | 房主更新起始位置百分比 (0-80)                                | state & broadcast |
+| `KICK_USER`          | 15     | C→S      | 房主踢人                                                     | state & broadcast |
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `PLAY`               | 20     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构      | state & broadcast |
+| `PAUSE`              | 21     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
+| `SEEK`               | 22     | S→C      | 调整播放进度，但不改变播放状态                               | broadcast         |
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `PLAYER_READY`       | 30     | C→S      | 玩家准备/取消准备   弃用                                     | state & broadcast |
+| `GAME_START`         | 31     | S→C      | 房主开始游戏，禁止新玩家加入（断线重连可以）                 | state & broadcast |
+| `COUNTDOWN`          | 32     | S→C      | 倒计时更新（3,2,1）  【可以不要？】                          | state & broadcast |
+| `ATTEMPT_ANSWER`     | 33     | C→S      | 玩家抢答，触发暂停和入队                                     | state & broadcast |
+| `YOUR_TURN`          | 34     | S→C      | 广播通知指定玩家开始作答，包含剩余时间（前端显示xxx正在作答）| state & broadcast |
+| `SUBMIT_ANSWER`      | 35     | C→S      | 玩家提交勾选的标签ID列表及精准描述文本                       | state & broadcast |
+| `ANSWER_BROADCAST`   | 36     | S→C      | 广播某玩家提交的答案（匿名或带玩家名，不含正确性）           | state & broadcast |
+| `ANSWER_QUEUE`       | 37     | S→C      | 广播当前抢答队列顺序（用于前端展示排队状态）                 | state & broadcast |
+| `CLEAR_ANSWER_QUEUE` | 38     | S→C      | 清除当前的抢答队列                                           | state & broadcast |
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `JUDGING`            | 40     | S→C      | 进入判分环节，房主端显示标准答案区（含标签组和描述候选）     | state & broadcast |
+| `JUDGE_SUBMIT`       | 41     | C→S      | 房主提交正确答案标签ID列表和描述ID列表（或“无描述”）         | state & broadcast |
+| `SCORE_UPDATE`       | 42     | S→C      | 更新积分榜                                                   | state & broadcast |
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `ROUND_END`          | 38     | S→C      | 回合结束，准备下一轮                                         | state & broadcast |
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `GAME_OVER`          | 13     | S→C      | 游戏结束，展示最终排名                                       | state & broadcast |
+
 ## qqmusic
 
 `9561851623` 是可用于测试的 QQ 音乐的歌单 ID
@@ -237,6 +295,7 @@ session_data = await session_manager.get_session(token)
 ### 事件枚举（`utils/enumerations.py`）
 
 #### 底层事件（二进制帧）
+
 - `OMIT = 0`
 - `AUDIO_FRAME = 1`
 - `META_DATA = 2`
@@ -245,6 +304,7 @@ session_data = await session_manager.get_session(token)
 - `MESSAGE = 255`（错误处理保留值）
 
 #### 游戏事件（JSON 消息）
+
 - `ROOM_CREATE = 10`, `ROOM_JOIN = 11`, `ROOM_STATE = 12`, `GAME_OVER = 13`, `START_POS_UPDATE = 14`
 - `PLAY = 20`, `PAUSE = 21`, `SEEK = 22`
 - `PLAYER_READY = 30`, `GAME_START = 31`, `COUNTDOWN = 32`, `ATTEMPT_ANSWER = 33`, `YOUR_TURN = 34`, `SUBMIT_ANSWER = 35`, `ANSWER_BROADCAST = 36`, `ANSWER_QUEUE = 37`, `ROUND_END = 38`
@@ -253,9 +313,11 @@ session_data = await session_manager.get_session(token)
 ### 已注册处理器
 
 #### 二进制事件处理器
+
 - `HEARTBEAT`（`handlers/heartbeats.py`）：处理心跳帧（PING/PONG）
 
 #### 游戏事件处理器（`handlers/game_events.py`）
+
 - `PLAY`、`PAUSE`、`SEEK`：播放控制，仅房主可操作
 - `JUDGING`：广播评分事件
 - `JUDGE_SUBMIT`：提交评分结果，计算玩家得分并更新排行榜

@@ -1,26 +1,26 @@
 import logging
-import json
+import orjson
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
+from db.crud import fetch_room_object, simple_authentication
 from db.models import User, Room, TagGroup
 from db.session import get_db
 from uuid import uuid4
-from client_manager import ClientManager
+from client_manager import ClientManager, Client
 from cache.connection import redis_client
-from cache.utils import RedisKeys, room_manager, session_manager
+from handlers.game_events import on_connect, on_disconnect
 from utils import get_event_type, get_logger, init_logging
-from utils.enumerations import EventType, GameEventType
+from utils.enumerations import EventType, GameEventType, ErrorEventType
+from schemas.ws_messages.error_schemas import WebSocketErrorEvent
 from utils.memory_monitor import MemoryMonitor
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from handlers import handle, handle_json
+from handlers import handle
 from pathlib import Path
-from schemas.room import RoomStateInitMessage, RoomStateInitData, RoomStatePlayerItem, RoomStateTagGroupItem, RoomStateTagItem
 from schemas.song import HttpErrorResponse
-from utils.payloads import build_roomstate_init_payload
 from router import *
 
 init_logging(level=logging.DEBUG)
@@ -28,9 +28,10 @@ logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
     """应用生命周期管理：启动和关闭事件处理"""
     global memory_monitor
+    global clients
 
     # 启动逻辑
     # 连接 Redis
@@ -38,11 +39,27 @@ async def lifespan(app: FastAPI):
         redis_connected = await redis_client.connect()
         if redis_connected:
             logger.info("Redis connected successfully")
+            #启动时做一次全量离线纠偏，避免非优雅退出导致的在线状态残留
+            # flushed = await room_cache.set_all_offline()
+            # if flushed:
+            #     logger.info(
+            #         "Redis online states flushed to offline on startup")
+            # else:
+            #     logger.warning(
+            #         "Failed to flush Redis online states on startup")
         else:
             logger.warning(
                 "Failed to connect to Redis, some features may be unavailable")
     except Exception as e:
         logger.error(f"Error connecting to Redis: {e}")
+
+    try:
+        update_stmt = update(User).values(online=False)
+        await session.execute(update_stmt)
+        await session.commit()
+        logger.info("Database user online states reset to offline on startup")
+    except Exception as e:
+        logger.error(f"Error resetting user online states in database: {e}")
 
     # 启动内存监控
     try:
@@ -60,6 +77,30 @@ async def lifespan(app: FastAPI):
     yield
 
     # 关闭逻辑
+    # 主动关闭 WebSocket 并维护 Redis 在线状态（避免服务器关闭时状态残留）
+    try:
+        # room_snapshot = clients.get_room_snapshot()
+        # for room_id, _clients in room_snapshot.items():
+        #     for _client in _clients:
+        #         user = _client.user
+        #         if user is not None:
+        #             await room_manager.set_player_offline(
+        #                 room_id, str(user.id))
+        #         try:
+        #             await _client.ws.close(code=1001,
+        #                                    reason="Server shutting down")
+        #         except Exception:
+        #             pass
+
+        #     # 双保险：将该房间缓存中的在线玩家统一置离线
+        #     await room_manager.set_all_offline_by_room(room_id)
+
+        await clients.clear()
+        logger.info("All websocket clients closed and online states flushed")
+    except Exception as e:
+        logger.error(
+            f"Failed to flush websocket online state on shutdown: {e}")
+
     # 断开 Redis 连接
     try:
         await redis_client.disconnect()
@@ -137,132 +178,92 @@ async def websocket_endpoint(websocket: WebSocket,
                              session: AsyncSession = Depends(get_db)):
 
     global clients
-    logger.debug(websocket.cookies)
-
-    user_token = websocket.cookies.get(f"ccg-room-token:{roomid}")
-    user_id = websocket.cookies.get(f"ccg-room-user-id:{roomid}")
-    username = websocket.cookies.get(f"ccg-room-username:{roomid}")
-
-    if not user_token or not user_id or not username:
-        logger.warning(
-            f"WebSocket connection missing authentication cookies for room {roomid}. user_token: {user_token}, user_id: {user_id}, username: {username}"
-        )
-        await websocket.close(code=1008, reason="Authentication required")
+    user = await simple_authentication(session, websocket.cookies, roomid)
+    if not user:
+        await websocket.close(code=1008, reason="Authentication failed")
         return
-
-    stmt = select(User).where(User.id == int(user_id))
-    result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
-    if not user or user.token != user_token or user.room_id != roomid:
-        logger.warning(
-            f"WebSocket authentication failed for room {roomid}. user_id: {user_id}, token valid: {user.token == user_token if user else 'N/A'}, room_id valid: {user.room_id == roomid if user else 'N/A'}"
-        )
-        await websocket.close(code=1008, reason="Invalid authentication")
-        return
-
-    logger.info(
-        f"WebSocket connection attempt for room {roomid} with token: {user_token}, user_id: {user_id}, username: {username}"
-    )
-
-    await websocket.accept()
-    websocket.state.user = user
-
-    logger.info("WebSocket connected: %s", websocket.client)
-    clients.push(roomid, websocket)
-
-    room_stmt = (select(Room).where(Room.id == roomid).options(
-        selectinload(Room.users),
-        selectinload(Room.tag_groups).selectinload(TagGroup.tags),
-    ))
-    room_result = await session.execute(room_stmt)
-    room = room_result.scalar_one_or_none()
+    room = await fetch_room_object(session, roomid)
     if not room:
         await websocket.close(code=1008, reason="Room not found")
         return
 
-    init_payload = build_roomstate_init_payload(room)
-    await clients.broadcast(roomid, init_payload.model_dump_json())
+    client = Client(websocket, user, room)
 
-    # asyncio.create_task(heartbeat_init(websocket))
+    await client.ws.accept()
+
+    logger.info("WebSocket connected: %s", websocket.client)
+    clients.push(roomid, client)
+
+    await on_connect(session, client, clients, roomid)
+
     try:
         while True:
-            data = await websocket.receive()
+            data = await client.ws.receive()
             if "text" in data:
                 payload_text = data["text"]
                 try:
-                    payload_json = json.loads(payload_text)
-                except json.JSONDecodeError as e:
-                    await clients.send(websocket, {
-                        "type": "error",
-                        "reason": f"Invalid JSON payload: {e}"
-                    })
+                    parsed_data = orjson.loads(payload_text)
+                except orjson.JSONDecodeError as e:
+                    await client.ws.send_json(
+                        WebSocketErrorEvent(
+                            error_event=ErrorEventType.INVALID_JSON,
+                            message=f"Invalid JSON payload: {e}").model_dump())
                     continue
 
-                event_value = payload_json.get("event")
+                event_value = parsed_data.get("event")
                 if not isinstance(event_value, int):
-                    await clients.send(websocket, {
-                        "type": "error",
-                        "reason": "Missing event field"
-                    })
+                    await client.ws.send_json(
+                        WebSocketErrorEvent(
+                            error_event=ErrorEventType.MISSING_EVENT_FIELD,
+                            message="Missing event field").model_dump())
                     continue
 
                 try:
-                    game_event = GameEventType(event_value)
+                    event = GameEventType(event_value)
                 except ValueError:
-                    await clients.send(
-                        websocket, {
-                            "type": "error",
-                            "reason": f"Unsupported game event: {event_value}"
-                        })
+                    await client.ws.send_json(
+                        WebSocketErrorEvent(
+                            error_event=ErrorEventType.UNSUPPORTED_EVENT,
+                            message=f"Unsupported game event: {event_value}").
+                        model_dump())
                     continue
 
-                try:
-                    await handle_json(
-                        game_event,
-                        payload_json,
-                        clients=clients,
-                        websocket=websocket,
-                        room_id=roomid,
-                        user=user,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to handle JSON event: %s, error: %s",
-                        game_event.name,
-                        e,
-                    )
-                    await clients.send(
-                        websocket, {
-                            "type": "error",
-                            "event": game_event.value,
-                            "reason": f"Failed to handle event: {e}"
-                        })
             elif "bytes" in data:
-                data = data["bytes"]
-                event: EventType = get_event_type(data)
-                try:
-                    await handle(event,
-                                 data,
-                                 clients=clients,
-                                 websocket=websocket,
-                                 room_id=roomid)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to handle event: {event.name}, error: {e}")
-                    await clients.send(
-                        websocket,
-                        f"Failed to handle event: {event.name}, error: {e}")
+                parsed_data = data["bytes"]
+                event: EventType | GameEventType = get_event_type(parsed_data)
+
             else:
                 logger.warning(
-                    f"Received unsupported data type from {websocket.client}: {data}"
+                    f"Received unsupported data type from {client.ws.client}: {data}"
                 )
                 continue
 
+            try:
+                await handle(event,
+                             parsed_data,
+                             clients=clients,
+                             client=client,
+                             room_id=roomid)
+            except Exception as e:
+                logger.error(
+                    f"Failed to handle event: {event.name}, error: {e}",
+                    exc_info=True)
+                await client.ws.send_json(
+                    WebSocketErrorEvent(
+                        error_event=ErrorEventType.HANDLER_EXCEPTION,
+                        message=f"Failed to handle event {event.name}: {e}").
+                    model_dump())
+
     except (WebSocketDisconnect, RuntimeError) as e:
-        logger.info("WebSocket disconnected: %s", websocket.client)
+        logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
-        clients.pop(roomid, websocket)
-        logger.info("WebSocket removed from clients: %s", websocket.client)
+        try:
+            await client.ws.close()
+        except Exception:
+            pass
+        clients.pop(roomid, client)
+        logger.info("WebSocket removed from clients: %s", client.ws.client)
+        await on_disconnect(session, client, clients, roomid)
 
 
 # Catch-all 路由：处理前端的客户端路由（必须放在所有路由的最后）

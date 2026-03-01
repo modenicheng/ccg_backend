@@ -1,6 +1,6 @@
 from sqlalchemy.exc import IntegrityError
 
-from db.models import Room, User, TagGroup
+from db.models import Room, User, TagGroup, RoomStatusORM
 from schemas.room import JoinRoomRequest, JoinRoomResponse
 from schemas.user import UserLogin, BaseUser
 from schemas.tag import TagGroupResponse
@@ -30,7 +30,9 @@ def _to_room_info_response(room: Room) -> RoomInfoResponse:
         status=int(room.status),
         title=room.title,
         players=[BaseUser.model_validate(user) for user in room.users],
-        tag_groups=[TagGroupResponse.model_validate(group) for group in room.tag_groups],
+        tag_groups=[
+            TagGroupResponse.model_validate(group) for group in room.tag_groups
+        ],
     )
 
 
@@ -76,6 +78,12 @@ async def join_room(roomid: str,
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    # 如果房间已经在游戏中，拒绝加入
+    if room.status != RoomStatusORM.WAITING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot join a room that is not in waiting state")
+
     new_user = User(username=data.username,
                     is_owner=False,
                     token=str(uuid4()),
@@ -84,7 +92,8 @@ async def join_room(roomid: str,
         session.add(new_user)
         await session.commit()
     except IntegrityError:
-        raise HTTPException(status_code=400, detail="Username already taken in this room")
+        raise HTTPException(status_code=400,
+                            detail="Username already taken in this room")
     return JoinRoomResponse(
         room_id=roomid,
         user=UserLogin.model_validate(new_user),
@@ -94,14 +103,10 @@ async def join_room(roomid: str,
 @room_router.get("/{roomid}", response_model=RoomInfoResponse)
 async def room_info(
     roomid: str, session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
-    stmt = (
-        select(Room)
-        .where(Room.id == roomid)
-        .options(
-            selectinload(Room.users),
-            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
-        )
-    )
+    stmt = (select(Room).where(Room.id == roomid).options(
+        selectinload(Room.users),
+        selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+    ))
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
     if not room:
@@ -110,17 +115,15 @@ async def room_info(
 
 
 @room_router.patch("/{roomid}", response_model=RoomInfoResponse)
-async def room_setting(roomid: str,
-                       payload: PatchRoomRequest,
-                       session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
-    stmt = (
-        select(Room)
-        .where(Room.id == roomid)
-        .options(
-            selectinload(Room.users),
-            selectinload(Room.tag_groups).selectinload(TagGroup.tags),
-        )
-    )
+async def room_setting(
+    roomid: str,
+    payload: PatchRoomRequest,
+    session: AsyncSession = Depends(get_db)
+) -> RoomInfoResponse:
+    stmt = (select(Room).where(Room.id == roomid).options(
+        selectinload(Room.users),
+        selectinload(Room.tag_groups).selectinload(TagGroup.tags),
+    ))
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
     if not room:
@@ -139,18 +142,17 @@ async def room_setting(roomid: str,
         group_ids = list(dict.fromkeys(group_ids))
         if group_ids:
             group_result = await session.execute(
-                select(TagGroup)
-                .where(TagGroup.id.in_(group_ids))
-                .options(selectinload(TagGroup.tags))
-            )
+                select(TagGroup).where(TagGroup.id.in_(group_ids)).options(
+                    selectinload(TagGroup.tags)))
             found_groups = list(group_result.scalars().all())
             found_ids = {group.id for group in found_groups}
-            missing_ids = [group_id for group_id in group_ids if group_id not in found_ids]
+            missing_ids = [
+                group_id for group_id in group_ids if group_id not in found_ids
+            ]
             if missing_ids:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Tag groups with IDs {missing_ids} not found"
-                )
+                    detail=f"Tag groups with IDs {missing_ids} not found")
             room.tag_groups = found_groups
         else:
             room.tag_groups = []
