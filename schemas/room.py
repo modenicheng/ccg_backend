@@ -65,6 +65,12 @@ class JoinRoomResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class KickUserRequest(BaseModel):
+    user_id: int = Field(..., description="要踢出的用户ID")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RoomStateTagItem(BaseModel):
     id: int
     name: str

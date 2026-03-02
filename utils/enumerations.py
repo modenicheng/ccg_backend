@@ -23,6 +23,8 @@ class GameEventType(Enum):
     ROOM_STATE = 12
     GAME_OVER = 13
     START_POS_UPDATE = 14
+    KICK_USER = 15
+    PLAYER_LEAVE = 16
 
     PLAY = 20
     PAUSE = 21

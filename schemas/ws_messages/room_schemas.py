@@ -93,3 +93,15 @@ class PlayerJoinMessage(BaseModel):
     data: RoomStatePlayerItem
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class KickUserMessage(BaseModel):
+    event: Literal[15] = GameEventType.KICK_USER.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: dict
+
+
+class PlayerLeaveMessage(BaseModel):
+    event: Literal[16] = GameEventType.PLAYER_LEAVE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: RoomStatePlayerItem
