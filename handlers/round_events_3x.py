@@ -1,11 +1,14 @@
 from client_manager import ClientManager, Client
 from db.session import session_scope
+from db import models
+from db.crud import get_player_answers_for_judging, get_tag_group_map, update_player_answer_order, save_score_record, get_current_song_info, fetch_room_object
+
 from utils import get_logger
 from utils.enumerations import GameEventType
-from db.models import RoomStatusORM
 from . import regist
 from sqlalchemy import select
-from db import models
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 from cache import room_cache
 from utils.ts import get_ts_ms
 from utils.enumerations import EventType, GameEventType, ErrorEventType
@@ -15,6 +18,7 @@ from schemas.ws_messages.room_schemas import *
 from schemas.ws_messages.round_event_schemas import *
 import cache.schemas as cache_schemas
 from cache.utils import room_manager
+import random
 
 logger = get_logger(__name__)
 
@@ -39,14 +43,14 @@ async def handle_game_start(
             await client.send_error(GameEventType.GAME_START, "Room not found")
             return
 
-        if room.status != RoomStatusORM.WAITING:
+        if room.status != models.RoomStatusORM.WAITING:
             logger.warning(
                 f"Received game start event for room {room_id} which is not in waiting state"
             )
             await client.send_error(GameEventType.GAME_START,
                                     "Room is not in waiting state")
             return
-        room.status = RoomStatusORM.RUNNING
+        room.status = models.RoomStatusORM.RUNNING
         await session.commit()
         await clients.broadcast(room_id, data.model_dump())
 
@@ -187,3 +191,626 @@ async def handle_attempt_answer(data: AttemptAnswerMessage,
     )
 
     logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
+
+
+@regist(GameEventType.JUDGING, JudgingMessage)
+async def handle_judging(data: JudgingMessage, clients: ClientManager,
+                         client: Client, room_id: str, **kwargs):
+    """处理进入判分环节事件"""
+    try:
+        async with session_scope() as db:
+            # 获取当前歌曲信息
+            song_id, song_index = await get_current_song_info(db, room_id)
+            if song_id is None or song_index is None:
+                await client.send_error(GameEventType.JUDGING,
+                                        "Cannot determine current song")
+                return
+
+            # 获取当前歌曲
+            song_stmt = select(models.Song).where(models.Song.id == song_id)
+            song_result = await db.execute(song_stmt)
+            song = song_result.scalar_one_or_none()
+            if not song:
+                await client.send_error(GameEventType.JUDGING,
+                                        "Song not found")
+                return
+
+            # 获取历史标签
+            tag_history_stmt = select(models.SongTagHistory.tag_id).where(
+                models.SongTagHistory.song_id == song_id)
+            tag_history_result = await db.execute(tag_history_stmt)
+            history_tag_ids = [
+                tag_id[0] for tag_id in tag_history_result.all()
+            ]
+
+            # 获取参考精确描述（正确答案）
+            description_history_stmt = select(
+                models.SongDescriptionHistory.description_text).where(
+                    models.SongDescriptionHistory.song_id == song_id,
+                    models.SongDescriptionHistory.is_correct == True)
+            description_history_result = await db.execute(
+                description_history_stmt)
+            reference_descriptions = [
+                desc[0] for desc in description_history_result.all()
+            ]
+
+            # 随机选择一个或多个参考描述
+            if reference_descriptions:
+                # 随机选择1-3个描述
+                num_descriptions = min(random.randint(1, 3),
+                                       len(reference_descriptions))
+                reference_descriptions = random.sample(reference_descriptions,
+                                                       num_descriptions)
+
+            # 获取玩家答案（用于显示抢答者的精确描述）
+            player_answers = await get_player_answers_for_judging(
+                db, room_id, song_id, song_index)
+
+            # 构建玩家描述列表
+            player_descriptions = []
+            for user_id, answer_data in player_answers.items():
+                if answer_data['description_text']:
+                    # 获取用户名
+                    user_stmt = select(
+                        models.User.username).where(models.User.id == user_id)
+                    user_result = await db.execute(user_stmt)
+                    username = user_result.scalar_one_or_none(
+                    ) or f"Player {user_id}"
+
+                    player_descriptions.append({
+                        'id':
+                        user_id,
+                        'username':
+                        username,
+                        'description':
+                        answer_data['description_text']
+                    })
+
+            # 构建歌曲信息
+            song_info = SongInfo(
+                title=song.title,
+                artist=song.artist,
+                album=song.album_name,
+                cover_url=song.cover_url,
+                platform_url=song.metadata_json.get('platform_url')
+                if song.metadata_json else None)
+
+            # 构建JUDGING事件数据
+            judging_data = JudgingData(
+                song=song_info,
+                history_tag_ids=history_tag_ids,
+                reference_descriptions=reference_descriptions,
+                player_descriptions=player_descriptions)
+
+            # 广播JUDGING事件给所有客户端
+            judging_message = JudgingMessage(data=judging_data)
+            await clients.broadcast(room_id, judging_message.model_dump())
+
+            logger.info("Sent JUDGING event for room %s, song %s", room_id,
+                        song.title)
+
+    except Exception as e:
+        logger.error("Error during JUDGING event: %s", e)
+        await client.send_error(GameEventType.JUDGING,
+                                f"Internal server error: {str(e)}")
+
+
+@regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessage)
+async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
+                              client: Client, room_id: str, **kwargs):
+    """处理房主提交正确答案事件"""
+    # 验证房主身份
+    if not client.user.is_owner:
+        await client.send_error(GameEventType.JUDGE_SUBMIT,
+                                "Only owner can submit judge result")
+        return
+
+    # 如果选择跳过计分，直接结束
+    if data.data.skip_scoring:
+        logger.info("Skipping scoring for room %s", room_id)
+        # 广播ROUND_END事件
+        round_end_message = RoundEndMessage()
+        await clients.broadcast(room_id, round_end_message.model_dump())
+        return
+
+    # 使用数据库会话获取数据
+    try:
+        async with session_scope() as db:
+            # 检查房间是否存在
+            room = await fetch_room_object(db, room_id)
+            if not room:
+                await client.send_error(GameEventType.JUDGE_SUBMIT,
+                                        "Room not found")
+                return
+
+            # 获取当前歌曲信息
+            song_id, song_index = await get_current_song_info(db, room_id)
+            if song_id is None or song_index is None:
+                await client.send_error(GameEventType.JUDGE_SUBMIT,
+                                        "Cannot determine current song")
+                return
+
+            # 存储标签历史
+            for tag_id in data.data.correct_tags:
+                # 检查是否已存在
+                existing_stmt = select(models.SongTagHistory).where(
+                    models.SongTagHistory.song_id == song_id,
+                    models.SongTagHistory.tag_id == tag_id)
+                existing_result = await db.execute(existing_stmt)
+                existing = existing_result.scalar_one_or_none()
+
+                if not existing:
+                    # 创建新记录
+                    tag_history = models.SongTagHistory(
+                        song_id=song_id,
+                        tag_id=tag_id,
+                        judged_by_user_id=client.user.id,
+                        room_id=room_id)
+                    db.add(tag_history)
+
+            # 存储描述历史
+            for description_id in data.data.correct_description_ids:
+                # 获取玩家答案
+                answer_stmt = select(models.PlayerAnswer).where(
+                    models.PlayerAnswer.room_id == room_id,
+                    models.PlayerAnswer.song_id == song_id,
+                    models.PlayerAnswer.round_index == song_index,
+                    models.PlayerAnswer.user_id == description_id)
+                answer_result = await db.execute(answer_stmt)
+                answer = answer_result.scalar_one_or_none()
+
+                if answer and answer.description_text:
+                    # 创建新记录
+                    description_history = models.SongDescriptionHistory(
+                        song_id=song_id,
+                        description_text=answer.description_text,
+                        is_correct=True,
+                        judged_by_user_id=client.user.id,
+                        room_id=room_id)
+                    db.add(description_history)
+
+            # 处理新的正确描述
+            for description_text in data.data.new_correct_descriptions:
+                if description_text.strip():
+                    description_history = models.SongDescriptionHistory(
+                        song_id=song_id,
+                        description_text=description_text.strip(),
+                        is_correct=True,
+                        judged_by_user_id=client.user.id,
+                        room_id=room_id)
+                    db.add(description_history)
+
+            # 获取房间玩家
+            players = [{
+                "id": str(user.id),
+                "username": user.username
+            } for user in room.users]
+
+            # 获取抢答队列（从Redis暂时获取，后续可能需要移到数据库）
+            answer_queue_items = await room_cache.get_answer_queue(
+                room_id)  # 已排序的 AnswerQueueItem 列表
+            answer_queue = [
+                str(item.player_id) for item in answer_queue_items
+            ]  # 转换为玩家ID字符串列表
+
+            # 从数据库获取玩家答案
+            player_answers_raw = await get_player_answers_for_judging(
+                db, room_id, song_id, song_index)
+
+            # 转换格式以便与answer_queue匹配（answer_queue中的player_id是字符串）
+            player_answers = {}
+            for user_id_int, answer_data in player_answers_raw.items():
+                player_id_str = str(user_id_int)
+                player_answers[player_id_str] = {
+                    'selected_tag_ids': answer_data['selected_tag_ids'],
+                    'description_text': answer_data['description_text'],
+                    'answer_order': answer_data['answer_order']
+                }
+
+            # 获取标签组映射
+            tag_group_map = await get_tag_group_map(db, room_id)
+
+            # 初始化玩家得分
+            player_scores = {player['id']: 0 for player in players}
+            correct_tags = data.data.correct_tags.copy()  # 创建副本以避免修改原始数据
+
+            # 按抢答顺序遍历玩家
+            for player_id in answer_queue:
+                if player_id not in player_answers:
+                    continue
+
+                player_answer = player_answers[player_id]
+                selected_tags = player_answer.get('selected_tag_ids', [])
+
+                # 检查每个标签组
+                for tag_group_id, group_tags in tag_group_map.items():
+                    # 找到该标签组的正确答案
+                    group_correct_tags = [
+                        tag for tag in correct_tags if tag in group_tags
+                    ]
+                    if not group_correct_tags:
+                        continue
+
+                    # 检查玩家是否选择了该标签组的正确答案
+                    player_group_tags = [
+                        tag for tag in selected_tags if tag in group_tags
+                    ]
+                    if player_group_tags == group_correct_tags:
+                        # 给玩家加1分
+                        player_scores[player_id] += 1
+                        # 从正确标签中移除该标签组的标签，避免重复计分
+                        for tag in group_correct_tags:
+                            if tag in correct_tags:
+                                correct_tags.remove(tag)
+                        # 终止当前标签组的遍历
+                        break
+
+            # 处理精准描述计分
+            correct_description_ids = data.data.correct_description_ids
+            if correct_description_ids:
+                for player_id in answer_queue:
+                    if player_id not in player_answers:
+                        continue
+
+                    player_answer = player_answers[player_id]
+                    player_description_text = player_answer.get(
+                        'description_text')
+
+                    # 检查玩家是否被选中为正确描述
+                    if int(player_id) in correct_description_ids:
+                        # 给玩家加1分
+                        player_scores[player_id] += 1
+                        # 终止精准描述的遍历
+                        break
+
+            # 更新数据库中的抢答顺序（answer_order）
+            updated_count = await update_player_answer_order(
+                db, room_id, song_id, song_index, answer_queue)
+            logger.info("Updated answer_order for %d players in room %s",
+                        updated_count, room_id)
+
+            # 保存得分记录到数据库
+            for player_id_str, score_delta in player_scores.items():
+                if score_delta > 0:
+                    try:
+                        user_id = int(player_id_str)
+                        await save_score_record(db, room_id, user_id,
+                                                song_index, score_delta)
+                    except (ValueError, Exception) as e:
+                        logger.error("Failed to save score for player %s: %s",
+                                     player_id_str, e)
+
+            await db.commit()
+            logger.info("Saved scoring results to database for room %s",
+                        room_id)
+
+    except Exception as e:
+        logger.error("Error during judge submission for room %s: %s", room_id,
+                     e)
+        await client.send_error(GameEventType.JUDGE_SUBMIT.value,
+                                f"Internal server error: {str(e)}")
+        return
+
+    # 计分完成，清空抢答队列（Redis部分）
+    await room_cache.clear_answer_queue(room_id)
+
+    # 构建得分更新消息
+    score_entries = [
+        ScoreEntry(player_id=player_id,
+                   username=next((p['username']
+                                  for p in players if p['id'] == player_id),
+                                 f"Player {player_id}"),
+                   score=player_scores.get(player_id, 0))
+        for player_id in player_scores
+    ]
+
+    score_update_data = ScoreUpdateData(scores=score_entries)
+    score_update_message = ScoreUpdateMessage(data=score_update_data)
+
+    # 广播得分更新事件
+    await clients.broadcast(room_id, score_update_message.model_dump())
+
+    # 广播回合结束事件
+    round_end_message = RoundEndMessage()
+    await clients.broadcast(room_id, round_end_message.model_dump())
+
+    logger.info("Scoring completed for room %s", room_id)
+
+
+# @regist(GameEventType.JUDGING, JudgingMessage)
+# async def handle_judging(data: JudgingMessage, clients: ClientManager,
+#                          client: Client, room_id: str, **kwargs):
+#     if not isinstance(data, dict):
+#         await client.send_error(GameEventType.JUDGING, "Expected JSON object")
+#         return
+
+#     # 广播 JUDGING 事件给所有客户端
+#     await clients.broadcast(room_id, data, excluded_clients={client})
+
+# @regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessageNew)
+# async def handle_judge_submit(data, clients: ClientManager, client: Client,
+#                               room_id: str, **kwargs):
+
+#     if not client.user.is_owner:
+#         await client.send_error(GameEventType.JUDGE_SUBMIT,
+#                                 "Only owner can submit judge result")
+#         return
+
+#     # 如果选择跳过计分，直接结束
+#     if data.data.skip_scoring:
+#         logger.info("Skipping scoring for room %s", room_id)
+#         return
+
+#     # 使用数据库会话获取数据
+#     try:
+#         async with AsyncSessionLocal() as db:
+#             # 检查房间是否存在
+#             room = await fetch_room_object(db, room_id)
+#             if not room:
+#                 await _safe_send_error(clients, cl, GameEventType.JUDGE_SUBMIT,
+#                                        "Room not found")
+#                 return
+
+#             # 获取当前歌曲信息
+#             song_id, song_index = await get_current_song_info(db, room_id)
+#             if song_id is None or song_index is None:
+#                 await _safe_send_error(clients, cl, GameEventType.JUDGE_SUBMIT,
+#                                        "Cannot determine current song")
+#                 return
+
+#             # 获取房间玩家
+#             players = [{
+#                 "id": str(user.id),
+#                 "username": user.username
+#             } for user in room.users]
+
+#             # 获取抢答队列（从Redis暂时获取，后续可能需要移到数据库）
+#             # 使用 room_cache.get_answer_queue 获取 AnswerQueueItem 列表，然后提取玩家ID
+#             answer_queue_items = await room_cache.get_answer_queue(
+#                 room_id)  # 已排序的 AnswerQueueItem 列表
+#             answer_queue = [
+#                 str(item.player_id) for item in answer_queue_items
+#             ]  # 转换为玩家ID字符串列表
+
+#             # 从数据库获取玩家答案
+#             player_answers_raw = await get_player_answers_for_judging(
+#                 db, room_id, song_id, song_index)
+
+#             # 转换格式以便与answer_queue匹配（answer_queue中的player_id是字符串）
+#             player_answers = {}
+#             for user_id_int, answer_data in player_answers_raw.items():
+#                 player_id_str = str(user_id_int)
+#                 player_answers[player_id_str] = {
+#                     'selected_tag_ids': answer_data['selected_tag_ids'],
+#                     'description_text': answer_data['description_text'],
+#                     'answer_order': answer_data['answer_order']
+#                 }
+
+#             # 获取标签组映射
+#             tag_group_map = await get_tag_group_map(db, room_id)
+
+#             # 初始化玩家得分
+#             player_scores = {player['id']: 0 for player in players}
+#             correct_tags = payload.data.correct_tags.copy()  # 创建副本以避免修改原始数据
+
+#             # 按抢答顺序遍历玩家
+#             for player_id in answer_queue:
+#                 if player_id not in player_answers:
+#                     continue
+
+#                 player_answer = player_answers[player_id]
+#                 selected_tags = player_answer.get('selected_tag_ids', [])
+
+#                 # 检查每个标签组
+#                 for tag_group_id, group_tags in tag_group_map.items():
+#                     # 找到该标签组的正确答案
+#                     group_correct_tags = [
+#                         tag for tag in correct_tags if tag in group_tags
+#                     ]
+#                     if not group_correct_tags:
+#                         continue
+
+#                     # 检查玩家是否选择了该标签组的正确答案
+#                     player_group_tags = [
+#                         tag for tag in selected_tags if tag in group_tags
+#                     ]
+#                     if player_group_tags == group_correct_tags:
+#                         # 给玩家加1分
+#                         player_scores[player_id] += 1
+#                         # 从正确标签中移除该标签组的标签，避免重复计分
+#                         for tag in group_correct_tags:
+#                             if tag in correct_tags:
+#                                 correct_tags.remove(tag)
+#                         # 终止当前标签组的遍历
+#                         break
+
+#             # 处理精准描述计分
+#             correct_description_ids = payload.data.correct_description_ids
+#             if correct_description_ids:
+#                 for player_id in answer_queue:
+#                     if player_id not in player_answers:
+#                         continue
+
+#                     player_answer = player_answers[player_id]
+#                     player_description_text = player_answer.get(
+#                         'description_text')
+
+#                     # 这里需要检查描述文本是否匹配正确的描述ID
+#                     # 由于前端传的是description_id，但数据库存的是description_text
+#                     # 这里简化处理：如果玩家有描述文本，则给1分（实际应根据描述匹配逻辑）
+#                     # TODO: 实现准确的描述匹配逻辑
+#                     if player_description_text and player_description_text.strip(
+#                     ):
+#                         # 给玩家加1分（简化逻辑）
+#                         player_scores[player_id] += 1
+#                         # 终止精准描述的遍历
+#                         break
+
+#             # 更新数据库中的抢答顺序（answer_order）
+#             updated_count = await update_player_answer_order(
+#                 db, room_id, song_id, song_index, answer_queue)
+#             logger.info("Updated answer_order for %d players in room %s",
+#                         updated_count, room_id)
+
+#             # 保存得分记录到数据库
+#             for player_id_str, score_delta in player_scores.items():
+#                 if score_delta > 0:
+#                     try:
+#                         user_id = int(player_id_str)
+#                         await save_score_record(db, room_id, user_id,
+#                                                 song_index, score_delta)
+#                     except (ValueError, Exception) as e:
+#                         logger.error("Failed to save score for player %s: %s",
+#                                      player_id_str, e)
+
+#             await db.commit()
+#             logger.info("Saved scoring results to database for room %s",
+#                         room_id)
+
+#     except Exception as e:
+#         logger.error("Error during judge submission for room %s: %s", room_id,
+#                      e)
+#         await _safe_send_error(clients, cl, GameEventType.JUDGE_SUBMIT,
+#                                f"Internal server error: {str(e)}")
+#         return
+
+#     # 计分完成，清空抢答队列（Redis部分）
+#     await room_cache.clear_answer_queue(room_id)
+
+#     # 构建得分更新消息
+#     score_entries = [
+#         ScoreEntryNew(player_id=player_id,
+#                       username=next((p['username']
+#                                      for p in players if p['id'] == player_id),
+#                                     f"Player {player_id}"),
+#                       score=player_scores.get(player_id, 0))
+#         for player_id in player_scores
+#     ]
+
+#     score_update_data = ScoreUpdateDataNew(scores=score_entries)
+#     score_update_message = ScoreUpdateMessageNew(data=score_update_data)
+
+#     # 广播得分更新事件
+#     await clients.broadcast(room_id,
+#                             score_update_message.model_dump(),
+#                             excluded_clients={client})
+
+#     logger.info("Scoring completed for room %s", room_id)
+
+# @regist(GameEventType.SUBMIT_ANSWER)
+# async def handle_submit_answer(data,
+#                                clients: ClientManager,
+#                                websocket=None,
+#                                room_id=None,
+#                                **kwargs):
+#     """处理玩家提交答案事件"""
+#     if not isinstance(data, dict):
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "Expected JSON object")
+#         return
+
+#     if websocket is None or room_id is None:
+#         return
+
+#     # 验证当前玩家是否为当前作答者
+#     user = getattr(websocket.state, 'user', None)
+#     if not user:
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "User not authenticated")
+#         return
+
+#     player_id = str(user.id)
+#     current_answerer = await room_manager.get_current_answerer(room_id)
+#     if current_answerer != player_id:
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                "Not your turn to answer")
+#         return
+
+#     try:
+#         payload = SubmitAnswerMessage.model_validate(data)
+#     except ValidationError as exc:
+#         logger.warning("Invalid SUBMIT_ANSWER payload: %s", exc)
+#         await _safe_send_error(clients, websocket, GameEventType.SUBMIT_ANSWER,
+#                                f"Invalid payload: {exc.errors()}")
+#         return
+
+#     # 将答案保存到数据库（PlayerAnswer表）
+#     try:
+#         async with AsyncSessionLocal() as db:
+#             # 获取当前歌曲ID和轮次索引
+#             song_index = await room_manager.get_current_song_index(room_id)
+#             song_queue = await room_manager.get_song_queue(room_id)
+#             if song_index is not None and song_queue and 0 <= song_index < len(
+#                     song_queue):
+#                 song_id = int(song_queue[song_index])
+#                 # 创建玩家答案记录
+#                 player_answer = models.PlayerAnswer(
+#                     room_id=room_id,
+#                     user_id=user.id,
+#                     song_id=song_id,
+#                     round_index=song_index,  # 使用歌曲索引作为轮次索引
+#                     selected_tag_ids=payload.data.selected_tag_ids,
+#                     description_text=payload.data.description_text,
+#                     answer_order=None  # 抢答顺序已在handle_judge_submit中设置
+#                 )
+#                 db.add(player_answer)
+#                 await db.commit()
+#                 logger.info("Saved answer for player %s song %d in room %s",
+#                             player_id, song_id, room_id)
+#             else:
+#                 logger.warning(
+#                     "Cannot determine current song for room %s, skipping answer save",
+#                     room_id)
+#     except Exception as e:
+#         logger.error("Failed to save player answer to database: %s", e)
+#         # 继续执行，仍然广播答案
+
+#     # 广播答案给所有玩家（ANSWER_BROADCAST事件）
+#     answer_broadcast_data = AnswerBroadcastData(
+#         player_id=player_id,
+#         selected_tag_ids=payload.data.selected_tag_ids,
+#         description_text=payload.data.description_text)
+#     answer_broadcast_message = AnswerBroadcastMessage(
+#         data=answer_broadcast_data)
+#     await clients.broadcast(room_id, answer_broadcast_message.model_dump())
+
+#     # 从抢答队列中移除当前玩家（已作答）
+#     # 使用 room_cache.remove_from_answer_queue，需要将 player_id 转换为 int
+#     await room_cache.remove_from_answer_queue(room_id, int(player_id))
+
+#     # 清空当前作答者
+#     await room_manager.set_current_answerer(room_id, "")
+
+#     # 获取下一个玩家（如果队列中还有玩家）
+#     # 使用 room_cache.get_answer_queue 获取排序后的 AnswerQueueItem 列表
+#     next_queue = await room_cache.get_answer_queue(room_id)
+#     if next_queue:
+#         # 设置下一个玩家为当前作答者
+#         next_player = str(next_queue[0].player_id)
+#         await room_manager.set_current_answerer(room_id, next_player)
+#         # 发送YOUR_TURN给下一个玩家
+#         # 需要获取下一个玩家的WebSocket，但这里无法直接获取
+#         # 暂时跳过，前端可以通过ANSWER_QUEUE事件知道轮到谁
+#         logger.info("Next player in queue: %s", next_player)
+#     else:
+#         # 队列为空，恢复播放？
+#         # 暂时不处理，由房主控制
+#         logger.info("Answer queue empty after submission in room %s", room_id)
+
+#     # 广播更新后的抢答队列
+#     queue_entries = []
+#     for entry in next_queue:
+#         # 将服务器时间戳转换为ISO格式字符串作为added_at
+#         added_at_str = datetime.fromtimestamp(
+#             entry.server_ts / 1000,
+#             timezone.utc).isoformat().replace("+00:00", "Z")
+#         queue_entries.append(
+#             AnswerQueueEntry(player_id=str(entry.player_id),
+#                              offset_ts=entry.offset_ts,
+#                              server_ts=entry.server_ts,
+#                              added_at=added_at_str))
+#     answer_queue_data = AnswerQueueData(queue=queue_entries)
+#     answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
+#     await clients.broadcast(room_id, answer_queue_message.model_dump())
+
+#     logger.info("Answer submitted by player %s in room %s", player_id, room_id)

@@ -34,7 +34,7 @@ class AnswerQueueMessage(MessageBase):
 
 class RoundEndMessage(MessageBase):
     event: Literal[38] = GameEventType.ROUND_END.value
-    data: RoundEndData
+    data: RoundEndData = Field(default_factory=RoundEndData)
 
 
 class AttemptAnswerData(BaseModel):
