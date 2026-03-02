@@ -11,7 +11,7 @@ from db.session import get_db, session_scope
 from uuid import uuid4
 from client_manager import ClientManager, Client
 from cache.connection import redis_client
-from handlers.game_events import on_connect, on_disconnect
+from handlers.connection_lifespan import on_connect, on_disconnect
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType, GameEventType, ErrorEventType
 from schemas.ws_messages.error_schemas import WebSocketErrorEvent
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
+async def lifespan(app: FastAPI):
     """应用生命周期管理：启动和关闭事件处理"""
     global memory_monitor
     global clients
@@ -53,8 +53,9 @@ async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
 
     try:
         update_stmt = update(User).values(online=False)
-        await session.execute(update_stmt)
-        await session.commit()
+        async with session_scope() as session:
+            await session.execute(update_stmt)
+            await session.commit()
         logger.info("Database user online states reset to offline on startup")
     except Exception as e:
         logger.error(f"Error resetting user online states in database: {e}")
@@ -88,6 +89,15 @@ async def lifespan(app: FastAPI, session: AsyncSession = Depends(get_db)):
         logger.info("Redis disconnected successfully")
     except Exception as e:
         logger.error(f"Failed to disconnect Redis: {e}")
+
+    try:
+        update_stmt = update(User).values(online=False)
+        async with session_scope() as session:
+            await session.execute(update_stmt)
+            await session.commit()
+    except Exception as e:
+        logger.error(
+            f"Error resetting user online states in database on shutdown: {e}")
 
     # 停止内存监控
     if memory_monitor:
