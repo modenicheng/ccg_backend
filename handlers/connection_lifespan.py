@@ -112,123 +112,15 @@ async def on_disconnect(
                                                       False)
 
 
-# 辅助函数：获取房间对象
-async def fetch_room_object(db: AsyncSession, room_id: str):
-    stmt = select(models.Room).where(models.Room.id == room_id).options(
-        selectinload(models.Room.users),
-        selectinload(models.Room.tag_groups).selectinload(models.TagGroup.tags),
-        selectinload(models.Room.room_songs).selectinload(models.RoomSong.song)
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-# 辅助函数：获取当前歌曲信息
-async def get_current_song_info(db: AsyncSession, room_id: str):
-    room = await fetch_room_object(db, room_id)
-    if not room:
-        return None, None
-    
-    # 按照 song_order 排序获取房间歌曲
-    sorted_songs = sorted(
-        room.room_songs,
-        key=lambda rs: rs.song_order if rs.song_order is not None else float('inf')
-    )
-    
-    if not sorted_songs:
-        return None, None
-    
-    # 使用 current_song_index 获取当前歌曲
-    current_index = room.current_song_index or 0
-    if current_index >= len(sorted_songs):
-        return None, None
-    
-    current_room_song = sorted_songs[current_index]
-    return current_room_song.song.id, current_index
-
-
-# 辅助函数：获取玩家答案
-async def get_player_answers_for_judging(db: AsyncSession, room_id: str, song_id: int, round_index: int):
-    stmt = select(models.PlayerAnswer).where(
-        models.PlayerAnswer.room_id == room_id,
-        models.PlayerAnswer.song_id == song_id,
-        models.PlayerAnswer.round_index == round_index
-    ).options(
-        selectinload(models.PlayerAnswer.user)
-    )
-    result = await db.execute(stmt)
-    player_answers = result.scalars().all()
-    
-    # 构建答案映射
-    answer_map = {}
-    for answer in player_answers:
-        answer_map[answer.user_id] = {
-            'selected_tag_ids': answer.selected_tag_ids or [],
-            'description_text': answer.description_text,
-            'answer_order': answer.answer_order
-        }
-    
-    return answer_map
-
-
-# 辅助函数：获取标签组映射
-async def get_tag_group_map(db: AsyncSession, room_id: str):
-    room = await fetch_room_object(db, room_id)
-    if not room:
-        return {}
-    
-    # 构建标签组到标签的映射
-    tag_group_map = {}
-    for tag_group in room.tag_groups:
-        tag_ids = [tag.id for tag in tag_group.tags]
-        tag_group_map[tag_group.id] = tag_ids
-    
-    return tag_group_map
-
-
-# 辅助函数：更新玩家答案顺序
-async def update_player_answer_order(db: AsyncSession, room_id: str, song_id: int, round_index: int, answer_queue: list[str]):
-    updated_count = 0
-    for order, player_id_str in enumerate(answer_queue, 1):
-        try:
-            player_id = int(player_id_str)
-            stmt = select(models.PlayerAnswer).where(
-                models.PlayerAnswer.room_id == room_id,
-                models.PlayerAnswer.song_id == song_id,
-                models.PlayerAnswer.round_index == round_index,
-                models.PlayerAnswer.user_id == player_id
-            )
-            result = await db.execute(stmt)
-            answer = result.scalar_one_or_none()
-            if answer:
-                answer.answer_order = order
-                updated_count += 1
-        except ValueError:
-            continue
-    return updated_count
-
-
-# 辅助函数：保存得分记录
-async def save_score_record(db: AsyncSession, room_id: str, user_id: int, round_index: int, score_delta: int):
-    # 获取用户当前总分
-    stmt = select(models.Score).where(
-        models.Score.room_id == room_id,
-        models.Score.user_id == user_id
-    ).order_by(models.Score.created_at.desc())
-    result = await db.execute(stmt)
-    last_score = result.scalar_one_or_none()
-    
-    total_score = (last_score.total_score if last_score else 0) + score_delta
-    
-    # 创建新的得分记录
-    score = models.Score(
-        room_id=room_id,
-        user_id=user_id,
-        round_index=round_index,
-        score_delta=score_delta,
-        total_score=total_score
-    )
-    db.add(score)
+# 从db.crud导入辅助函数
+from db.crud import (
+    fetch_room_object,
+    get_current_song_info,
+    get_player_answers_for_judging,
+    get_tag_group_map,
+    update_player_answer_order,
+    save_score_record
+)
 
 
 # 辅助函数：安全发送错误消息
