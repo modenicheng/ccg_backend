@@ -6,6 +6,7 @@ from schemas.user import UserLogin, BaseUser
 from schemas.tag import TagGroupResponse
 from utils import get_logger
 from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse, CreateRoomRequest
+
 from fastapi import APIRouter, HTTPException, Depends
 import secrets
 import string
@@ -164,3 +165,6 @@ async def room_setting(
     if not refreshed_room:
         raise HTTPException(status_code=404, detail="Room not found")
     return _to_room_info_response(refreshed_room)
+
+
+

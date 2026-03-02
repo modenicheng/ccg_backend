@@ -270,6 +270,22 @@ async def update_room_player_online_status(room_id: str, player_id: int,
         return None
 
 
+async def remove_room_player(room_id: str, player_id: int):
+    """
+    从房间缓存中移除指定玩家
+    """
+    redis = await redis_client.get_client()
+    if not redis:
+        return
+    room_key = f"room:{room_id}:players"
+    players = await redis.get(room_key)
+    if players:
+        players = json.loads(players)
+        # 过滤掉要移除的玩家
+        players = [p for p in players if p['id'] != player_id]
+        await redis.set(room_key, json.dumps(players))
+
+
 # 以下这三个方法是比较核心的，涉及答题队列的维护（利用 Redis 有序集合的特性）
 async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
     """

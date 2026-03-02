@@ -6,7 +6,11 @@ from cache.schemas import *
 
 from rich import print
 
-from .tools import random_string
+
+def random_string(length: int = 8, prefix: str = "") -> str:
+    """生成随机字符串"""
+    letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    return prefix + ''.join(random.choice(letters) for _ in range(length))
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -77,7 +81,7 @@ def random_player_attempt_answer_data() -> list[tuple[int, int]]:
 @pytest.mark.asyncio(loop_scope="session")
 async def test_room_answer_queue_cache():
     """测试房间答题队列缓存"""
-    room_id = random_string(perfix="test-room-answer-queue-")  # 生成随机房间ID
+    room_id = random_string(prefix="test-room-answer-queue-")  # 生成随机房间ID
 
     player_data = random_player_attempt_answer_data()
     for player_id, ts in player_data:

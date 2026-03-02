@@ -1,5 +1,11 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import ValidationError
+
 from client_manager import ClientManager, Client
-from db.session import session_scope
+from db.session import AsyncSessionLocal
 from utils import get_logger
 from utils.enumerations import GameEventType
 from db.models import RoomStatusORM
@@ -15,6 +21,10 @@ from schemas.ws_messages.room_schemas import *
 from schemas.ws_messages.round_event_schemas import *
 import cache.schemas as cache_schemas
 from cache.utils import room_manager
+from db.crud import (
+    get_current_song_info,
+    get_player_answers_for_judging,
+)
 
 logger = get_logger(__name__)
 
@@ -25,23 +35,24 @@ async def handle_game_start(
     clients: ClientManager,
     client: Client,
     room_id: str,
-):
+) -> None:
     logger.info(
-        f"Handling game start event for room {room_id} with data: {data}")
+        "Handling game start event for room %s", room_id)
 
-    async with session_scope() as session:
+    async with AsyncSessionLocal() as session:
         room = (await session.execute(
             select(models.Room).where(models.Room.id == room_id)
         )).scalar_one_or_none()
 
         if not room:
-            logger.error(f"Room {room_id} not found")
+            logger.error("Room %s not found", room_id)
             await client.send_error(GameEventType.GAME_START, "Room not found")
             return
 
         if room.status != RoomStatusORM.WAITING:
             logger.warning(
-                f"Received game start event for room {room_id} which is not in waiting state"
+                "Received game start event for room %s which is not in waiting state",
+                room_id
             )
             await client.send_error(GameEventType.GAME_START,
                                     "Room is not in waiting state")
@@ -57,12 +68,13 @@ async def handle_round_end(
     clients: ClientManager,
     client: Client,
     room_id: str,
-):
+) -> None:
     logger.info(
-        f"Handling round end event for room {room_id} with data: {data}")
+        "Handling round end event for room %s", room_id)
     if not client.user.is_owner:
         logger.warning(
-            f"User {client.user.username} attempted to end round in room {room_id} but is not the owner"
+            "User %s attempted to end round in room %s but is not the owner",
+            client.user.username, room_id
         )
         await client.send_error(
             GameEventType.ROUND_END,
@@ -73,10 +85,13 @@ async def handle_round_end(
 
 
 @regist(GameEventType.ATTEMPT_ANSWER, AttemptAnswerMessage)
-async def handle_attempt_answer(data: AttemptAnswerMessage,
-                                clients: ClientManager, client: Client,
-                                room_id: str, **kwargs):
-
+async def handle_attempt_answer(
+    data: AttemptAnswerMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs: Any
+) -> None:
     if client is None or room_id is None:
         return
 
@@ -93,17 +108,20 @@ async def handle_attempt_answer(data: AttemptAnswerMessage,
 
     # 添加到抢答队列 - 使用 room_cache.append_attempt_answer_player
     # 创建 AnswerQueueItem 对象
-    answer_item = cache_schemas.AnswerQueueItem(player_id=int(player_id),
-                                                offset_ts=offset_ts,
-                                                server_ts=server_ts,
-                                                order=None,
-                                                is_answering=False)
+    answer_item = cache_schemas.AnswerQueueItem(
+        player_id=int(player_id),
+        offset_ts=offset_ts,
+        server_ts=server_ts,
+        order=None,
+        is_answering=False
+    )
     try:
         result = await room_cache.append_attempt_answer_player(
             room_id, answer_item)
-    except ValueError as ve:
+    except ValueError:
         logger.warning(
-            f"Player {player_id} attempted to answer in room {room_id} but is already in the queue"
+            "Player %s attempted to answer in room %s but is already in the queue",
+            player_id, room_id
         )
         await client.send_error(
             GameEventType.ATTEMPT_ANSWER.value,
@@ -147,26 +165,6 @@ async def handle_attempt_answer(data: AttemptAnswerMessage,
         logger.info("Sent YOUR_TURN to player %s in room %s", player_id,
                     room_id)
 
-        # # 广播PAUSE事件给所有客户端
-        # # 构造PAUSE消息
-        """
-        ！！！直接前端控制暂停，后端不广播PAUSE事件了，避免网络延迟导致前端无法及时暂停
-         前端在收到抢答事件时立即暂停播放
-        """
-        # pause_data = PlayControlData(progress_ms=current_progress,
-        #                              offset_ts=offset_ts,
-        #                              audio_url=None)
-        # pause_message = PauseMessage(data=pause_data)
-
-        # # 使用_safe_broadcast发送（排除发送者）
-        # await clients.broadcast(room_id,
-        #                         pause_message.model_dump(),
-        #                         excluded_clients={client})
-
-        # logger.info(
-        #     "Paused playback and set current answerer to %s in room %s",
-        #     player_id, room_id)
-
     # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
     sorted_queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(
         room_id)
@@ -187,3 +185,106 @@ async def handle_attempt_answer(data: AttemptAnswerMessage,
     )
 
     logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
+
+
+@regist(GameEventType.SUBMIT_ANSWER, SubmitAnswerMessage)
+async def handle_submit_answer(
+    data: SubmitAnswerMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs: Any
+) -> None:
+    """处理玩家提交答案事件
+    
+    将玩家答案保存到数据库，并广播给所有客户端
+    """
+    if client is None or room_id is None:
+        return
+
+    player_id = client.user.id
+    player_username = client.user.username
+
+    logger.info(
+        "Player %s (id=%s) submitting answer in room %s",
+        player_username, player_id, room_id
+    )
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # 获取当前歌曲信息
+            song_id, song_index = await get_current_song_info(session, room_id)
+            if song_id is None or song_index is None:
+                logger.error(
+                    "Cannot determine current song for room %s", room_id)
+                await client.send_error(
+                    GameEventType.SUBMIT_ANSWER,
+                    "Cannot determine current song")
+                return
+
+            # 创建玩家答案记录
+            player_answer = models.PlayerAnswer(
+                room_id=room_id,
+                user_id=player_id,
+                song_id=song_id,
+                round_index=song_index,
+                selected_tag_ids=data.data.selected_tag_ids,
+                description_text=data.data.description_text,
+                answer_order=None  # 抢答顺序在判分时设置
+            )
+            session.add(player_answer)
+            await session.commit()
+
+            logger.info(
+                "Saved answer for player %s (id=%s) song %s round %s in room %s",
+                player_username, player_id, song_id, song_index, room_id
+            )
+
+    except Exception as e:
+        logger.error(
+            "Failed to save player answer for player %s in room %s: %s",
+            player_id, room_id, e
+        )
+        await client.send_error(
+            GameEventType.SUBMIT_ANSWER,
+            "Failed to save answer, please try again")
+        return
+
+    # 广播答案给所有玩家（ANSWER_BROADCAST事件）
+    answer_broadcast_data = AnswerBroadcastData(
+        player_id=str(player_id),
+        selected_tag_ids=data.data.selected_tag_ids,
+        description_text=data.data.description_text
+    )
+    answer_broadcast_message = AnswerBroadcastMessage(data=answer_broadcast_data)
+
+    await clients.broadcast(
+        room_id,
+        answer_broadcast_message.model_dump()
+    )
+
+    logger.info(
+        "Broadcasted answer from player %s (id=%s) in room %s",
+        player_username, player_id, room_id
+    )
+
+    # 从抢答队列中移除当前玩家（已作答）
+    await room_cache.remove_from_answer_queue(room_id, player_id)
+
+    # 清空当前作答者
+    await room_manager.set_current_answerer(room_id, "")
+
+    # 获取下一个玩家（如果队列中还有玩家）
+    next_queue = await room_cache.get_answer_queue(room_id)
+    if next_queue:
+        # 设置下一个玩家为当前作答者
+        next_player = str(next_queue[0].player_id)
+        await room_manager.set_current_answerer(room_id, next_player)
+        logger.info("Next player in queue: %s", next_player)
+    else:
+        logger.info("Answer queue empty after submission in room %s", room_id)
+
+    # 广播更新后的抢答队列
+    answer_queue_data = AnswerQueueData(queue=next_queue)
+    answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
+    await clients.broadcast(room_id, answer_queue_message.model_dump())

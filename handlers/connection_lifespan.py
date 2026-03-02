@@ -421,6 +421,125 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager, 
     logger.info("Scoring completed for room %s", room_id)
 
 
+@regist(GameEventType.KICK_USER, dict)
+async def handle_kick_user(data: dict, clients: ClientManager, client: Client, room_id: str, **kwargs):
+    """处理房主踢人事件"""
+    # 验证房主身份
+    if not client.user.is_owner:
+        await _safe_send_error(clients, client, GameEventType.KICK_USER, "Only owner can kick users")
+        return
+    
+    # 获取要踢的用户ID
+    user_id = data.get('user_id')
+    if not user_id:
+        await _safe_send_error(clients, client, GameEventType.KICK_USER, "Missing user_id")
+        return
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            # 检查房间是否存在
+            room = await fetch_room_object(db, room_id)
+            if not room:
+                await _safe_send_error(clients, client, GameEventType.KICK_USER, "Room not found")
+                return
+            
+            # 查找要踢的用户
+            user_to_kick = None
+            for user in room.users:
+                if user.id == user_id:
+                    user_to_kick = user
+                    break
+            if not user_to_kick:
+                await _safe_send_error(clients, client, GameEventType.KICK_USER, "User not found in room")
+                return
+            
+            # 检查是否是房主
+            if user_to_kick.is_owner:
+                await _safe_send_error(clients, client, GameEventType.KICK_USER, "Cannot kick the room owner")
+                return
+            
+            # 从房间中移除用户
+            room.users.remove(user_to_kick)
+            await db.commit()
+            
+            # 从缓存中移除用户
+            await room_cache.remove_room_player(room_id, user_id)
+            
+            # 构建玩家离开消息
+            player_item = RoomStatePlayerItem(
+                id=user_to_kick.id,
+                username=user_to_kick.username,
+                is_owner=user_to_kick.is_owner,
+                online=False
+            )
+            leave_message = PlayerLeaveMessage(data=player_item)
+            
+            # 广播玩家离开事件
+            await clients.broadcast(room_id, leave_message.model_dump())
+            
+            # 踢出对应的WebSocket连接
+            for c in clients.get_room_clients(room_id):
+                if c.user.id == user_id:
+                    await clients.kick(room_id, c, 1000, "Kicked by room owner")
+                    break
+            
+            logger.info("Kicked user %d from room %s", user_id, room_id)
+            
+    except Exception as e:
+        logger.error("Error during kick user: %s", e)
+        await _safe_send_error(clients, client, GameEventType.KICK_USER, f"Internal server error: {str(e)}")
+
+
+@regist(GameEventType.PLAYER_LEAVE, dict)
+async def handle_player_leave(data: dict, clients: ClientManager, client: Client, room_id: str, **kwargs):
+    """处理玩家主动退出事件"""
+    # 获取当前用户ID
+    user_id = client.user.id
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            # 检查房间是否存在
+            room = await fetch_room_object(db, room_id)
+            if not room:
+                await _safe_send_error(clients, client, GameEventType.PLAYER_LEAVE, "Room not found")
+                return
+            
+            # 查找当前用户
+            user_to_leave = None
+            for user in room.users:
+                if user.id == user_id:
+                    user_to_leave = user
+                    break
+            if not user_to_leave:
+                await _safe_send_error(clients, client, GameEventType.PLAYER_LEAVE, "User not found in room")
+                return
+            
+            # 从房间中移除用户
+            room.users.remove(user_to_leave)
+            await db.commit()
+            
+            # 从缓存中移除用户
+            await room_cache.remove_room_player(room_id, user_id)
+            
+            # 构建玩家离开消息
+            player_item = RoomStatePlayerItem(
+                id=user_to_leave.id,
+                username=user_to_leave.username,
+                is_owner=user_to_leave.is_owner,
+                online=False
+            )
+            leave_message = PlayerLeaveMessage(data=player_item)
+            
+            # 广播玩家离开事件
+            await clients.broadcast(room_id, leave_message.model_dump())
+            
+            logger.info("Player %d left room %s", user_id, room_id)
+            
+    except Exception as e:
+        logger.error("Error during player leave: %s", e)
+        await _safe_send_error(clients, client, GameEventType.PLAYER_LEAVE, f"Internal server error: {str(e)}")
+
+
 # @regist(GameEventType.JUDGING, JudgingMessage)
 # async def handle_judging(data: JudgingMessage, clients: ClientManager,
 #                          client: Client, room_id: str, **kwargs):
