@@ -1,18 +1,6 @@
-# Agent Guidelines for CCG Backend
+# CCG Backend Code Style and Contribution Guidelines
 
-*No Cursor rules (.cursor/rules/) or Copilot instructions (.github/copilot-instructions.md) are present.*
-
-## Build, Test, and Run Commands
-
-### Environment Setup
-- Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependencies
-- Copy `.env.template` → `.env` (all env vars prefixed `CCG_`)
-
-### Running the Application
-```bash
-uv run uvicorn main:app --reload --port 8000   # development
-uv run uvicorn main:app --host 0.0.0.0 --port 8000   # production style
-```
+\* if you need a quick start, check the [AGENTS.md](../AGENTS.md) file for setup and common tasks, and the [README.md](../README.md) for project overview and architecture. This file focuses on code style and contribution guidelines.
 
 ### Database Migrations (Alembic)
 ```bash
@@ -161,7 +149,3 @@ uv run pytest -v --log-level=DEBUG
 - **Redis**: Check `CCG_REDIS_URL`; Redis required for real‑time features
 - **WebSocket tests**: Use `tests/ws_conn.py` factory; ensure Redis running if the test needs
 - **Migrations**: review generated script; keep the data integrity as possible as you can
-
----
-
-*Last updated: March 2025*
