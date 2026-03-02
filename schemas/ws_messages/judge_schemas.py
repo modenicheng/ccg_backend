@@ -10,10 +10,20 @@ class SongInfo(BaseModel):
     artist: str | None = None
     album: str | None = None
     cover_url: str | None = None
+    platform_url: str | None = None
+
+
+class PlayerDescription(BaseModel):
+    id: int
+    username: str
+    description: str
 
 
 class JudgingData(BaseModel):
     song: SongInfo
+    history_tag_ids: list[int] = Field(default_factory=list)
+    reference_descriptions: list[str] = Field(default_factory=list)
+    player_descriptions: list[PlayerDescription] = Field(default_factory=list)
 
 
 class JudgingMessage(MessageBase):

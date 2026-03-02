@@ -525,7 +525,7 @@ session_data = await session_manager.get_session(token)
 
 - **`game_events.py`**：
   - 包含连接生命周期管理函数：`on_connect`、`on_disconnect`
-  - 原游戏事件处理器已迁移，以下事件**处理器待实现**：`JUDGING` (40)、`JUDGE_SUBMIT` (41)、`SCORE_UPDATE` (42)
+  - 判分相关事件处理器：`JUDGING` (40)、`JUDGE_SUBMIT` (41)、`SCORE_UPDATE` (42)
 
 - **`heartbeats.py`**：
   - `HEARTBEAT`：处理心跳帧（PING/PONG）
@@ -628,7 +628,7 @@ session_data = await session_manager.get_session(token)
 
 - 房间/歌单业务流程**已实现**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
 - `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler（保留供未来扩展）。
-- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`GAME_START`、`ATTEMPT_ANSWER`、`ROUND_END` 等关键事件。以下事件消息格式已定义但**处理器待实现**：`PRELOAD_AUDIO`、`JUDGING`、`JUDGE_SUBMIT`、`SUBMIT_ANSWER`、`YOUR_TURN`、`ANSWER_BROADCAST`、`ANSWER_QUEUE`、`CLEAR_ANSWER_QUEUE`、`SCORE_UPDATE`。
+- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`GAME_START`、`ATTEMPT_ANSWER`、`ROUND_END`、`JUDGING`、`JUDGE_SUBMIT`、`SCORE_UPDATE` 等关键事件。以下事件消息格式已定义但**处理器待实现**：`PRELOAD_AUDIO`、`SUBMIT_ANSWER`、`YOUR_TURN`、`ANSWER_BROADCAST`、`ANSWER_QUEUE`、`CLEAR_ANSWER_QUEUE`。
 - 音频缓存与下载功能已实现，但需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
 - 音频文件缓存 API 已实现：支持通过 `/api/songs/cache/{song_id}` 获取缓存的音频文件（支持 Range 请求），以及触发缓存任务的端点。
 - 标签组评分逻辑已实现基础版本，但标签组映射和答案存储仍需根据实际游戏逻辑完善。
