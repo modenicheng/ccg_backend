@@ -626,12 +626,27 @@ session_data = await session_manager.get_session(token)
 
 ## 当前边界与说明
 
-- 房间/歌单业务流程**已实现**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
+### 已实现功能
+
+- **房间/歌单业务流程**：支持创建房间、加入房间、管理歌单、添加歌曲到房间等核心功能。
+- **WebSocket 事件处理器**：
+  - 音频控制：`PLAY` (20)、`PAUSE` (21)、`SEEK` (22)
+  - 游戏流程：`GAME_START` (31)、`ATTEMPT_ANSWER` (33)、`SUBMIT_ANSWER` (35)、`ANSWER_BROADCAST` (36)、`ANSWER_QUEUE` (37)、`ROUND_END` (38)
+  - 判分环节：`JUDGING` (40)、`JUDGE_SUBMIT` (41)、`SCORE_UPDATE` (42)
+  - 玩家管理：`KICK_USER` (15)、`PLAYER_LEAVE` (16)、`ROOM_JOIN` (17)、`PLAYER_READY` (18)
+  - 其他：`COUNTDOWN` (32)、`YOUR_TURN` (34)
+- **音频缓存与下载**：支持音频预下载和本地缓存，通过 `/api/songs/cache/{song_id}` 提供音频文件服务（支持 Range 请求）。
+- **标签组评分逻辑**：已实现完整的判分逻辑，支持标签组匹配计分和精准描述计分。
+- **断线重连**：通过 Cookie token 实现断线重连和会话恢复。
+
+### 待实现功能
+
 - `EventType` 中的 `AUDIO_FRAME`、`META_DATA`、`TIME_SYNC`、`MESSAGE` 目前无对应 handler（保留供未来扩展）。
-- 游戏事件处理器已实现 `PLAY`、`PAUSE`、`SEEK`、`GAME_START`、`ATTEMPT_ANSWER`、`ROUND_END`、`JUDGING`、`JUDGE_SUBMIT`、`SCORE_UPDATE` 等关键事件。以下事件消息格式已定义但**处理器待实现**：`PRELOAD_AUDIO`、`SUBMIT_ANSWER`、`YOUR_TURN`、`ANSWER_BROADCAST`、`ANSWER_QUEUE`、`CLEAR_ANSWER_QUEUE`。
-- 音频缓存与下载功能已实现，但需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
-- 音频文件缓存 API 已实现：支持通过 `/api/songs/cache/{song_id}` 获取缓存的音频文件（支持 Range 请求），以及触发缓存任务的端点。
-- 标签组评分逻辑已实现基础版本，但标签组映射和答案存储仍需根据实际游戏逻辑完善。
+- `PRELOAD_AUDIO` (23)：音频预加载通知
+- `CLEAR_ANSWER_QUEUE` (38)：清空抢答队列
+- `START_POS_UPDATE` (14)：房主控制条（起始位置百分比 0-80%）
+- `GAME_OVER` (13)：游戏结束事件
+- 音频缓存与下载功能需要有效的 QQ 音乐 Cookie 才能获取高质量音频 URL。
 
 ## 局内流程设计
 
