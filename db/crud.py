@@ -5,6 +5,7 @@ from sqlalchemy import and_, select, tuple_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from utils import logger
 
@@ -764,12 +765,15 @@ async def simple_authentication(session: AsyncSession, ws_cookie: dict,
     )
     return user
 
-async def fetch_room_object(session: AsyncSession, room_id: str) -> models.Room | None:
+
+async def fetch_room_object(session: AsyncSession,
+                            room_id: str) -> models.Room | None:
     from sqlalchemy.orm import selectinload
 
     stmt = select(models.Room).where(models.Room.id == room_id).options(
         selectinload(models.Room.users),
-        selectinload(models.Room.tag_groups).selectinload(models.TagGroup.tags),
+        selectinload(models.Room.tag_groups).selectinload(
+            models.TagGroup.tags),
     )
 
     result = await session.execute(stmt)
@@ -788,8 +792,8 @@ async def get_room_song_queue(
     """获取房间的有序歌曲队列（按song_order排序的歌曲ID列表）"""
     stmt = select(models.RoomSong.song_id).where(
         models.RoomSong.room_id == room_id,
-        models.RoomSong.song_order.is_not(None)
-    ).order_by(models.RoomSong.song_order)
+        models.RoomSong.song_order.is_not(None)).order_by(
+            models.RoomSong.song_order)
 
     result = await session.execute(stmt)
     song_ids = result.scalars().all()
@@ -806,9 +810,8 @@ async def get_current_song_info(
         (song_id, song_index) 元组，如果未设置则返回 (None, None)
     """
     # 获取房间的当前歌曲索引
-    stmt = select(models.Room.current_song_index).where(
-        models.Room.id == room_id
-    )
+    stmt = select(
+        models.Room.current_song_index).where(models.Room.id == room_id)
     result = await session.execute(stmt)
     song_index = result.scalar_one_or_none()
 
@@ -841,10 +844,8 @@ async def get_player_answers_for_judging(
     stmt = select(models.PlayerAnswer).where(
         models.PlayerAnswer.room_id == room_id,
         models.PlayerAnswer.song_id == song_id,
-        models.PlayerAnswer.round_index == round_index
-    ).options(
-        selectinload(models.PlayerAnswer.user)
-    )
+        models.PlayerAnswer.round_index == round_index).options(
+            selectinload(models.PlayerAnswer.user))
 
     result = await session.execute(stmt)
     answers = result.scalars().all()
@@ -915,8 +916,8 @@ async def update_player_answer_order(
             models.PlayerAnswer.room_id == room_id,
             models.PlayerAnswer.user_id == user_id,
             models.PlayerAnswer.song_id == song_id,
-            models.PlayerAnswer.round_index == round_index
-        ).order_by(models.PlayerAnswer.created_at.desc()).limit(1)
+            models.PlayerAnswer.round_index == round_index).order_by(
+                models.PlayerAnswer.created_at.desc()).limit(1)
 
         result = await session.execute(stmt)
         player_answer = result.scalar_one_or_none()
@@ -953,21 +954,103 @@ async def save_score_record(
     if total_score is None:
         # 计算该用户当前累计总分
         stmt = select(func.sum(models.Score.score_delta)).where(
-            models.Score.room_id == room_id,
-            models.Score.user_id == user_id
-        )
+            models.Score.room_id == room_id, models.Score.user_id == user_id)
         result = await session.execute(stmt)
         current_total = result.scalar() or 0
         total_score = current_total + score_delta
 
-    score = models.Score(
-        room_id=room_id,
-        user_id=user_id,
-        round_index=round_index,
-        score_delta=score_delta,
-        total_score=total_score
-    )
+    score = models.Score(room_id=room_id,
+                         user_id=user_id,
+                         round_index=round_index,
+                         score_delta=score_delta,
+                         total_score=total_score)
 
     session.add(score)
     await session.flush()
     return score
+
+
+# # 辅助函数：获取玩家答案
+# async def get_player_answers_for_judging(db: AsyncSession, room_id: str,
+#                                          song_id: int, round_index: int):
+#     stmt = select(models.PlayerAnswer).where(
+#         models.PlayerAnswer.room_id == room_id,
+#         models.PlayerAnswer.song_id == song_id,
+#         models.PlayerAnswer.round_index == round_index).options(
+#             selectinload(models.PlayerAnswer.user))
+#     result = await db.execute(stmt)
+#     player_answers = result.scalars().all()
+
+#     # 构建答案映射
+#     answer_map = {}
+#     for answer in player_answers:
+#         answer_map[answer.user_id] = {
+#             'selected_tag_ids': answer.selected_tag_ids or [],
+#             'description_text': answer.description_text,
+#             'answer_order': answer.answer_order
+#         }
+
+#     return answer_map
+
+
+# # 辅助函数：获取标签组映射
+# async def get_tag_group_map(db: AsyncSession, room_id: str):
+#     room = await fetch_room_object(db, room_id)
+#     if not room:
+#         return {}
+
+#     # 构建标签组到标签的映射
+#     tag_group_map = {}
+#     for tag_group in room.tag_groups:
+#         tag_ids = [tag.id for tag in tag_group.tags]
+#         tag_group_map[tag_group.id] = tag_ids
+
+#     return tag_group_map
+
+
+# # 辅助函数：更新玩家答案顺序
+# async def update_player_answer_order(db: AsyncSession, room_id: str,
+#                                      song_id: int, round_index: int,
+#                                      answer_queue: list[str]):
+#     updated_count = 0
+#     for order, player_id_str in enumerate(answer_queue, 1):
+#         try:
+#             player_id = int(player_id_str)
+#             stmt = select(models.PlayerAnswer).where(
+#                 models.PlayerAnswer.room_id == room_id,
+#                 models.PlayerAnswer.song_id == song_id,
+#                 models.PlayerAnswer.round_index == round_index,
+#                 models.PlayerAnswer.user_id == player_id)
+#             result = await db.execute(stmt)
+#             answer = result.scalar_one_or_none()
+#             if answer:
+#                 answer.answer_order = order
+#                 updated_count += 1
+#         except ValueError:
+#             continue
+#     return updated_count
+
+
+# # 辅助函数：保存得分记录
+# async def save_score_record(db: AsyncSession, room_id: str, user_id: int,
+#                             round_index: int, score_delta: int):
+#     # 获取用户当前总分
+#     stmt = select(
+#         models.Score).where(models.Score.room_id == room_id,
+#                             models.Score.user_id == user_id).order_by(
+#                                 models.Score.created_at.desc())
+#     result = await db.execute(stmt)
+#     last_score = result.scalar_one_or_none()
+
+#     if last_score is None or last_score.total_score is None:
+#         total_score = score_delta
+#     else:
+#         total_score = last_score.total_score + score_delta
+
+#     # 创建新的得分记录
+#     score = models.Score(room_id=room_id,
+#                          user_id=user_id,
+#                          round_index=round_index,
+#                          score_delta=score_delta,
+#                          total_score=total_score)
+#     db.add(score)
