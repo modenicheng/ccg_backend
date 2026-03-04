@@ -27,6 +27,35 @@ async def on_connect(
     clients: ClientManager,
     room_id: str,
 ):
+    """
+    Handle client connection to a room.
+
+    This function is called when a client connects to a room. It performs the following operations:
+    1. Updates the player's online status in the room cache
+    2. Persists the online status to the database for the current session
+    3. Fetches the current room state with associated users, tag groups, and scores
+    4. Updates the room's player online status in cache
+    5. Retrieves the current playback state and answer queue for the room
+    6. Sends the room state to the connected client and broadcasts a player join message to other clients
+
+    Args:
+        session (AsyncSession): The async database session for executing queries and commits
+        cl (Client): The client object representing the connected user
+        clients (ClientManager): The client manager for broadcasting messages to multiple clients
+        room_id (str): The ID of the room the client is connecting to
+
+    Returns:
+        None
+
+    Raises:
+        Logs a warning if the room is not found in the database during connection
+
+    Note:
+        - The function ensures database persistence of online status within the current session,
+          as cl.user may be a cross-session object
+        - Uses asyncio.gather to concurrently send messages to avoid blocking subsequent code
+        - Excludes the connecting client from the broadcast join message
+    """
     player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
     player_item.online = True
     await room_cache.set_room_player(room_id, player_item)
@@ -84,6 +113,22 @@ async def on_disconnect(
     clients: ClientManager,
     room_id: str,
 ):
+    """
+    Handle client disconnection from a room.
+
+    Closes the websocket connection, updates player status to offline,
+    broadcasts a leave message to other clients in the room, and persists
+    the offline status to the database and cache.
+
+    Args:
+        session: AsyncSession for database operations.
+        cl: Client object representing the disconnected client.
+        clients: ClientManager instance managing all connected clients.
+        room_id: Unique identifier of the room the client is leaving.
+
+    Returns:
+        None
+    """
     try:
         await cl.ws.close(code=1000, reason="Client disconnected")
     except Exception:
@@ -91,6 +136,13 @@ async def on_disconnect(
 
     player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
     player_item.online = False
+
+    leave_message = RoomSchema.PlayerLeaveMessage(
+        data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
+    await clients.broadcast(room_id,
+                            leave_message.model_dump(),
+                            excluded_clients={cl})
+
     user = select(models.User).where(models.User.id == cl.user.id)
     result = await session.execute(user)
     user_obj = result.scalar_one_or_none()
@@ -98,7 +150,5 @@ async def on_disconnect(
         user_obj.online = False
         await session.commit()
     await room_cache.set_room_player(room_id, player_item)
-    cl.user.online = False  # 同步更新数据库在线状态
-    await room_cache.update_room_player_online_status(room_id, cl.user.id,
-                                                      False)
 
+    clients.pop(room_id, cl)
