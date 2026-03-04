@@ -1,12 +1,7 @@
 import asyncio
-from datetime import datetime, timezone
-import random
-
-from pydantic import ValidationError
 
 from sqlalchemy.orm import selectinload
 
-from cache.utils import room_manager
 from cache import room_cache
 import cache
 import cache.schemas
@@ -14,14 +9,10 @@ from client_manager import ClientManager
 from client_manager import Client
 from schemas.base_message import *
 from utils import get_logger
-from utils.enumerations import EventType, GameEventType, ErrorEventType
-from db.session import get_db, AsyncSessionLocal
 from db import models
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from schemas.ws_messages import room_schemas as RoomSchema
-from utils.ts import get_ts_ms
-from . import regist
 from schemas.ws_messages.judge_schemas import *
 from schemas.ws_messages.playback_schemas import *
 from schemas.ws_messages.room_schemas import *
@@ -107,7 +98,7 @@ async def on_disconnect(
         user_obj.online = False
         await session.commit()
     await room_cache.set_room_player(room_id, player_item)
-    cl.user.online = False  # 同步更新数据库在线状态（如果有这个字段的话）
+    cl.user.online = False  # 同步更新数据库在线状态
     await room_cache.update_room_player_online_status(room_id, cl.user.id,
                                                       False)
 

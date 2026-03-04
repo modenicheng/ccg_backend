@@ -53,226 +53,61 @@
 
 ---
 
+## 后端 RoomStateMachine 统一房间状态可行性评估
+
+**Session ID:** ses_34ec6534fffeW3to4qhZ63ewfG
+**Created:** 2026/3/3 09:04:32
+**Updated:** 2026/3/3 09:06:03
+
+### User
+
+做个调研，现在后端有必要抽象一个 RoomStateMachine 出来用于统一处理房间状态吗？（当然如果有这个状态机类，我们也会对应有一个hashmap来存roomid和这些实例的关系） 然后问题来了，如果是服务端以外下线，这个方法不利于状态恢复，如果直接用redis/db就不用这么麻烦
+
+### Agent
+
+**当前状态管理方式：**
+
+- 数据库 `Room.status` 存储持久状态
+- Redis 缓存 `RoomBaseStateCache` 存储实时状态（播放进度、玩家列表、答题队列等）
+- 状态转换逻辑分散在各 WebSocket 处理器（如 `round_events_3x.py:139` 直接修改 `room.status`）
+
+**抽象 RoomStateMachine 的利弊：**
+
+| 优点                                           | 缺点                                          |
+| ---------------------------------------------- | --------------------------------------------- |
+| 集中化状态转换逻辑，避免分散在各处理器         | 增加架构复杂度                                |
+| 统一校验状态转移合法性（如 WAITING → RUNNING） | 若状态机实例驻留内存，服务重启/扩展时状态丢失 |
+| 便于维护和测试，新增状态/转换更简单            | 每次操作需读写 Redis/DB，可能增加延迟         |
+
+**建议方案：**
+实现**无状态**的 `RoomStateMachine`，仅封装转换逻辑，不持有实例状态。所有状态持久化在 Redis/DB，状态机负责：
+1. 验证当前状态是否允许转移到目标状态
+2. 原子化更新数据库 `Room.status` 和 Redis `RoomBaseStateCache`
+3. 触发相关副作用（如广播状态变更事件）
+
+**示例设计：**
+```python
+class RoomStateMachine:
+    async def transition(self, room_id: str, target: RoomStatus, session: AsyncSession) -> bool:
+        # 1. 从 DB 加载当前状态
+        # 2. 校验转移规则（如 WAITING → RUNNING 允许，RUNNING → WAITING 禁止）
+        # 3. 更新 DB
+        # 4. 更新 Redis 缓存（通过 room_cache.save_room_state）
+        # 5. 返回成功/失败
+```
+
+**结论：**
+- **推荐**实现无状态状态机，统一转换逻辑，保持可恢复性。
+- **避免**内存驻留实例，直接依赖 Redis/DB 作为状态源。
+- 现有代码中状态转换较分散，抽象后可提升可维护性，且不影响水平扩展。
+
+---
+
 ## 一、核心重构：房间状态管理类
 
 ### 目标
 抽象一个 `RoomStateManager` 类，统一管理房间状态（DB + Cache），作为核心状态机。
 
-### 设计
-
-```python
-# cache/room_state_manager.py
-
-class RoomStateManager:
-    """房间状态管理器 - 核心状态机
-    
-    统一管理：
-    - 数据库状态（SQLAlchemy）
-    - 缓存状态（Redis）
-    - WebSocket 广播
-    """
-    
-    def __init__(self, room_id: str, session: AsyncSession, clients: ClientManager):
-        self.room_id = room_id
-        self.session = session
-        self.clients = clients
-        self._room: Room | None = None
-    
-    # ========== 状态查询 ==========
-    async def get_room(self) -> Room:
-        """获取房间数据库对象（带缓存）"""
-        if self._room is None:
-            self._room = (await self.session.execute(
-                select(Room).where(Room.id == self.room_id)
-            )).scalar_one_or_none()
-        return self._room
-    
-    async def get_current_song_index(self) -> int:
-        """获取当前歌曲索引"""
-        return await room_manager.get_current_song_index(self.room_id)
-    
-    async def get_total_songs(self) -> int:
-        """获取房间歌曲总数"""
-        result = await self.session.execute(
-            select(func.count()).where(RoomSong.room_id == self.room_id)
-        )
-        return result.scalar()
-    
-    # ========== 状态变更 ==========
-    async def start_game(self) -> bool:
-        """开始游戏"""
-        room = await self.get_room()
-        if room.status != RoomStatusORM.WAITING:
-            return False
-        
-        room.status = RoomStatusORM.RUNNING
-        await self.session.commit()
-        
-        # 广播 GAME_START
-        await self.broadcast_event(GameEventType.GAME_START, {})
-        return True
-    
-    async def end_round(self) -> dict:
-        """结束当前回合
-        
-        Returns:
-            {"action": "next_round" | "game_over", "data": {...}}
-        """
-        current_index = await self.get_current_song_index()
-        total = await self.get_total_songs()
-        
-        # 清空抢答队列
-        await self.clear_answer_queue()
-        
-        # 广播 ROUND_END
-        await self.broadcast_event(GameEventType.ROUND_END, {
-            "next_round_index": current_index + 1 if current_index < total - 1 else current_index
-        })
-        
-        # 检查是否是最后一首
-        if current_index >= total - 1:
-            # 游戏结束
-            await self.end_game()
-            return {"action": "game_over"}
-        
-        return {"action": "next_round"}
-    
-    async def end_game(self) -> None:
-        """结束游戏"""
-        room = await self.get_room()
-        room.status = RoomStatusORM.ENDED
-        
-        # 计算最终分数
-        final_scores = await self._calculate_final_scores()
-        
-        # 广播 GAME_OVER
-        await self.broadcast_event(GameEventType.GAME_OVER, {
-            "final_scores": final_scores
-        })
-        
-        await self.session.commit()
-    
-    async def clear_answer_queue(self) -> None:
-        """清空抢答队列"""
-        await room_cache.clear_answer_queue(self.room_id)
-        await self.broadcast_event(GameEventType.CLEAR_ANSWER_QUEUE, {})
-    
-    async def set_start_position(self, position_percent: int) -> None:
-        """设置起始位置"""
-        await room_cache.set_room_start_position(self.room_id, position_percent)
-        await self.broadcast_event(GameEventType.START_POS_UPDATE, {
-            "start_position_percent": position_percent
-        })
-    
-    async def preload_next_song(self) -> dict | None:
-        """预加载下一首歌曲
-        
-        与现有 mq/tasks.py 对接，避免重复实现下载逻辑
-        
-        Returns:
-            {"audio_url": str} | None
-        """
-        current_index = await self.get_current_song_index()
-        total = await self.get_total_songs()
-        
-        if current_index >= total - 1:
-            return None  # 没有下一首
-        
-        # 获取下一首歌曲
-        next_song = (await self.session.execute(
-            select(RoomSong, Song)
-            .join(Song, RoomSong.song_id == Song.id)
-            .where(RoomSong.room_id == self.room_id)
-            .where(RoomSong.song_order == current_index + 1)
-        )).first()
-        
-        if not next_song:
-            return None
-        
-        room_song, song = next_song
-        
-        # 检查是否已缓存
-        if song.cached_path:
-            audio_url = f"/api/songs/cache/{song.id}"
-        else:
-            # 触发异步下载任务（复用 mq/tasks.py）
-            from mq.tasks import download_and_cache_song
-            download_and_cache_song(song.mid)
-            # 返回临时 URL 或 None
-            audio_url = None
-        
-        if audio_url:
-            # 广播 PRELOAD_AUDIO
-            await self.broadcast_event(GameEventType.PRELOAD_AUDIO, {
-                "audio_url": audio_url,
-                "progress_ms": 0,
-                "offset_ts": get_ts_ms()
-            })
-            return {"audio_url": audio_url}
-        
-        return None
-    
-    # ========== 辅助方法 ==========
-    async def _calculate_final_scores(self) -> list[dict]:
-        """计算最终分数排名"""
-        scores = (await self.session.execute(
-            select(ScoreRecord).where(ScoreRecord.room_id == self.room_id)
-        )).scalars().all()
-        
-        players = (await self.session.execute(
-            select(User).where(User.room_id == self.room_id)
-        )).scalars().all()
-        
-        player_scores = {}
-        for score in scores:
-            player_scores[score.user_id] = player_scores.get(score.user_id, 0) + score.score
-        
-        final_scores = [
-            {
-                "player_id": player.id,
-                "username": player.username,
-                "score": player_scores.get(player.id, 0)
-            }
-            for player in players
-        ]
-        
-        final_scores.sort(key=lambda x: x["score"], reverse=True)
-        return final_scores
-    
-    async def broadcast_event(self, event_type: GameEventType, data: dict) -> None:
-        """广播事件给所有客户端"""
-        message = {
-            "event": event_type.value,
-            "ts": get_ts_ms(),
-            "data": data
-        }
-        await self.clients.broadcast(self.room_id, message)
-```
-
-### 使用示例
-
-```python
-# handlers/round_events_3x.py
-
-@regist(GameEventType.ROUND_END, data_validator=RoundEndMessage)
-async def handle_round_end(
-    data: RoundEndMessage,
-    clients: ClientManager,
-    client: Client,
-    room_id: str,
-) -> None:
-    if not client.user.is_owner:
-        await client.send_error(...)
-        return
-    
-    async with AsyncSessionLocal() as session:
-        manager = RoomStateManager(room_id, session, clients)
-        result = await manager.end_round()
-        
-        if result["action"] == "next_round":
-            # 可以在这里触发预加载
-            await manager.preload_next_song()
-```
 
 ---
 

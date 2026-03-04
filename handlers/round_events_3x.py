@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 
 def calculate_player_scores(
     answer_queue: list[str],
-    player_answers: dict[str, dict[str, object]],
+    player_answers: dict[str, dict[str, list]],
     tag_group_map: dict[int, list[int]],
     correct_tags: list[int],
     correct_description_ids: list[int],
@@ -118,7 +118,7 @@ async def handle_game_start(
     logger.info(
         "Handling game start event for room %s", room_id)
 
-    async with AsyncSessionLocal() as session:
+    async with session_scope() as session:
         room = (await session.execute(
             select(models.Room).where(models.Room.id == room_id)
         )).scalar_one_or_none()

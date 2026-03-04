@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from time import time
+from schemas.base_message import MessageBase
 from utils.enumerations import RoomStatus, GameEventType
 
 
@@ -75,6 +76,8 @@ class ClientRoomState(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# This is the "full" room state that includes all details, used for debugging or when a client needs the complete state. The ClientRoomState is what is typically sent to clients, and it can be extended with additional fields if needed without affecting the core structure.
+# 所以这个模型用于服务端自身状态维护，这东西不要发给客户端
 class FullRoomState(ClientRoomState):
     song_queue: list[int] = Field(default_factory=list)
 
@@ -95,13 +98,14 @@ class PlayerJoinMessage(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PlayerLeaveMessage(MessageBase):
+    event: Literal[16] = GameEventType.PLAYER_LEAVE.value
+    data: RoomStatePlayerItem
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class KickUserMessage(BaseModel):
     event: Literal[15] = GameEventType.KICK_USER.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: dict
-
-
-class PlayerLeaveMessage(BaseModel):
-    event: Literal[16] = GameEventType.PLAYER_LEAVE.value
-    ts: int = Field(default_factory=lambda: int(time() * 1000))
-    data: RoomStatePlayerItem

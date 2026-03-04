@@ -78,9 +78,9 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
+            # await session.commit()
         except Exception:
-            await session.rollback()
+            # await session.rollback()
             raise
 
 
@@ -90,9 +90,9 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
+            # await session.commit()
         except Exception:
-            await session.rollback()
+            # await session.rollback()
             raise
 
 

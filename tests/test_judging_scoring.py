@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 from handlers.round_events_3x import calculate_player_scores
+
+
+class PlayerAnswerData(TypedDict):
+    selected_tag_ids: list[int]
+    description_text: str | None
 
 
 def test_calculate_player_scores_basic_tag_matching():
     """Test basic tag group matching"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': "desc1",
@@ -39,7 +46,7 @@ def test_calculate_player_scores_basic_tag_matching():
 def test_calculate_player_scores_multiple_groups():
     """Test scoring with multiple tag groups"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 103],
             'description_text': None,
@@ -77,7 +84,7 @@ def test_calculate_player_scores_multiple_groups():
 def test_calculate_player_scores_exact_group_match():
     """Test exact group matching"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': None,
@@ -110,7 +117,7 @@ def test_calculate_player_scores_exact_group_match():
 def test_calculate_player_scores_description_points():
     """Test description scoring"""
     answer_queue = ["1001", "1002", "1003"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [],
             'description_text': "desc1",
@@ -145,7 +152,7 @@ def test_calculate_player_scores_description_points():
 def test_calculate_player_scores_combined_tag_and_description():
     """Test combined tag and description scoring"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': "desc1",
@@ -198,7 +205,7 @@ def test_calculate_player_scores_empty_queue():
 def test_calculate_player_scores_player_not_in_answers():
     """Test when player in queue but no answer data"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101],
             'description_text': "desc",
@@ -224,7 +231,7 @@ def test_calculate_player_scores_player_not_in_answers():
 def test_calculate_player_scores_multiple_correct_tags_same_group():
     """Test when multiple correct tags in same group - requires exact match"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101],  # Only one of the two correct tags
             'description_text': None,
@@ -256,7 +263,7 @@ def test_calculate_player_scores_multiple_correct_tags_same_group():
 def test_calculate_player_scores_only_one_tag_group_point_per_player():
     """Test that a player can only get at most 1 point from tag groups"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102, 103, 104],  # Matches both groups
             'description_text': None,
@@ -289,7 +296,7 @@ def test_calculate_player_scores_only_one_tag_group_point_per_player():
 def test_calculate_player_scores_extra_tags_outside_group():
     """Test player with extra tags outside correct group still gets point"""
     answer_queue = ["1001"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102, 999],  # Extra tag 999 not in group
             'description_text': None,
@@ -315,7 +322,7 @@ def test_calculate_player_scores_extra_tags_outside_group():
 def test_calculate_player_scores_tags_already_awarded():
     """Test that tags already awarded to earlier player are removed from consideration"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': None,
@@ -346,7 +353,7 @@ def test_calculate_player_scores_tags_already_awarded():
 def test_calculate_player_scores_empty_correct_tags():
     """Test when correct_tags is empty (no tag points awarded)"""
     answer_queue = ["1001"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': None,
@@ -372,7 +379,7 @@ def test_calculate_player_scores_empty_correct_tags():
 def test_calculate_player_scores_empty_tag_group_map():
     """Test when tag_group_map is empty (no tag groups to match)"""
     answer_queue = ["1001"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': None,
@@ -396,7 +403,7 @@ def test_calculate_player_scores_empty_tag_group_map():
 def test_calculate_player_scores_player_without_selected_tags():
     """Test player with empty selected_tag_ids list"""
     answer_queue = ["1001"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [],  # No tags selected
             'description_text': None,
@@ -422,7 +429,7 @@ def test_calculate_player_scores_player_without_selected_tags():
 def test_calculate_player_scores_description_only_first_in_queue():
     """Test that only first player in queue with correct description gets point"""
     answer_queue = ["1001", "1002", "1003"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [],
             'description_text': "desc1",
@@ -458,7 +465,7 @@ def test_calculate_player_scores_description_only_first_in_queue():
 def test_calculate_player_scores_overlapping_tag_groups():
     """Test scoring when tags appear in multiple groups (overlapping)"""
     answer_queue = ["1001", "1002"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],  # Matches group 1
             'description_text': None,
@@ -494,7 +501,7 @@ def test_calculate_player_scores_overlapping_tag_groups():
 def test_calculate_player_scores_player_with_description_and_tags():
     """Test player can get both tag point and description point"""
     answer_queue = ["1001"]
-    player_answers = {
+    player_answers: dict[str, PlayerAnswerData] = {
         "1001": {
             'selected_tag_ids': [101, 102],
             'description_text': "desc1",
