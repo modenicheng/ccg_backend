@@ -18,7 +18,7 @@ class ErrorEventType(Enum):
 
 
 class GameEventType(Enum):
-    ROOM_CREATE = 10
+    # ROOM_CREATE = 10
     ROOM_JOIN = 11
     ROOM_STATE = 12
     GAME_OVER = 13
@@ -44,6 +44,8 @@ class GameEventType(Enum):
     JUDGING = 40
     JUDGE_SUBMIT = 41
     SCORE_UPDATE = 42
+    # We consider the skipping as a judging state event
+    SKIP_ROUND = 43
 
 
 class AudioEncoding(Enum):
