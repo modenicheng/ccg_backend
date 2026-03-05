@@ -13,7 +13,8 @@ from db import crud, models
 @pytest_asyncio.fixture
 async def session(tmp_path) -> AsyncIterator[AsyncSession]:
     db_path = tmp_path / "test_crud.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}", future=True)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}",
+                                 future=True)
 
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
@@ -34,7 +35,8 @@ async def session(tmp_path) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_songlist_updates_existing_row(session: AsyncSession) -> None:
+async def test_create_or_update_songlist_updates_existing_row(
+        session: AsyncSession) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -59,7 +61,8 @@ async def test_create_or_update_songlist_updates_existing_row(session: AsyncSess
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_song_existing_song_adds_songlist_link(session: AsyncSession) -> None:
+async def test_create_or_update_song_existing_song_adds_songlist_link(
+        session: AsyncSession) -> None:
     song = await crud.create_or_update_song(
         session,
         songlist_id=None,
@@ -86,7 +89,8 @@ async def test_create_or_update_song_existing_song_adds_songlist_link(session: A
     )
     await session.commit()
 
-    links = (await session.execute(select(models.SonglistSong))).scalars().all()
+    links = (await
+             session.execute(select(models.SonglistSong))).scalars().all()
 
     assert updated.id == song.id
     assert updated.title == "updated"
@@ -96,7 +100,8 @@ async def test_create_or_update_song_existing_song_adds_songlist_link(session: A
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_song_does_not_duplicate_songlist_link(session: AsyncSession) -> None:
+async def test_create_or_update_song_does_not_duplicate_songlist_link(
+        session: AsyncSession) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -123,7 +128,8 @@ async def test_create_or_update_song_does_not_duplicate_songlist_link(session: A
     )
     await session.commit()
 
-    links = (await session.execute(select(models.SonglistSong))).scalars().all()
+    links = (await
+             session.execute(select(models.SonglistSong))).scalars().all()
 
     assert song.id is not None
     assert len(links) == 1
@@ -132,7 +138,8 @@ async def test_create_or_update_song_does_not_duplicate_songlist_link(session: A
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> None:
+async def test_create_or_update_songs_bulk_upserts(
+        session: AsyncSession) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -145,8 +152,16 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
         session,
         songlist_id=songlist.id,
         songs=[
-            {"platform": "qq", "platform_song_id": "bulk-song-1", "title": "song-1"},
-            {"platform": "qq", "platform_song_id": "bulk-song-2", "title": "song-2"},
+            {
+                "platform": "qq",
+                "platform_song_id": "bulk-song-1",
+                "title": "song-1"
+            },
+            {
+                "platform": "qq",
+                "platform_song_id": "bulk-song-2",
+                "title": "song-2"
+            },
         ],
     )
     await session.commit()
@@ -157,14 +172,25 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
         session,
         songlist_id=songlist.id,
         songs=[
-            {"platform": "qq", "platform_song_id": "bulk-song-1", "title": "song-1-updated"},
-            {"platform": "qq", "platform_song_id": "bulk-song-3", "title": "song-3"},
+            {
+                "platform": "qq",
+                "platform_song_id": "bulk-song-1",
+                "title": "song-1-updated"
+            },
+            {
+                "platform": "qq",
+                "platform_song_id": "bulk-song-3",
+                "title": "song-3"
+            },
         ],
     )
     await session.commit()
 
-    songs = (await session.execute(select(models.Song).order_by(models.Song.platform_song_id))).scalars().all()
-    links = (await session.execute(select(models.SonglistSong))).scalars().all()
+    songs = (await session.execute(
+        select(models.Song).order_by(models.Song.platform_song_id)
+    )).scalars().all()
+    links = (await
+             session.execute(select(models.SonglistSong))).scalars().all()
 
     assert len(updated) == 2
     assert len(songs) == 3
@@ -174,7 +200,8 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_songs_accepts_qq_song_shape(session: AsyncSession) -> None:
+async def test_create_or_update_songs_accepts_qq_song_shape(
+        session: AsyncSession) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -186,14 +213,18 @@ async def test_create_or_update_songs_accepts_qq_song_shape(session: AsyncSessio
     songs = await crud.create_or_update_songs(
         session,
         songlist_id=songlist.id,
-        songs=[
-            {
-                "songmid": "qq-mid-1",
-                "songname": "qq-song",
-                "singer": [{"name": "A"}, {"name": "B"}],
-                "album": {"name": "album-1"},
-            }
-        ],
+        songs=[{
+            "songmid": "qq-mid-1",
+            "songname": "qq-song",
+            "singer": [{
+                "name": "A"
+            }, {
+                "name": "B"
+            }],
+            "album": {
+                "name": "album-1"
+            },
+        }],
     )
     await session.commit()
 
@@ -205,7 +236,8 @@ async def test_create_or_update_songs_accepts_qq_song_shape(session: AsyncSessio
 
 
 @pytest.mark.asyncio
-async def test_update_song_cached_path_only_updates_cache_field(session: AsyncSession) -> None:
+async def test_update_song_cached_path_only_updates_cache_field(
+        session: AsyncSession) -> None:
     created = await crud.create_or_update_song(
         session,
         songlist_id=None,

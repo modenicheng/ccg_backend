@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,7 +9,12 @@ from sqlalchemy.orm import selectinload, load_only
 from db.crud import create_task_record, get_task_record_by_task_id, count_songlist_songs
 from db.models import Songlist, SonglistSong, Tasks, Song
 from db.session import get_db
-from schemas.songlist import SonglistBase, SonglistListResponse, SonglistFromMidRequest, SonglistResponse
+from schemas.songlist import (
+    SonglistBase,
+    SonglistListResponse,
+    SonglistFromMidRequest,
+    SonglistResponse,
+)
 from schemas.song import SongResponse, TaskResponse
 
 from utils import get_logger
@@ -37,19 +43,21 @@ async def _build_task_response(session: AsyncSession,
 @songlist_router.get("/",
                      response_model=SonglistListResponse,
                      response_class=ORJSONResponse)
-async def songlist_list(offset: int = Query(default=0, ge=0),
-                        limit: int = Query(default=20, ge=1, le=100),
-                        kw: str | None = Query(default=None, max_length=100),
-                        session: AsyncSession = Depends(get_db)):
+async def songlist_list(
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=20, ge=1, le=100),
+        kw: str | None = Query(default=None, max_length=100),
+        session: AsyncSession = Depends(get_db),
+):
     # 子查询统计每个歌单的歌曲数量
-    song_count_subq = select(
-        func.count(SonglistSong.song_id).label('song_count')).where(
-            SonglistSong.songlist_id == Songlist.id).scalar_subquery()
+    song_count_subq = (select(
+        func.count(SonglistSong.song_id).label("song_count")).where(
+            SonglistSong.songlist_id == Songlist.id).scalar_subquery())
 
     # 主查询，不再加载歌曲关系
-    stmt = select(
+    stmt = (select(
         Songlist,
-        song_count_subq.label('song_count')).offset(offset).limit(limit)
+        song_count_subq.label("song_count")).offset(offset).limit(limit))
 
     if kw:
         stmt = stmt.where(Songlist.title.ilike(f"%{kw}%"))
@@ -70,8 +78,13 @@ async def songlist_list(offset: int = Query(default=0, ge=0),
         songlist, song_count = row
         songlists.append({"songlist": songlist, "song_count": song_count or 0})
 
-    logger.info("Fetched %d songlists (offset=%d, limit=%d, kw=%s)",
-                len(songlists), offset, limit, kw)
+    logger.info(
+        "Fetched %d songlists (offset=%d, limit=%d, kw=%s)",
+        len(songlists),
+        offset,
+        limit,
+        kw,
+    )
     return SonglistListResponse(
         total=total,
         list=[
@@ -81,8 +94,10 @@ async def songlist_list(offset: int = Query(default=0, ge=0),
                 cover_url=songlist["songlist"].cover_url,
                 platform=songlist["songlist"].platform,
                 platform_songlist_id=songlist["songlist"].platform_songlist_id,
-                count=songlist["song_count"]) for songlist in songlists
-        ])
+                count=songlist["song_count"],
+            ) for songlist in songlists
+        ],
+    )
 
 
 @songlist_router.post("/")
@@ -144,13 +159,20 @@ async def get_songlist_task_result(task_id: str,
 @songlist_router.get("/{songlist_id}", response_model=SonglistResponse)
 async def get_songlist_detail(songlist_id: int,
                               session: AsyncSession = Depends(get_db)):
-
     # 使用 load_only 限制加载的 Song 字段
     stmt = (select(Songlist).where(Songlist.id == songlist_id).options(
         selectinload(Songlist.songs).selectinload(SonglistSong.song).load_only(
-            Song.id, Song.title, Song.subtitle, Song.artist, Song.cover_url,
-            Song.cached_path, Song.platform, Song.platform_song_id,
-            Song.audio_url, Song.album_name, Song.album_id)))
+            Song.id,
+            Song.title,
+            Song.subtitle,
+            Song.artist,
+            Song.cover_url,
+            Song.cached_path,
+            Song.platform,
+            Song.platform_song_id,
+            Song.album_name,
+            Song.album_id,
+        )))
 
     songlist_result = await session.execute(stmt)
 
@@ -166,21 +188,25 @@ async def get_songlist_detail(songlist_id: int,
         for song_list_song in songlist.songs
     ]
 
-    return SonglistResponse(id=songlist.id,
-                            title=songlist.title,
-                            cover_url=songlist.cover_url,
-                            platform=songlist.platform,
-                            platform_songlist_id=songlist.platform_songlist_id,
-                            count=song_count,
-                            songs=song_responses)
+    return SonglistResponse(
+        id=songlist.id,
+        title=songlist.title,
+        cover_url=songlist.cover_url,
+        platform=songlist.platform,
+        platform_songlist_id=songlist.platform_songlist_id,
+        count=song_count,
+        songs=song_responses,
+    )
 
 
 @songlist_router.put("/{songlist_id}",
                      response_model=SonglistResponse,
                      response_class=ORJSONResponse)
-async def update_songlist(songlist_id: int,
-                          songlist_data: SonglistBase,
-                          session: AsyncSession = Depends(get_db)):
+async def update_songlist(
+        songlist_id: int,
+        songlist_data: SonglistBase,
+        session: AsyncSession = Depends(get_db),
+):
     stmt = select(Songlist).where(Songlist.id == songlist_id)
     result = await session.execute(stmt)
     songlist = result.scalar_one_or_none()
@@ -196,7 +222,6 @@ async def update_songlist(songlist_id: int,
     # 重新加载歌曲关系
     await session.refresh(songlist, attribute_names=["songs"])
     songs = [song.song for song in songlist.songs]
-    from schemas.song import SongResponse
     # Convert SQLAlchemy Song objects to dictionaries to avoid async context issues
     song_responses = []
     for song in songs:
@@ -206,13 +231,15 @@ async def update_songlist(songlist_id: int,
         }
         song_responses.append(SongResponse.model_validate(song_dict))
 
-    return SonglistResponse(id=songlist.id,
-                            title=songlist.title,
-                            cover_url=songlist.cover_url,
-                            platform=songlist.platform,
-                            platform_songlist_id=songlist.platform_songlist_id,
-                            count=len(songs),
-                            songs=song_responses)
+    return SonglistResponse(
+        id=songlist.id,
+        title=songlist.title,
+        cover_url=songlist.cover_url,
+        platform=songlist.platform,
+        platform_songlist_id=songlist.platform_songlist_id,
+        count=len(songs),
+        songs=song_responses,
+    )
 
 
 @songlist_router.delete("/{songlist_id}")

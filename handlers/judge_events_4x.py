@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Standard library imports
 import random
 
@@ -7,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any
+
 # Local imports
 from client_manager import ClientManager, Client
 from db.session import session_scope
@@ -23,14 +26,20 @@ from utils import get_logger
 from utils.enumerations import GameEventType, EventType, ErrorEventType
 from . import regist
 from cache import room_cache
-from schemas.ws_messages.judge_schemas import *
-from schemas.ws_messages.playback_schemas import *
-from schemas.ws_messages.room_schemas import *
-from schemas.ws_messages.round_event_schemas import *
+from schemas.ws_messages.judge_schemas import (
+    JudgingData,
+    JudgingMessage,
+    JudgeSubmitMessage,
+    ScoreEntry,
+    ScoreUpdateData,
+    ScoreUpdateMessage,
+    SongInfo,
+)
+from schemas.ws_messages.room_schemas import AnswerQueueItem
+from schemas.ws_messages.round_event_schemas import RoundEndMessage
 from utils.calculate import calculate_player_scores
 
 logger = get_logger(__name__)
-
 
 # @regist(GameEventType.SKIP_ROUND, SkipRoundMessage)
 # async def handle_skip_round(
@@ -58,10 +67,9 @@ logger = get_logger(__name__)
 #     await clients.broadcast(room_id, round_end_message.model_dump())
 
 
-
 @regist(GameEventType.JUDGING, JudgingMessage)
 async def handle_judging(data: JudgingMessage, clients: ClientManager,
-                         client: Client, room_id: str, **kwargs):
+                         client: Client, room_id: str, **kwargs) -> None:
     """处理进入判分环节事件"""
     try:
         async with session_scope() as db:
@@ -93,7 +101,8 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
             description_history_stmt = select(
                 models.SongDescriptionHistory.description_text).where(
                     models.SongDescriptionHistory.song_id == song_id,
-                    models.SongDescriptionHistory.is_correct == True)
+                    models.SongDescriptionHistory.is_correct == True,
+                )
             description_history_result = await db.execute(
                 description_history_stmt)
             reference_descriptions = [
@@ -113,12 +122,16 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
                 db, room_id, song_id, song_index)
 
             if not player_answers:
-                logger.warning("No player answers found for judging in room %s, song %s", room_id, song_id)
+                logger.warning(
+                    "No player answers found for judging in room %s, song %s",
+                    room_id,
+                    song_id,
+                )
 
             # 构建玩家描述列表
             player_descriptions = []
             for user_id, answer_data in player_answers.items():
-                if answer_data['description_text']:
+                if answer_data["description_text"]:
                     # 获取用户名
                     user_stmt = select(
                         models.User.username).where(models.User.id == user_id)
@@ -127,12 +140,12 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
                     ) or f"Player {user_id}"
 
                     player_descriptions.append({
-                        'id':
+                        "id":
                         user_id,
-                        'username':
+                        "username":
                         username,
-                        'description':
-                        answer_data['description_text']
+                        "description":
+                        answer_data["description_text"],
                     })
 
             # 构建歌曲信息
@@ -141,15 +154,17 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
                 artist=song.artist,
                 album=song.album_name,
                 cover_url=song.cover_url,
-                platform_url=song.metadata_json.get('platform_url')
-                if song.metadata_json else None)
+                platform_url=song.metadata_json.get("platform_url")
+                if song.metadata_json else None,
+            )
 
             # 构建JUDGING事件数据
             judging_data = JudgingData(
                 song=song_info,
                 history_tag_ids=history_tag_ids,
                 reference_descriptions=reference_descriptions,
-                player_descriptions=player_descriptions)
+                player_descriptions=player_descriptions,
+            )
 
             # 广播JUDGING事件给所有客户端
             judging_message = JudgingMessage(data=judging_data)
@@ -165,8 +180,13 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
 
 
 @regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessage)
-async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
-                              client: Client, room_id: str, **kwargs):
+async def handle_judge_submit(
+    data: JudgeSubmitMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs,
+) -> None:
     """处理房主提交正确答案事件"""
     # 验证房主身份
     if not client.user.is_owner:
@@ -204,7 +224,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                 # 检查是否已存在
                 existing_stmt = select(models.SongTagHistory).where(
                     models.SongTagHistory.song_id == song_id,
-                    models.SongTagHistory.tag_id == tag_id)
+                    models.SongTagHistory.tag_id == tag_id,
+                )
                 existing_result = await db.execute(existing_stmt)
                 existing = existing_result.scalar_one_or_none()
 
@@ -214,7 +235,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                         song_id=song_id,
                         tag_id=tag_id,
                         judged_by_user_id=client.user.id,
-                        room_id=room_id)
+                        room_id=room_id,
+                    )
                     db.add(tag_history)
 
             # 存储描述历史
@@ -224,7 +246,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                     models.PlayerAnswer.room_id == room_id,
                     models.PlayerAnswer.song_id == song_id,
                     models.PlayerAnswer.round_index == song_index,
-                    models.PlayerAnswer.user_id == description_id)
+                    models.PlayerAnswer.user_id == description_id,
+                )
                 answer_result = await db.execute(answer_stmt)
                 answer = answer_result.scalar_one_or_none()
 
@@ -235,7 +258,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                         description_text=answer.description_text,
                         is_correct=True,
                         judged_by_user_id=client.user.id,
-                        room_id=room_id)
+                        room_id=room_id,
+                    )
                     db.add(description_history)
 
             # 处理新的正确描述
@@ -246,7 +270,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                         description_text=description_text.strip(),
                         is_correct=True,
                         judged_by_user_id=client.user.id,
-                        room_id=room_id)
+                        room_id=room_id,
+                    )
                     db.add(description_history)
 
             # 获取房间玩家
@@ -263,23 +288,28 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
             ]  # 转换为玩家ID字符串列表
 
             if not answer_queue:
-                logger.warning("Empty answer queue for judging in room %s", room_id)
+                logger.warning("Empty answer queue for judging in room %s",
+                               room_id)
 
             # 从数据库获取玩家答案
             player_answers_raw = await get_player_answers_for_judging(
                 db, room_id, song_id, song_index)
 
             if not player_answers_raw:
-                logger.warning("No player answers found for judging in room %s, song %s", room_id, song_id)
+                logger.warning(
+                    "No player answers found for judging in room %s, song %s",
+                    room_id,
+                    song_id,
+                )
 
             # 转换格式以便与answer_queue匹配（answer_queue中的player_id是字符串）
             player_answers = {}
             for user_id_int, answer_data in player_answers_raw.items():
                 player_id_str = str(user_id_int)
                 player_answers[player_id_str] = {
-                    'selected_tag_ids': answer_data['selected_tag_ids'],
-                    'description_text': answer_data['description_text'],
-                    'answer_order': answer_data['answer_order']
+                    "selected_tag_ids": answer_data["selected_tag_ids"],
+                    "description_text": answer_data["description_text"],
+                    "answer_order": answer_data["answer_order"],
                 }
 
             # 获取标签组映射
@@ -295,8 +325,8 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
             )
             # 确保所有房间玩家都有得分记录（即使为0）
             for player in players:
-                if player['id'] not in player_scores:
-                    player_scores[player['id']] = 0
+                if player["id"] not in player_scores:
+                    player_scores[player["id"]] = 0
 
             # 更新数据库中的抢答顺序（answer_order）
             updated_count = await update_player_answer_order(
@@ -315,7 +345,6 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
                         logger.error("Failed to save score for player %s: %s",
                                      player_id_str, e)
 
-            await db.commit()
             logger.info("Saved scoring results to database for room %s",
                         room_id)
 
@@ -331,12 +360,14 @@ async def handle_judge_submit(data: JudgeSubmitMessage, clients: ClientManager,
 
     # 构建得分更新消息
     score_entries = [
-        ScoreEntry(player_id=player_id,
-                   username=next((p['username']
-                                  for p in players if p['id'] == player_id),
-                                 f"Player {player_id}"),
-                   score=player_scores.get(player_id, 0))
-        for player_id in player_scores
+        ScoreEntry(
+            player_id=player_id,
+            username=next(
+                (p["username"] for p in players if p["id"] == player_id),
+                f"Player {player_id}",
+            ),
+            score=player_scores.get(player_id, 0),
+        ) for player_id in player_scores
     ]
 
     score_update_data = ScoreUpdateData(scores=score_entries)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 
 def calculate_player_scores(
     answer_queue: list[str],
@@ -70,4 +72,3 @@ def calculate_player_scores(
                 break
 
     return player_scores
-

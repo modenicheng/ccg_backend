@@ -1,3 +1,4 @@
+from __future__ import annotations
 import pytest
 import random
 from cache.schemas import PlaybackState
@@ -11,8 +12,8 @@ from rich import print
 
 def random_string(length: int = 8, prefix: str = "") -> str:
     """生成随机字符串"""
-    letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-    return prefix + ''.join(random.choice(letters) for _ in range(length))
+    letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    return prefix + "".join(random.choice(letters) for _ in range(length))
 
 
 @pytest.mark.asyncio
@@ -21,12 +22,16 @@ async def test_handle_play():
     data = playback_schemas.PlayMessage(data=playback_schemas.PlayControlData(
         progress_ms=5000,
         offset_ts=1234567890,
-        audio_url="https://example.com/audio.mp3"))
+        audio_url="https://example.com/audio.mp3",
+    ))
     state = PlaybackState.model_validate(data.data)
-    await asyncio.gather(
+    results = await asyncio.gather(
         set_room_playback_state(room_id, state),
         return_exceptions=True,
     )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error in test_handle_play: {r}")
     print(state, data)
 
 
@@ -36,12 +41,16 @@ async def test_handle_pause():
     data = playback_schemas.PauseMessage(data=playback_schemas.PlayControlData(
         progress_ms=5000,
         offset_ts=1234567890,
-        audio_url="https://example.com/audio.mp3"))
+        audio_url="https://example.com/audio.mp3",
+    ))
     state = PlaybackState.model_validate(data.data)
-    await asyncio.gather(
+    results = await asyncio.gather(
         set_room_playback_state(room_id, state),
         return_exceptions=True,
     )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error in test_handle_pause: {r}")
     print(state, data)
 
 
@@ -51,21 +60,29 @@ async def test_handle_seek():
     data = playback_schemas.SeekMessage(data=playback_schemas.PlayControlData(
         progress_ms=5000,
         offset_ts=1234567890,
-        audio_url="https://example.com/audio.mp3"))
+        audio_url="https://example.com/audio.mp3",
+    ))
     state = PlaybackState.model_validate(data.data)
-    await asyncio.gather(
+    results = await asyncio.gather(
         set_room_playback_state(room_id, state),
         return_exceptions=True,
     )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error in test_handle_seek (first gather): {r}")
     print(state, data)
     assert state.play_state
     data = playback_schemas.SeekMessage(data=playback_schemas.PlayControlData(
         progress_ms=5000,
         offset_ts=1234567890,
-        audio_url="https://example.com/audio.mp3"))
+        audio_url="https://example.com/audio.mp3",
+    ))
     state = PlaybackState.model_validate(data.data)
-    await asyncio.gather(
+    results = await asyncio.gather(
         set_room_playback_state(room_id, state),
         return_exceptions=True,
     )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Error in test_handle_seek (second gather): {r}")
     print(state, data)

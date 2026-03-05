@@ -1,3 +1,4 @@
+from __future__ import annotations
 from enum import Enum
 
 
@@ -47,11 +48,12 @@ class GameEventType(Enum):
     # We consider the skipping as a judging state event
     SKIP_ROUND = 43
     SHOW_ANSWER = 44
-    
+
     # 全量的玩家答案，用于房间内所有客户端的同步显示与断线重连恢复
     PLAYER_ANSWER = 50
     PLAYER_SELECTION_UPDATE = 51  # 用于玩家选择的增量更新，减少网络传输
     PLAYER_DESCRIPTION_UPDATE = 52  # 用于玩家描述的增量更新，减少网络传输
+
 
 class AudioEncoding(Enum):
     UNKNOWN = 0

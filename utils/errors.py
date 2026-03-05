@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class ParseError(Exception):
     """Base class for parsing errors."""
     pass

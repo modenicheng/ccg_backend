@@ -1,3 +1,4 @@
+from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 
 from db.models import Room, User, TagGroup, RoomStatusORM
@@ -5,13 +6,18 @@ from schemas.room import JoinRoomRequest, JoinRoomResponse
 from schemas.user import UserLogin, BaseUser
 from schemas.tag import TagGroupResponse
 from utils import get_logger
-from schemas import CreateRoomResponse, PatchRoomRequest, RoomInfoResponse, CreateRoomRequest
+from schemas import (
+    CreateRoomResponse,
+    PatchRoomRequest,
+    RoomInfoResponse,
+    CreateRoomRequest,
+)
 
 from fastapi import APIRouter, HTTPException, Depends
 import secrets
 import string
-from cache.connection import redis_client
-from cache.utils import room_manager
+from cache.connection import get_redis
+from cache import room_cache
 from uuid import uuid4
 from db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,8 +64,9 @@ async def create_room(
     new_room = Room(id=room_id, title=info.title, users=[owner])
     session.add(new_room)
 
-    redis = await redis_client.get_client()
-    if not redis:
+    try:
+        redis = await get_redis()
+    except RuntimeError:
         raise HTTPException(status_code=503, detail="Redis unavailable")
     await session.commit()
 
@@ -131,7 +138,7 @@ async def room_setting(
         raise HTTPException(status_code=404, detail="Room not found")
 
     if payload.song_queue is not None:
-        await room_manager.set_song_queue(roomid, payload.song_queue)
+        await room_cache.set_room_song_queue(roomid, payload.song_queue)
 
     if payload.title is not None:
         room.title = payload.title
@@ -153,7 +160,8 @@ async def room_setting(
             if missing_ids:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Tag groups with IDs {missing_ids} not found")
+                    detail=f"Tag groups with IDs {missing_ids} not found",
+                )
             room.tag_groups = found_groups
         else:
             room.tag_groups = []
@@ -165,6 +173,3 @@ async def room_setting(
     if not refreshed_room:
         raise HTTPException(status_code=404, detail="Room not found")
     return _to_room_info_response(refreshed_room)
-
-
-

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
@@ -10,7 +11,12 @@ import threading
 
 import qqmusic_api as qapi
 
-from db.crud import create_or_update_songlist, create_or_update_songs, update_song_cached_path, create_task_record
+from db.crud import (
+    create_or_update_songlist,
+    create_or_update_songs,
+    update_song_cached_path,
+    create_task_record,
+)
 from db.session import AsyncSessionLocal, engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
@@ -23,7 +29,7 @@ load_dotenv()
 # from db.session import AsyncSessionLocal
 # from db.models import Song
 
-logger = logging.getLogger('huey')
+logger = logging.getLogger("huey")
 
 _ASYNC_LOOP_LOCK = threading.Lock()
 _ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
@@ -31,10 +37,9 @@ _ASYNC_LOOP_THREAD: threading.Thread | None = None
 
 REDIS_URI = os.getenv("CCG_REDIS_URL", "redis://localhost:6379/0").strip()
 
-huey = RedisHuey('ccg-backend', url=REDIS_URI)
+huey = RedisHuey("ccg-backend", url=REDIS_URI)
 
 from pydub import AudioSegment
-import asyncio
 
 SONGLIST_FETCH_CONCURRENCY = int(
     os.getenv("CCG_SONGLIST_FETCH_CONCURRENCY", "8"))
@@ -47,8 +52,8 @@ DOWNLOAD_BACKOFF_SECONDS = float(
 SONG_URL_RETRIES = int(os.getenv("CCG_SONG_URL_RETRIES", "3"))
 SONG_URL_BACKOFF_SECONDS = float(
     os.getenv("CCG_SONG_URL_BACKOFF_SECONDS", "0.4"))
-AUDIO_DOWNLOAD_DIR = os.getenv("CCG_AUDIO_DOWNLOAD_DIR",
-                               "assets/audio").strip() or "assets/audio"
+AUDIO_DOWNLOAD_DIR = (os.getenv("CCG_AUDIO_DOWNLOAD_DIR",
+                                "assets/audio").strip() or "assets/audio")
 QQ_MUSIC_COOKIE = os.getenv("CCG_QQ_MUSIC_COOKIE", "").strip()
 T = TypeVar("T")
 
@@ -78,11 +83,13 @@ def _to_jsonable(value: Any):
     return str(value)
 
 
-async def _persist_task_state(task_id: str,
-                              status: str,
-                              task_name: str,
-                              result: Any = None,
-                              error: str | None = None) -> None:
+async def _persist_task_state(
+    task_id: str,
+    status: str,
+    task_name: str,
+    result: Any = None,
+    error: str | None = None,
+) -> None:
     payload: dict[str, Any] = {}
     if result is not None:
         normalized = _to_jsonable(result)
@@ -138,9 +145,12 @@ def _run_async(coro: Coroutine[Any, Any, T]) -> T:
     return future.result()
 
 
-async def _with_retry(operation_name: str,
-                      task_factory: Callable[[], Awaitable[T]], retries: int,
-                      backoff_seconds: float) -> T:
+async def _with_retry(
+    operation_name: str,
+    task_factory: Callable[[], Awaitable[T]],
+    retries: int,
+    backoff_seconds: float,
+) -> T:
     last_error: Exception | None = None
     for attempt in range(1, max(1, retries) + 1):
         try:
@@ -174,8 +184,8 @@ def _resolve_audio_download_path(mid: str,
     project_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), ".."))
     configured_dir = AUDIO_DOWNLOAD_DIR.strip().lstrip("/\\")
-    target_dir = AUDIO_DOWNLOAD_DIR if os.path.isabs(
-        AUDIO_DOWNLOAD_DIR) else os.path.join(project_root, configured_dir)
+    target_dir = (AUDIO_DOWNLOAD_DIR if os.path.isabs(AUDIO_DOWNLOAD_DIR) else
+                  os.path.join(project_root, configured_dir))
     os.makedirs(target_dir, exist_ok=True)
 
     return os.path.join(target_dir, f"{safe_mid}{ext}")
@@ -197,20 +207,20 @@ else:
 
 
 @huey.task()
-def convert_to_opus(input_path, output_path=None, bitrate='128k'):
+def convert_to_opus(input_path, output_path=None, bitrate="128k"):
     """
     使用 pydub 转换音频到 Opus。
     """
     # 小丑了，qq 提供 opus 192k ，那我还转个 damn
     if not output_path:
         base, _ = os.path.splitext(input_path)
-        output_path = base + '.opus'
+        output_path = base + ".opus"
 
     # 加载音频（pydub 自动根据扩展名选择格式）
     audio: AudioSegment = AudioSegment.from_file(input_path)
 
     # 导出为 Opus
-    audio.export(output_path, format='opus', bitrate=bitrate)
+    audio.export(output_path, format="opus", bitrate=bitrate)
     logger.info(f"Audio converted to opus: {output_path}")
     return output_path
 
@@ -228,8 +238,8 @@ async def _download_audio_file_impl(url,
     下载音频文件并保存到指定路径。
     """
     try:
-        target_mid = mid or os.path.splitext(
-            os.path.basename(urlparse(url).path))[0] or "unknown"
+        target_mid = (mid or os.path.splitext(
+            os.path.basename(urlparse(url).path))[0] or "unknown")
         final_save_path = _resolve_audio_download_path(target_mid, url,
                                                        save_path)
 
@@ -241,7 +251,7 @@ async def _download_audio_file_impl(url,
                 backoff_seconds=DOWNLOAD_BACKOFF_SECONDS,
             )
         response.raise_for_status()
-        with open(final_save_path, 'wb') as f:
+        with open(final_save_path, "wb") as f:
             f.write(response.content)
         logger.info(f"Audio downloaded successfully: {final_save_path}")
         return final_save_path
@@ -291,8 +301,8 @@ def download_and_cache_song(mid: str, save_path: str | None = None):
     Returns:
         _type_: _description_
     """
-    return _run_async(_download_and_cache_song_impl(mid=mid,
-                                                    save_path=save_path))
+    return _run_async(
+        _download_and_cache_song_impl(mid=mid, save_path=save_path))
 
 
 async def _download_and_cache_song_impl(mid: str,
@@ -355,24 +365,30 @@ def fetch_songlist(songlist_id: int,
         if task_id:
             if result is None:
                 _run_async(
-                    _persist_task_state(task_id=task_id,
-                                        task_name="fetch_songlist",
-                                        status="failed",
-                                        error="fetch_songlist returned no result"))
+                    _persist_task_state(
+                        task_id=task_id,
+                        task_name="fetch_songlist",
+                        status="failed",
+                        error="fetch_songlist returned no result",
+                    ))
             else:
                 _run_async(
-                    _persist_task_state(task_id=task_id,
-                                        task_name="fetch_songlist",
-                                        status="success",
-                                        result=result))
+                    _persist_task_state(
+                        task_id=task_id,
+                        task_name="fetch_songlist",
+                        status="success",
+                        result=result,
+                    ))
         return result
     except Exception as err:
         if task_id:
             _run_async(
-                _persist_task_state(task_id=task_id,
-                                    task_name="fetch_songlist",
-                                    status="failed",
-                                    error=str(err)))
+                _persist_task_state(
+                    task_id=task_id,
+                    task_name="fetch_songlist",
+                    status="failed",
+                    error=str(err),
+                ))
         raise
 
 
@@ -473,8 +489,8 @@ async def _fetch_songlist_impl(songlist_id: int,
                                 f"Failed to fetch page {page} of songlist {songlist_id} after {attempt} attempts: {page_err}"
                             )
                             raise
-                        sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (
-                            2**(attempt - 1))
+                        sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(
+                            attempt - 1))
                         logger.warning(
                             f"Fetch page {page} failed on attempt {attempt}/{SONGLIST_FETCH_RETRIES}, retrying in {sleep_seconds:.2f}s: {page_err}"
                         )
@@ -529,8 +545,8 @@ async def _fetch_songlist_impl(songlist_id: int,
                         f"DB operation hit asyncpg busy-connection error on attempt {attempt}/{db_retries}, disposing engine and retrying: {db_err}"
                     )
                     await engine.dispose()
-                    sleep_seconds = max(0.1,
-                                        SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
+                    sleep_seconds = max(
+                        0.1, SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
                     await asyncio.sleep(sleep_seconds)
 
         return None

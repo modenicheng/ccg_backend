@@ -1,3 +1,4 @@
+from __future__ import annotations
 import qqmusic_api as qapi
 import asyncio
 import json
@@ -45,6 +46,7 @@ qapi.get_session().credential = credential
 
 print(credential.refresh_key, credential.refresh_token)
 
+
 async def main():
     # result = await qapi.song.get_song_urls(
     #     ["0018bm1j1Yy4Mk"],
@@ -54,11 +56,11 @@ async def main():
     print(json.dumps(result, indent=2, ensure_ascii=False))
     # print(await credential.is_expired())
 
+
 async def get_song_url(mid: str):
     result = await qapi.song.get_song_urls(
-        [mid],
-        file_type=qapi.song.SongFileType.OGG_320,
-        credential=credential)
+        [mid], file_type=qapi.song.SongFileType.OGG_320, credential=credential)
     return result.get(mid)
+
 
 # asyncio.run(main())

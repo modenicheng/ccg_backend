@@ -1,10 +1,10 @@
+from __future__ import annotations
 from time import time
-from utils.enumerations import EventType
+from utils.enumerations import EventType, GameEventType
 from typing import Literal, Any, List, Dict
 from enum import Enum
 from pydantic import BaseModel, Field
 
-from utils.enumerations import GameEventType
 from utils.ts import get_ts_ms
 
 
@@ -25,7 +25,6 @@ class AutoEventConvertMixin(BaseModel):
         if isinstance(event, Enum):
             data["event"] = event.value
         return data
-
 
 
 class ErrorMessageData(AutoEventConvertMixin):

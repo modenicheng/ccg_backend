@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Test many-to-many relationships between Room and TagGroup."""
 import asyncio
 import sys
+from utils import get_logger
+
+logger = get_logger(__name__)
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select
-from db.models import Base, Room, TagGroup
+from db.models import Base, Room, TagGroup, TagGroupRoom
+
 
 async def main():
     # Use in-memory SQLite
@@ -27,29 +32,29 @@ async def main():
 
         # Query room's tag groups
         room_result = await session.get(Room, room.id)
-        print(f"Room tag groups: {room_result.tag_group}")
+        logger.info(f"Room tag groups: {room_result.tag_group}")
         assert len(room_result.tag_group) == 1
         assert room_result.tag_group[0].id == tag_group.id
 
         # Query tag group's rooms
         tag_group_result = await session.get(TagGroup, tag_group.id)
-        print(f"TagGroup rooms: {tag_group_result.rooms}")
+        logger.info(f"TagGroup rooms: {tag_group_result.rooms}")
         assert len(tag_group_result.rooms) == 1
         assert tag_group_result.rooms[0].id == room.id
 
         # Verify join table entries (optional)
-        from db.models import TagGroupRoom
         stmt = select(TagGroupRoom)
         result = await session.execute(stmt)
         joins = result.scalars().all()
-        print(f"Join table entries: {joins}")
+        logger.info(f"Join table entries: {joins}")
         assert len(joins) == 1
         assert joins[0].group_id == tag_group.id
         assert joins[0].room_id == room.id
 
-        print("All tests passed!")
+        logger.info("All tests passed!")
 
     await engine.dispose()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

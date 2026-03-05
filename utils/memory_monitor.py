@@ -1,13 +1,14 @@
 """
 内存监控模块，提供定时内存使用报告功能。
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import psutil
 import time
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, AsyncIterator
 from contextlib import asynccontextmanager
 
 from .logger import get_logger
@@ -26,7 +27,7 @@ class MemoryMonitor:
     ):
         """
         初始化内存监控器
-        
+
         Args:
             interval: 报告间隔时间（秒），默认60秒
             report_threshold_mb: 内存变化报告阈值（MB），默认100MB
@@ -79,11 +80,11 @@ class MemoryMonitor:
         lines.append(f"  VMS内存: {memory_info['vms_mb']:.2f} MB")
 
         if self.detailed_report:
-            if memory_info.get('shared_mb', 0) > 0:
+            if memory_info.get("shared_mb", 0) > 0:
                 lines.append(f"  共享内存: {memory_info['shared_mb']:.2f} MB")
-            if memory_info.get('text_mb', 0) > 0:
+            if memory_info.get("text_mb", 0) > 0:
                 lines.append(f"  代码段: {memory_info['text_mb']:.2f} MB")
-            if memory_info.get('data_mb', 0) > 0:
+            if memory_info.get("data_mb", 0) > 0:
                 lines.append(f"  数据段: {memory_info['data_mb']:.2f} MB")
 
         # 系统内存信息
@@ -97,14 +98,14 @@ class MemoryMonitor:
         lines.append("=" * 50)
         return "\n".join(lines)
 
-    async def _monitor_loop(self):
+    async def _monitor_loop(self) -> None:
         """监控循环"""
         logger.info(f"内存监控器已启动，报告间隔: {self.interval}秒")
 
         while self._running:
             try:
                 memory_info = self._get_memory_info()
-                current_rss = memory_info['rss_mb']
+                current_rss = memory_info["rss_mb"]
 
                 # 检查是否需要报告（首次报告或变化超过阈值）
                 should_report = False
@@ -133,7 +134,7 @@ class MemoryMonitor:
                 logger.error(f"内存监控出错: {e}")
                 await asyncio.sleep(self.interval)  # 出错后继续等待
 
-    async def start(self):
+    async def start(self) -> None:
         """启动内存监控"""
         if self._running:
             logger.warning("内存监控器已经在运行")
@@ -143,7 +144,7 @@ class MemoryMonitor:
         self._task = asyncio.create_task(self._monitor_loop())
         logger.info("内存监控器启动成功")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """停止内存监控"""
         if not self._running:
             logger.warning("内存监控器未在运行")
@@ -161,7 +162,7 @@ class MemoryMonitor:
         logger.info("内存监控器已停止")
 
     @asynccontextmanager
-    async def monitor_context(self):
+    async def monitor_context(self) -> AsyncIterator[None]:
         """上下文管理器，用于在代码块中临时监控内存"""
         await self.start()
         try:
@@ -177,12 +178,12 @@ async def start_memory_monitoring(
 ) -> MemoryMonitor:
     """
     启动内存监控的便捷函数
-    
+
     Args:
         interval: 报告间隔时间（秒）
         report_threshold_mb: 内存变化报告阈值（MB）
         detailed_report: 是否输出详细报告
-    
+
     Returns:
         MemoryMonitor: 内存监控器实例
     """
@@ -202,7 +203,7 @@ async def periodic_memory_report(
 ) -> None:
     """
     简单的定时内存报告函数
-    
+
     Args:
         interval: 报告间隔（秒）
         detailed: 是否输出详细报告

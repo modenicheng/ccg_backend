@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 def parse_cookie_string(cookie_str: str) -> dict[str, str]:
     cookies: dict[str, str] = {}
     for item in cookie_str.split(";"):

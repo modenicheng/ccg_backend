@@ -18,6 +18,7 @@ log_level_map = {
     "NOTSET": logging.NOTSET,
 }
 
+
 def init_logging(
     *,
     level: int = logging.INFO,

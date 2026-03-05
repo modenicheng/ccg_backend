@@ -1,12 +1,11 @@
+from __future__ import annotations
 import orjson
 from datetime import datetime, timezone
-from typing import Any, Optional, Self
+from typing import Any, Optional, Self, Literal
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
 from time import time
 from utils.enumerations import RoomStatus
 from schemas.ws_messages import room_schemas as RoomSchemas
-from pydantic import BaseModel, Field
 
 # 这个文件定义了所有的 Pydantic 模型，用于 Redis 数据的序列化和反序列化
 
@@ -41,11 +40,11 @@ class RedisModel(BaseModel):
     @classmethod
     def from_redis_hash(cls, data: dict[str, str]) -> Self:
         """
-            从 Redis Hash 返回的字典重建模型。
-            自动处理：
-            - 简单字符串 -> Pydantic 会根据字段类型自动转换（如 "1" -> 1, "0" -> False）
-            - JSON 字符串 -> 根据目标字段类型反序列化
-            """
+        从 Redis Hash 返回的字典重建模型。
+        自动处理：
+        - 简单字符串 -> Pydantic 会根据字段类型自动转换（如 "1" -> 1, "0" -> False）
+        - JSON 字符串 -> 根据目标字段类型反序列化
+        """
         parsed = {}
         for key, value_str in data.items():
             field_info = cls.model_fields.get(key)
@@ -53,7 +52,7 @@ class RedisModel(BaseModel):
                 continue  # 忽略未知字段
 
             # 如果字段类型是 list, dict 或另一个 BaseModel，尝试解析 JSON
-            if value_str and (value_str[0] in ('[', '{')):  # 简单启发式判断
+            if value_str and (value_str[0] in ("[", "{")):  # 简单启发式判断
                 try:
                     parsed[key] = orjson.loads(value_str)
                 except orjson.JSONDecodeError:
@@ -68,11 +67,13 @@ class RedisModel(BaseModel):
 
 class TaskResult(RedisModel):
     """Schema for representing the result of an asynchronous task."""
+
     task_id: str = Field(..., description="Unique identifier for the task")
     status: str = Field(
         ...,
         description=
-        "Current status of the task (e.g., 'pending', 'completed', 'failed')")
+        "Current status of the task (e.g., 'pending', 'completed', 'failed')",
+    )
     result: Optional[Any] = Field(
         default=None,
         description="Result of the task if completed successfully")

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .room_schemas import AnswerQueueItem
 
 from ..base_message import MessageBase
@@ -15,15 +16,18 @@ class GameStartMessage(MessageBase):
     event: Literal[31] = GameEventType.GAME_START.value
     data: GameStartData
 
+
 class RoundStartData(BaseModel):
     """回合开始数据"""
     round_index: int = Field(..., ge=0)
     audio_url: str | None = None
     start_pertent: float = Field(default=0.0, ge=0.0, le=1.0)
 
+
 class RoundStartMessage(MessageBase):
     event: Literal[32] = GameEventType.ROUND_START.value
     data: RoundStartData
+
 
 class RoundEndData(BaseModel):
     """回合结束数据"""

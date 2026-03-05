@@ -12,9 +12,12 @@ from db import crud, models
 
 
 @pytest_asyncio.fixture
-async def isolated_session_factory(tmp_path, monkeypatch) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+async def isolated_session_factory(
+        tmp_path,
+        monkeypatch) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     db_path = tmp_path / "test_session.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}", future=True)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}",
+                                 future=True)
 
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
@@ -35,57 +38,73 @@ async def isolated_session_factory(tmp_path, monkeypatch) -> AsyncIterator[async
 
 
 @pytest.mark.asyncio
-async def test_get_db_session_commits_on_success(isolated_session_factory) -> None:
+async def test_get_db_session_commits_on_success(
+        isolated_session_factory) -> None:
     gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db())
     session = await anext(gen)
 
-    session.add(models.Song(platform="qq", platform_song_id="commit-1", title="ok"))
+    session.add(
+        models.Song(platform="qq", platform_song_id="commit-1", title="ok"))
 
     with pytest.raises(StopAsyncIteration):
         await gen.asend(None)
 
     async with isolated_session_factory() as check_session:
-        songs = (await check_session.execute(select(models.Song))).scalars().all()
+        songs = (await
+                 check_session.execute(select(models.Song))).scalars().all()
 
     assert len(songs) == 1
     assert songs[0].platform_song_id == "commit-1"
 
 
 @pytest.mark.asyncio
-async def test_get_db_session_rolls_back_on_error(isolated_session_factory) -> None:
+async def test_get_db_session_rolls_back_on_error(
+        isolated_session_factory) -> None:
     gen = cast(AsyncGenerator[AsyncSession, None], session_module.get_db())
     session = await anext(gen)
 
-    session.add(models.Song(platform="qq", platform_song_id="rollback-1", title="nope"))
+    session.add(
+        models.Song(platform="qq", platform_song_id="rollback-1",
+                    title="nope"))
 
     with pytest.raises(RuntimeError, match="boom"):
         await gen.athrow(RuntimeError("boom"))
 
     async with isolated_session_factory() as check_session:
-        songs = (await check_session.execute(select(models.Song))).scalars().all()
+        songs = (await
+                 check_session.execute(select(models.Song))).scalars().all()
 
     assert songs == []
 
 
 @pytest.mark.asyncio
-async def test_session_scope_commits_and_rolls_back(isolated_session_factory) -> None:
+async def test_session_scope_commits_and_rolls_back(
+        isolated_session_factory) -> None:
     async with session_module.session_scope() as session:
-        session.add(models.Song(platform="qq", platform_song_id="scope-commit", title="ok"))
+        session.add(
+            models.Song(platform="qq",
+                        platform_song_id="scope-commit",
+                        title="ok"))
 
     with pytest.raises(ValueError, match="rollback"):
         async with session_module.session_scope() as session:
-            session.add(models.Song(platform="qq", platform_song_id="scope-rollback", title="bad"))
+            session.add(
+                models.Song(platform="qq",
+                            platform_song_id="scope-rollback",
+                            title="bad"))
             raise ValueError("rollback")
 
     async with isolated_session_factory() as check_session:
-        songs = (await check_session.execute(select(models.Song))).scalars().all()
+        songs = (await
+                 check_session.execute(select(models.Song))).scalars().all()
 
     assert len(songs) == 1
     assert songs[0].platform_song_id == "scope-commit"
 
 
 @pytest.mark.asyncio
-async def test_session_scope_with_crud_commits_atomically(isolated_session_factory) -> None:
+async def test_session_scope_with_crud_commits_atomically(
+        isolated_session_factory) -> None:
     async with session_module.session_scope() as session:
         songlist = await crud.create_or_update_songlist(
             session,
@@ -102,9 +121,12 @@ async def test_session_scope_with_crud_commits_atomically(isolated_session_facto
         )
 
     async with isolated_session_factory() as check_session:
-        songlists = (await check_session.execute(select(models.Songlist))).scalars().all()
-        songs = (await check_session.execute(select(models.Song))).scalars().all()
-        links = (await check_session.execute(select(models.SonglistSong))).scalars().all()
+        songlists = (await check_session.execute(select(models.Songlist)
+                                                 )).scalars().all()
+        songs = (await
+                 check_session.execute(select(models.Song))).scalars().all()
+        links = (await check_session.execute(select(models.SonglistSong)
+                                             )).scalars().all()
 
     assert len(songlists) == 1
     assert len(songs) == 1
@@ -114,7 +136,8 @@ async def test_session_scope_with_crud_commits_atomically(isolated_session_facto
 
 
 @pytest.mark.asyncio
-async def test_session_scope_with_crud_rolls_back_atomically(isolated_session_factory) -> None:
+async def test_session_scope_with_crud_rolls_back_atomically(
+        isolated_session_factory) -> None:
     with pytest.raises(RuntimeError, match="force rollback"):
         async with session_module.session_scope() as session:
             songlist = await crud.create_or_update_songlist(
@@ -133,9 +156,12 @@ async def test_session_scope_with_crud_rolls_back_atomically(isolated_session_fa
             raise RuntimeError("force rollback")
 
     async with isolated_session_factory() as check_session:
-        songlists = (await check_session.execute(select(models.Songlist))).scalars().all()
-        songs = (await check_session.execute(select(models.Song))).scalars().all()
-        links = (await check_session.execute(select(models.SonglistSong))).scalars().all()
+        songlists = (await check_session.execute(select(models.Songlist)
+                                                 )).scalars().all()
+        songs = (await
+                 check_session.execute(select(models.Song))).scalars().all()
+        links = (await check_session.execute(select(models.SonglistSong)
+                                             )).scalars().all()
 
     assert songlists == []
     assert songs == []

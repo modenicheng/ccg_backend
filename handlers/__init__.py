@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Any, Callable, TypeAlias, cast
 import inspect
 
@@ -12,22 +13,26 @@ _handlers: dict[str, tuple[Callable[..., Any], DataValidator]] = {}
 logger = get_logger(__name__)
 
 
-def regist(event: EventType | GameEventType,
-           data_validator: DataValidator = bytes):
+def regist(
+    event: EventType | GameEventType,
+    data_validator: DataValidator = bytes
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
-    def decorator(func: Callable[..., Any]):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         _handlers[event.name] = (func, data_validator)
         return func
 
     return decorator
 
 
-async def handle(event: EventType | GameEventType,
-                 data: bytes | dict | str,
-                 clients: ClientManager,
-                 client: Client,
-                 room_id: str | None = None,
-                 **kwargs):
+async def handle(
+    event: EventType | GameEventType,
+    data: bytes | dict | str,
+    clients: ClientManager,
+    client: Client,
+    room_id: str | None = None,
+    **kwargs,
+) -> Any:
     logger.debug("Handling event: %s with data type: %s", event.name,
                  type(data).__name__)
     if event.name in _handlers:
@@ -55,8 +60,7 @@ async def handle(event: EventType | GameEventType,
 
 
 # Import handler modules to trigger decorator registration.
-from . import heartbeats  # noqa: E402,F401
+from . import heartbeats, audio_events_2x, round_events_3x  # noqa: E402,F401
+
 # from . import game_events  # noqa: E402,F401
-from . import audio_events_2x  # noqa: E402,F401
-from . import round_events_3x  # noqa: E402,F401
 # from . import judge_events  # noqa: E402,F401

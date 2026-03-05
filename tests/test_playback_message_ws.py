@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import json
 import socket
@@ -13,7 +14,6 @@ from rich import print as rprint
 
 from cache.room_cache import delete_room_playback_state, get_room_playback_state
 from tests.ws_conn import create_join_and_connect_ws
-
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -49,7 +49,9 @@ async def _poll_playback_state(room_id: str, timeout: float = 3.0):
     return None
 
 
-async def _poll_playback_state_by_predicate(room_id: str, predicate, timeout: float = 3.0):
+async def _poll_playback_state_by_predicate(room_id: str,
+                                            predicate,
+                                            timeout: float = 3.0):
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         state = await get_room_playback_state(room_id)
@@ -137,9 +139,9 @@ async def test_play_message_updates_redis_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(
-        conn, payload, label="PLAY"
-    )
+    msg = await _send_message_and_receive_broadcast(conn,
+                                                    payload,
+                                                    label="PLAY")
 
     assert msg["event"] == 20
     assert msg["data"]["progress_ms"] == 4321
@@ -165,9 +167,9 @@ async def test_pause_message_updates_redis_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(
-        conn, payload, label="PAUSE"
-    )
+    msg = await _send_message_and_receive_broadcast(conn,
+                                                    payload,
+                                                    label="PAUSE")
 
     assert msg["event"] == 21
     assert msg["data"]["progress_ms"] == 9876
@@ -196,9 +198,9 @@ async def test_seek_message_updates_redis_progress_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(
-        conn, payload, label="SEEK"
-    )
+    msg = await _send_message_and_receive_broadcast(conn,
+                                                    payload,
+                                                    label="SEEK")
 
     assert msg["event"] == 22
     assert msg["data"]["progress_ms"] == 5555
@@ -218,9 +220,7 @@ async def test_playback_message_pipe_in_single_room(shared_conn):
     """pipe风格：同一个 room / 同一条 ws 连接里串行发 PLAY→PAUSE→SEEK。"""
     conn = shared_conn
 
-    sequence: list[
-        tuple[str, dict[str, Any], Callable[[Any], bool]]
-    ] = [
+    sequence: list[tuple[str, dict[str, Any], Callable[[Any], bool]]] = [
         (
             "PLAY_PIPE",
             {
@@ -260,7 +260,9 @@ async def test_playback_message_pipe_in_single_room(shared_conn):
     ]
 
     for label, payload, state_predicate in sequence:
-        msg = await _send_message_and_receive_broadcast(conn, payload, label=label)
+        msg = await _send_message_and_receive_broadcast(conn,
+                                                        payload,
+                                                        label=label)
         assert msg["event"] == payload["event"]
         assert msg["data"]["progress_ms"] == payload["data"]["progress_ms"]
 
@@ -270,4 +272,5 @@ async def test_playback_message_pipe_in_single_room(shared_conn):
             timeout=3.0,
         )
         assert state is not None, f"{label} did not update playback state as expected"
-        rprint(f"[bold magenta][{label}] PIPE REDIS STATE[/bold magenta]", state.model_dump())
+        rprint(f"[bold magenta][{label}] PIPE REDIS STATE[/bold magenta]",
+               state.model_dump())

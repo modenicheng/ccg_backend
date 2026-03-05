@@ -19,10 +19,13 @@ import dotenv
 
 dotenv.load_dotenv("../.env")
 
+
 async def run(songlist_id: int = 9519555384) -> None:
     has_cookie = bool(os.getenv("CCG_QQ_MUSIC_COOKIE", "").strip())
     if not has_cookie:
-        print("[WARN] CCG_QQ_MUSIC_COOKIE is empty; some songlists may return empty tracks")
+        print(
+            "[WARN] CCG_QQ_MUSIC_COOKIE is empty; some songlists may return empty tracks"
+        )
 
     print(f"[STEP 1] Fetching and persisting songlist: {songlist_id}")
     result = await _fetch_songlist_impl(songlist_id)
@@ -52,8 +55,7 @@ async def run(songlist_id: int = 9519555384) -> None:
             and_(
                 models.Song.platform == "qq",
                 models.Song.platform_song_id == mid,
-            )
-        )
+            ))
         song = (await session.execute(query)).scalars().first()
 
     if not song:

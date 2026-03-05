@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime
 from fastapi import WebSocket
 
@@ -13,7 +14,7 @@ logger = get_logger(__name__)
 async def handle_heartbeat(data: bytes,
                            clients: ClientManager,
                            client: Client,
-                           room_id: str | None = None):
+                           room_id: str | None = None) -> None:
     server_recv_ts = int(datetime.now().timestamp() * 1000)
     frame: HeartbeatFrame = HeartbeatFrame.load(data)
     logger.debug(
@@ -37,5 +38,10 @@ async def handle_heartbeat(data: bytes,
         await websocket.send_bytes(response.bin)
         return
 
-    logger.debug("Heartbeat pong received: t1=%s t2=%s t3=%s t4=%s", frame.t1,
-                 frame.t2, frame.t3, frame.t4)
+    logger.debug(
+        "Heartbeat pong received: t1=%s t2=%s t3=%s t4=%s",
+        frame.t1,
+        frame.t2,
+        frame.t3,
+        frame.t4,
+    )

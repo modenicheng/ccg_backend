@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from time import time
@@ -101,6 +102,7 @@ class PlaybackState(BaseModel):
     play_state: Literal["playing", "paused"] = Field(default="paused")
     song_id: int | None = None
     current_order: int = Field(default=0, ge=0)
+
 
 # 这是 AI 生成的屎，由一百万个重复数据
 # 别用

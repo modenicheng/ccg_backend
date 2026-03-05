@@ -176,9 +176,8 @@ class Room(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[RoomStatusORM] = mapped_column(Integer,
-                                               default=RoomStatusORM.WAITING,
-                                               nullable=False)
+    status: Mapped[RoomStatusORM] = mapped_column(
+        Integer, default=RoomStatusORM.WAITING, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

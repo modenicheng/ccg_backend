@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -132,7 +133,8 @@ async def create_song(song_data: SongCreate,
     if song_data.platform_song_id and not song_data.platform:
         raise HTTPException(
             status_code=400,
-            detail="'platform' is required when 'platform_song_id' is provided")
+            detail="'platform' is required when 'platform_song_id' is provided"
+        )
 
     dump_data = song_data.model_dump(exclude_unset=True)
     # 记录即将创建的数据用于调试
@@ -147,10 +149,8 @@ async def create_song(song_data: SongCreate,
     except Exception as e:
         logger.error(f"Failed to create song: {e}")
         await session.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create song: {str(e)}"
-        )
+        raise HTTPException(status_code=500,
+                            detail=f"Failed to create song: {str(e)}")
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
         {c.name: getattr(song, c.name)

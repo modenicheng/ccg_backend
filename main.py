@@ -1,30 +1,48 @@
+from __future__ import annotations
+
 import logging
 import orjson
+import os
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from cache.connection import redis_client
+from client_manager import ClientManager, Client
 from db import models
 from db.crud import fetch_room_object, simple_authentication
 from db.models import User, Room, TagGroup
 from db.session import get_db, session_scope
-from uuid import uuid4
-from client_manager import ClientManager, Client
-from cache.connection import redis_client
+from handlers import handle
 from handlers.connection_lifespan import on_connect, on_disconnect
+from router import (
+    room_router,
+    tag_router,
+    song_router,
+    songlist_router,
+    room_songs_router,
+    audio_stream_router,
+)
+from schemas.song import HttpErrorResponse
+from schemas.ws_messages.error_schemas import WebSocketErrorEvent
 from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType, GameEventType, ErrorEventType
-from schemas.ws_messages.error_schemas import WebSocketErrorEvent
-from utils.memory_monitor import MemoryMonitor
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from handlers import handle
-from pathlib import Path
-from schemas.song import HttpErrorResponse
-from router import *
 from utils.logger import log_level_map
-import os
+from utils.memory_monitor import MemoryMonitor
 
 log_level = log_level_map.get(
     os.getenv("CCG_LOG_LEVEL", "INFO").upper(), logging.INFO)
@@ -55,7 +73,6 @@ async def lifespan(app: FastAPI):
         update_stmt = update(User).values(online=False)
         async with session_scope() as session:
             await session.execute(update_stmt)
-            await session.commit()
         logger.info("Database user online states reset to offline on startup")
     except Exception as e:
         logger.error(f"Error resetting user online states in database: {e}")
@@ -94,7 +111,6 @@ async def lifespan(app: FastAPI):
         update_stmt = update(User).values(online=False)
         async with session_scope() as session:
             await session.execute(update_stmt)
-            await session.commit()
     except Exception as e:
         logger.error(
             f"Error resetting user online states in database on shutdown: {e}")
@@ -159,14 +175,13 @@ async def root():
             "room_setting": "/api/room/{roomid}",
             "memory_status": "/memory",
             "memory_report": "/memory/report",
-            "health": "/health"
-        }
+            "health": "/health",
+        },
     }
 
 
 @app.websocket("/ws/{roomid}")
 async def websocket_endpoint(websocket: WebSocket, roomid: str):
-
     async with session_scope() as session:
         global clients
         user = await simple_authentication(session, websocket.cookies, roomid)
@@ -230,7 +245,8 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.INVALID_JSON,
-                            message=f"Invalid JSON payload: {e}").model_dump())
+                            message=f"Invalid JSON payload: {e}",
+                        ).model_dump())
                     continue
 
                 event_value = parsed_data.get("event")
@@ -238,7 +254,8 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.MISSING_EVENT_FIELD,
-                            message="Missing event field").model_dump())
+                            message="Missing event field",
+                        ).model_dump())
                     continue
 
                 try:
@@ -247,8 +264,8 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.UNSUPPORTED_EVENT,
-                            message=f"Unsupported game event: {event_value}").
-                        model_dump())
+                            message=f"Unsupported game event: {event_value}",
+                        ).model_dump())
                     continue
 
             elif "bytes" in data:
@@ -274,8 +291,8 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
                 await client.ws.send_json(
                     WebSocketErrorEvent(
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
-                        message=f"Failed to handle event {event.name}: {e}").
-                    model_dump())
+                        message=f"Failed to handle event {event.name}: {e}",
+                    ).model_dump())
 
     except (WebSocketDisconnect, RuntimeError) as e:
         logger.info("WebSocket disconnected: %s", client.ws.client)
@@ -343,4 +360,5 @@ async def serve_frontend(full_path: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

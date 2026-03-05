@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 内存监控使用示例
 展示如何在FastAPI应用中使用内存监控功能
@@ -54,7 +55,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭时停止内存监控"""
-    if 'memory_monitor' in globals():
+    if "memory_monitor" in globals():
         await memory_monitor.stop()
         logger.info("内存监控器已停止")
 
@@ -71,7 +72,6 @@ async def root():
 @app.get("/memory")
 async def get_memory_info():
     """获取当前内存信息"""
-    from utils.memory_monitor import MemoryMonitor
     monitor = MemoryMonitor()
     memory_info = monitor._get_memory_info()
 
@@ -93,7 +93,7 @@ async def get_memory_info():
 @app.get("/memory/report")
 async def get_memory_report():
     """获取格式化的内存报告"""
-    from utils.memory_monitor import MemoryMonitor
+
     monitor = MemoryMonitor(detailed_report=True)
     memory_info = monitor._get_memory_info()
     report = monitor._format_memory_report(memory_info)

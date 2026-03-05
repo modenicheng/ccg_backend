@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .room import room_router
 from .tags import tag_router
 from .song import song_router

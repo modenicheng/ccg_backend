@@ -28,7 +28,8 @@ class RoomStateMachine:
     }
 
     @classmethod
-    def is_transition_allowed(cls, current: RoomStatus, target: RoomStatus) -> bool:
+    def is_transition_allowed(cls, current: RoomStatus,
+                              target: RoomStatus) -> bool:
         """检查状态转移是否允许"""
         allowed_targets = cls.TRANSITION_RULES.get(current, [])
         return target in allowed_targets
@@ -65,10 +66,8 @@ class RoomStateMachine:
 
         # 2. 验证转移是否允许
         if not cls.is_transition_allowed(current_status, target):
-            logger.error(
-                f"Invalid state transition for room {room_id}: "
-                f"{current_status.name} -> {target.name}"
-            )
+            logger.error(f"Invalid state transition for room {room_id}: "
+                         f"{current_status.name} -> {target.name}")
             raise ValueError(
                 f"Invalid state transition: {current_status.name} -> {target.name}"
             )
@@ -76,12 +75,9 @@ class RoomStateMachine:
         # 3. 更新数据库状态
         old_status = room.status
         room.status = models.RoomStatusORM(target.value)
-        await session.commit()
 
-        logger.info(
-            f"Room {room_id} state transition: "
-            f"{RoomStatus(old_status).name} -> {target.name}"
-        )
+        logger.info(f"Room {room_id} state transition: "
+                    f"{RoomStatus(old_status).name} -> {target.name}")
 
         # 4. 更新 Redis 缓存
         try:
@@ -104,7 +100,8 @@ class RoomStateMachine:
                 logger.debug(f"Created new Redis cache for room {room_id}")
         except Exception as e:
             # Redis 更新失败不应影响整体状态转移，但需要记录日志
-            logger.error(f"Failed to update Redis cache for room {room_id}: {e}")
+            logger.error(
+                f"Failed to update Redis cache for room {room_id}: {e}")
             # 继续执行，因为数据库状态已更新
 
         return True
@@ -128,12 +125,9 @@ class RoomStateMachine:
 
         old_status = room.status
         room.status = models.RoomStatusORM(target.value)
-        await session.commit()
 
-        logger.warning(
-            f"Force transition for room {room_id}: "
-            f"{RoomStatus(old_status).name} -> {target.name}"
-        )
+        logger.warning(f"Force transition for room {room_id}: "
+                       f"{RoomStatus(old_status).name} -> {target.name}")
 
         # 更新 Redis 缓存
         try:
@@ -142,7 +136,8 @@ class RoomStateMachine:
                 cache_state.status = target.value
                 await save_room_state(room_id, cache_state)
         except Exception as e:
-            logger.error(f"Failed to update Redis cache for room {room_id}: {e}")
+            logger.error(
+                f"Failed to update Redis cache for room {room_id}: {e}")
 
         return True
 

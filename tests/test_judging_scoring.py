@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 import pytest
-from handlers.round_events_3x import calculate_player_scores
+from utils.calculate import calculate_player_scores
 
 
 class PlayerAnswerData(TypedDict):
@@ -26,7 +26,7 @@ def test_calculate_player_scores_basic_tag_matching():
     }
     tag_group_map = {
         1: [101, 102],  # Group 1 contains both correct tags
-        2: [103]        # Group 2 contains wrong tag
+        2: [103]  # Group 2 contains wrong tag
     }
     correct_tags = [101, 102]
     correct_description_ids = []
@@ -58,7 +58,7 @@ def test_calculate_player_scores_multiple_groups():
     }
     tag_group_map = {
         1: [101, 102],  # Group 1: correct tags 101, 102
-        2: [103, 104]   # Group 2: correct tags 103, 104
+        2: [103, 104]  # Group 2: correct tags 103, 104
     }
     correct_tags = [101, 102, 103, 104]  # All tags correct
 
@@ -94,10 +94,7 @@ def test_calculate_player_scores_exact_group_match():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102],
-        2: [103, 104]
-    }
+    tag_group_map = {1: [101, 102], 2: [103, 104]}
     correct_tags = [101, 102, 103, 104]
 
     scores = calculate_player_scores(
@@ -133,7 +130,9 @@ def test_calculate_player_scores_description_points():
     }
     tag_group_map = {}
     correct_tags = []
-    correct_description_ids = [1002, 1003]  # Players 1002 and 1003 have correct descriptions
+    correct_description_ids = [
+        1002, 1003
+    ]  # Players 1002 and 1003 have correct descriptions
 
     scores = calculate_player_scores(
         answer_queue=answer_queue,
@@ -146,7 +145,8 @@ def test_calculate_player_scores_description_points():
     # Only first player in queue with correct description gets point (player 1002)
     assert scores["1001"] == 0  # Not in correct_description_ids
     assert scores["1002"] == 1  # First in queue with correct description
-    assert scores["1003"] == 0  # Has correct description but player 1002 got the point first
+    assert scores[
+        "1003"] == 0  # Has correct description but player 1002 got the point first
 
 
 def test_calculate_player_scores_combined_tag_and_description():
@@ -162,10 +162,7 @@ def test_calculate_player_scores_combined_tag_and_description():
             'description_text': "desc2",
         }
     }
-    tag_group_map = {
-        1: [101, 102],
-        2: [103]
-    }
+    tag_group_map = {1: [101, 102], 2: [103]}
     correct_tags = [101, 102]
     correct_description_ids = [1002]
 
@@ -273,10 +270,7 @@ def test_calculate_player_scores_only_one_tag_group_point_per_player():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102],
-        2: [103, 104]
-    }
+    tag_group_map = {1: [101, 102], 2: [103, 104]}
     correct_tags = [101, 102, 103, 104]
 
     scores = calculate_player_scores(
@@ -302,9 +296,7 @@ def test_calculate_player_scores_extra_tags_outside_group():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102]
-    }
+    tag_group_map = {1: [101, 102]}
     correct_tags = [101, 102]
 
     scores = calculate_player_scores(
@@ -332,9 +324,7 @@ def test_calculate_player_scores_tags_already_awarded():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102]
-    }
+    tag_group_map = {1: [101, 102]}
     correct_tags = [101, 102]  # Only one group worth of points
 
     scores = calculate_player_scores(
@@ -359,9 +349,7 @@ def test_calculate_player_scores_empty_correct_tags():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102]
-    }
+    tag_group_map = {1: [101, 102]}
     correct_tags = []  # No correct tags
 
     scores = calculate_player_scores(
@@ -409,9 +397,7 @@ def test_calculate_player_scores_player_without_selected_tags():
             'description_text': None,
         }
     }
-    tag_group_map = {
-        1: [101, 102]
-    }
+    tag_group_map = {1: [101, 102]}
     correct_tags = [101, 102]
 
     scores = calculate_player_scores(
@@ -471,13 +457,14 @@ def test_calculate_player_scores_overlapping_tag_groups():
             'description_text': None,
         },
         "1002": {
-            'selected_tag_ids': [101, 103],  # Could match group 2 but tag 101 already used
+            'selected_tag_ids':
+            [101, 103],  # Could match group 2 but tag 101 already used
             'description_text': None,
         }
     }
     tag_group_map = {
         1: [101, 102],  # Group 1: tags 101, 102
-        2: [101, 103]   # Group 2: overlapping tag 101
+        2: [101, 103]  # Group 2: overlapping tag 101
     }
     correct_tags = [101, 102, 103]  # Three correct tags
 
@@ -507,9 +494,7 @@ def test_calculate_player_scores_player_with_description_and_tags():
             'description_text': "desc1",
         }
     }
-    tag_group_map = {
-        1: [101, 102]
-    }
+    tag_group_map = {1: [101, 102]}
     correct_tags = [101, 102]
     correct_description_ids = [1001]  # Same player has correct description
 

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 安全音频流端点
 通过临时令牌访问音频，保护音频ID不被直接暴露
@@ -89,9 +90,9 @@ def _build_range_response(content: bytes, media_type: str,
 
 @audio_stream_router.get("/stream/{token}")
 async def stream_audio(
-    token: str,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
+        token: str,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
 ) -> Response:
     """
     安全音频流端点
@@ -108,36 +109,37 @@ async def stream_audio(
     # 1. 验证令牌
     logger.info(f"Validating audio token: {token[:8]}...")
     song_id = await get_song_id_from_token(token)
-    
+
     if not song_id:
         logger.warning(f"Invalid or expired audio token: {token[:8]}...")
-        raise HTTPException(status_code=403, detail="Invalid or expired audio token")
-    
+        raise HTTPException(status_code=403,
+                            detail="Invalid or expired audio token")
+
     logger.info(f"Audio token valid, song_id: {song_id}")
-    
+
     # 2. 获取歌曲文件
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
     song = result.scalar_one_or_none()
-    
+
     if not song:
         logger.error(f"Song not found for song_id: {song_id}")
         raise HTTPException(status_code=404, detail="Audio not found")
-    
+
     if not song.cached_path:
         logger.error(f"Song {song_id} has no cached path")
         raise HTTPException(status_code=404, detail="Audio file not cached")
-    
+
     # 3. 返回音频文件（支持Range请求）
     content, media_type = await load_song_asset_with_cache(song.cached_path)
     range_header = request.headers.get("range")
-    
+
     response = _build_range_response(content, media_type, range_header)
-    
+
     # 添加安全头和缓存头
     response.headers["Cache-Control"] = "private, max-age=3600"  # 客户端缓存1小时
     response.headers["Content-Disposition"] = (
         f'inline; filename="{os.path.basename(song.cached_path)}"')
-    
+
     logger.info(f"Successfully served audio for song_id: {song_id}")
     return response

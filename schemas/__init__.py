@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Data schemas for request/response validation and serialization.
 

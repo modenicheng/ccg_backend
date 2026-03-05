@@ -14,6 +14,7 @@ import dotenv
 
 dotenv.load_dotenv()
 
+
 def _normalize_database_url(raw_url: str | None) -> str:
     """Normalize database URL and provide a SQLite default for local dev."""
     if raw_url:
@@ -31,7 +32,12 @@ def _normalize_database_url(raw_url: str | None) -> str:
 
 
 DATABASE_URL = _normalize_database_url(os.getenv("CCG_DATABASE_URL"))
-DATABASE_ECHO = os.getenv("CCG_DATABASE_ECHO", "false").lower() in {"1", "true", "yes", "on"}
+DATABASE_ECHO = os.getenv("CCG_DATABASE_ECHO", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -40,6 +46,7 @@ engine = create_async_engine(
 )
 
 if DATABASE_URL.startswith("sqlite+"):
+
     @event.listens_for(engine.sync_engine, "connect")
     def _sqlite_pragma_on_connect(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
@@ -78,9 +85,9 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            # await session.commit()
+            await session.commit()
         except Exception:
-            # await session.rollback()
+            await session.rollback()
             raise
 
 
@@ -90,9 +97,9 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            # await session.commit()
+            await session.commit()
         except Exception:
-            # await session.rollback()
+            await session.rollback()
             raise
 
 

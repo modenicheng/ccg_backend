@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 from deprecated import deprecated
 from fastapi import WebSocket
@@ -81,21 +82,42 @@ class ClientManager:
 
     async def clear(self, room_id: str | None = None):
         if room_id is None:
-            r = await asyncio.gather(*[
-                client.ws.close(code=1000, reason="Server shutdown")
-                for clients in self._rooms.values() for client in clients
-            ],
-                                     return_exceptions=True)
-            logger.debug(r)
+            results = await asyncio.gather(
+                *[
+                    client.ws.close(code=1000, reason="Server shutdown")
+                    for clients in self._rooms.values() for client in clients
+                ],
+                return_exceptions=True,
+            )
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    logger.error(
+                        "Exception occurred in asyncio.gather task %d during clear(all): %s",
+                        i,
+                        r,
+                        exc_info=r,
+                    )
+            logger.debug(results)
             self._rooms.clear()
             return
         room = self._rooms.pop(room_id, None)
         if room:
-            await asyncio.gather(*[
-                client.ws.close(code=1000, reason="Server shutdown")
-                for client in room
-            ],
-                                 return_exceptions=True)
+            results = await asyncio.gather(
+                *[
+                    client.ws.close(code=1000, reason="Server shutdown")
+                    for client in room
+                ],
+                return_exceptions=True,
+            )
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    logger.error(
+                        "Exception occurred in asyncio.gather task %d during clear(room %s): %s",
+                        i,
+                        room_id,
+                        r,
+                        exc_info=r,
+                    )
 
     def is_empty(self, room_id: str | None = None) -> bool:
         if room_id is None:
@@ -118,34 +140,51 @@ class ClientManager:
                 exc_info=True,
             )
 
-    async def broadcast_error(self,
-                              room_id: str,
-                              event_type,
-                              message: str,
-                              excluded_clients: set[Client] | None = None):
+    async def broadcast_error(
+        self,
+        room_id: str,
+        event_type,
+        message: str,
+        excluded_clients: set[Client] | None = None,
+    ):
         error_message = ErrorMessage(
             data=ErrorMessageData(message=message, error_event=event_type))
         await self.broadcast(room_id,
                              error_message.model_dump(),
                              excluded_clients=excluded_clients)
 
-    async def broadcast(self,
-                        room_id: str,
-                        message: str | bytes | dict,
-                        excluded_clients: set[Client] | None = None):
+    async def broadcast(
+        self,
+        room_id: str,
+        message: str | bytes | dict,
+        excluded_clients: set[Client] | None = None,
+    ):
         excluded_clients = excluded_clients or set()
         clients = self._rooms.get(room_id, set())
-        await asyncio.gather(*[
-            self.send(client, message) for client in clients
-            if client not in excluded_clients
-        ],
-                             return_exceptions=True)
+        results = await asyncio.gather(
+            *[
+                self.send(client, message) for client in clients
+                if client not in excluded_clients
+            ],
+            return_exceptions=True,
+        )
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                logger.error(
+                    "Exception occurred in asyncio.gather task %d during broadcast in room %s: %s",
+                    i,
+                    room_id,
+                    r,
+                    exc_info=r,
+                )
 
-    async def kick(self,
-                   room_id: str,
-                   client: Client,
-                   code: int = 1000,
-                   reason: str = "Kicked by server"):
+    async def kick(
+        self,
+        room_id: str,
+        client: Client,
+        code: int = 1000,
+        reason: str = "Kicked by server",
+    ):
         try:
             await client.ws.close(code=code, reason=reason)
         except Exception as e:

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,8 +37,8 @@ async def _require_room_owner(session: AsyncSession, request: Request,
     return user
 
 
-async def _trigger_download_for_first_shuffled_song(
-        session: AsyncSession, roomid: str) -> None:
+async def _trigger_download_for_first_shuffled_song(session: AsyncSession,
+                                                    roomid: str) -> None:
     """在 shuffle 后为房间第一首歌触发缓存下载任务（仅支持 QQ 平台）。"""
     room_songs = await crud.get_room_songs(session,
                                            roomid,
@@ -269,7 +270,8 @@ async def batch_update_room_song_order(
 async def clear_all_room_songs(
     roomid: str,
     http_request: Request,
-    session: AsyncSession = Depends(get_db)) -> RoomSongsListResponse:
+    session: AsyncSession = Depends(get_db)
+) -> RoomSongsListResponse:
     """Remove all songs from a room."""
     # Check if room exists
     room_stmt = select(models.Room).where(models.Room.id == roomid)

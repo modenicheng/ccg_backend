@@ -1,8 +1,19 @@
-from .connection import get_redis
-from redis.asyncio.client import Redis
-from .schemas import *
-from .utils import RedisKeys, ROOM_TTL_SECONDS
+from __future__ import annotations
+
 from typing import Optional, cast, Awaitable
+
+import orjson
+from redis.asyncio.client import Redis
+
+from .connection import get_redis
+from .schemas import (
+    AnswerQueueItem,
+    PlaybackState,
+    RoomBaseStateCache,
+    RoomStatePlayerItem,
+)
+from .utils import RedisKeys, ROOM_TTL_SECONDS
+from schemas.ws_messages import room_schemas as RoomSchemas
 from utils import get_logger
 
 logger = get_logger(__name__)
@@ -36,7 +47,7 @@ async def load_room_state(room_id: str) -> RoomBaseStateCache | None:
         return None
 
 
-async def save_room_state(room_id: str, state: RoomBaseStateCache):
+async def save_room_state(room_id: str, state: RoomBaseStateCache) -> None:
     """将房间状态保存到 Redis
 
     Args:
@@ -57,7 +68,8 @@ async def save_room_state(room_id: str, state: RoomBaseStateCache):
         logger.error(f"Error saving room state for room {room_id}: {e}")
 
 
-async def set_room_playback_state(room_id: str, playback_state: PlaybackState):
+async def set_room_playback_state(room_id: str,
+                                  playback_state: PlaybackState) -> None:
     """将房间播放状态保存到 Redis
 
     Args:
@@ -77,7 +89,7 @@ async def set_room_playback_state(room_id: str, playback_state: PlaybackState):
 
 
 async def set_room_playback_progress(room_id: str, progress_ms: int,
-                                     offset_ts: int):
+                                     offset_ts: int) -> None:
     """更新房间播放进度（仅 progress_ms 和 offset_ts）
 
     Args:
@@ -91,11 +103,14 @@ async def set_room_playback_progress(room_id: str, progress_ms: int,
         key = RedisKeys.playback_state(room_id)
         await cast(
             Awaitable,
-            redis.hset(key,
-                       mapping={
-                           "progress_ms": str(progress_ms),
-                           "offset_ts": str(offset_ts),
-                       }))
+            redis.hset(
+                key,
+                mapping={
+                    "progress_ms": str(progress_ms),
+                    "offset_ts": str(offset_ts),
+                },
+            ),
+        )
         logger.debug(
             f"Updated playback progress for room {room_id}: progress_ms={progress_ms}, offset_ts={offset_ts}"
         )
@@ -131,7 +146,7 @@ async def get_room_playback_state(room_id: str) -> PlaybackState | None:
         return None
 
 
-async def delete_room_playback_state(room_id: str):
+async def delete_room_playback_state(room_id: str) -> None:
     """删除房间播放状态
 
     Args:
@@ -147,7 +162,8 @@ async def delete_room_playback_state(room_id: str):
         logger.error(f"Error deleting playback state for room {room_id}: {e}")
 
 
-async def save_room_players(room_id: str, players: list[RoomStatePlayerItem]):
+async def save_room_players(room_id: str,
+                            players: list[RoomStatePlayerItem]) -> list | None:
     redis = await get_redis()
 
     try:
@@ -198,7 +214,7 @@ async def get_room_players(room_id: str) -> list[RoomStatePlayerItem]:
         return []
 
 
-async def delete_room_players(room_id: str):
+async def delete_room_players(room_id: str) -> list | None:
     redis = await get_redis()
 
     try:
@@ -218,7 +234,8 @@ async def delete_room_players(room_id: str):
         return None
 
 
-async def set_room_player(room_id: str, player: RoomStatePlayerItem):
+async def set_room_player(room_id: str,
+                          player: RoomStatePlayerItem) -> int | None:
     redis = await get_redis()
 
     try:
@@ -254,7 +271,7 @@ async def get_room_player(room_id: str,
 
 
 async def update_room_player_online_status(room_id: str, player_id: int,
-                                           online: bool):
+                                           online: bool) -> int | None:
     redis = await get_redis()
 
     try:
@@ -270,7 +287,7 @@ async def update_room_player_online_status(room_id: str, player_id: int,
         return None
 
 
-async def remove_room_player(room_id: str, player_id: int):
+async def remove_room_player(room_id: str, player_id: int) -> None:
     """
     从房间缓存中移除指定玩家
     """
@@ -282,12 +299,13 @@ async def remove_room_player(room_id: str, player_id: int):
     if players:
         players = orjson.loads(players)
         # 过滤掉要移除的玩家
-        players = [p for p in players if p['id'] != player_id]
+        players = [p for p in players if p["id"] != player_id]
         await redis.set(room_key, orjson.dumps(players))
 
 
 # 以下这三个方法是比较核心的，涉及答题队列的维护（利用 Redis 有序集合的特性）
-async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
+async def append_attempt_answer_player(room_id: str,
+                                       data: AnswerQueueItem) -> int | None:
     """
     Asynchronously appends a player's answer attempt to the answer queue for a given room in Redis.
 
@@ -314,7 +332,7 @@ async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
         # 这样可以保证队列顺序的唯一性和时间精度，防止同一毫秒内多玩家并发导致顺序冲突
         # First, check if player already exists in queue
         entries = await cast(Awaitable[list], redis.zrange(key, 0, -1))
-        key_player_prefix = '{"player_id":' + str(data.player_id) + ','
+        key_player_prefix = '{"player_id":' + str(data.player_id) + ","
         logger.debug(
             f"Current answer queue keys for room {room_id}: {entries}, checking for player_id {data.player_id} with prefix {key_player_prefix}"
         )
@@ -329,7 +347,8 @@ async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
         result = await cast(
             Awaitable,
             redis.zadd(key,
-                       {member_key: data.server_ts * 0.0001 + data.offset_ts}))
+                       {member_key: data.server_ts * 0.0001 + data.offset_ts}),
+        )
         logger.debug(
             f"Appended player {data.player_id} to answer queue for room {room_id}, result: {result}"
         )
@@ -339,7 +358,8 @@ async def append_attempt_answer_player(room_id: str, data: AnswerQueueItem):
     except Exception as e:
         logger.error(
             f"Error appending player to answer queue for room {room_id}: {e}",
-            exc_info=True)
+            exc_info=True,
+        )
         return None
 
 
@@ -375,7 +395,7 @@ async def get_answer_queue(room_id: str) -> list[RoomSchemas.AnswerQueueItem]:
         return []
 
 
-async def clear_answer_queue(room_id: str):
+async def clear_answer_queue(room_id: str) -> int | None:
     """
     Asynchronously clears the answer queue for a given room in Redis.
 
@@ -401,7 +421,7 @@ async def clear_answer_queue(room_id: str):
         return None
 
 
-async def remove_from_answer_queue(room_id: str, player_id: int):
+async def remove_from_answer_queue(room_id: str, player_id: int) -> int | None:
     """
     Remove a specific player from the answer queue in Redis sorted set.
 
@@ -442,3 +462,101 @@ async def remove_from_answer_queue(room_id: str, player_id: int):
         logger.error(
             f"Error removing player from answer queue for room {room_id}: {e}")
         return None
+
+
+async def set_room_song_queue(room_id: str, song_ids: list[str]) -> bool:
+    """设置房间歌曲队列"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room_song_queue(room_id)
+        await cast(Awaitable, redis.delete(key))
+        if song_ids:
+            await cast(Awaitable, redis.rpush(key, *song_ids))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        logger.debug(f"Set song queue for room {room_id}: {song_ids}")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting song queue for room {room_id}: {e}")
+        return False
+
+
+async def get_room_song_queue(room_id: str) -> list[str]:
+    """获取房间歌曲队列"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room_song_queue(room_id)
+        return await cast(Awaitable[list[str]], redis.lrange(key, 0, -1))
+    except Exception as e:
+        logger.error(f"Error getting song queue for room {room_id}: {e}")
+        return []
+
+
+async def get_room_current_answerer(room_id: str) -> str | None:
+    """获取当前答题者"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        answerer = await cast(Awaitable[Optional[bytes]],
+                              redis.hget(key, "current_answerer"))
+        return answerer.decode() if answerer else None
+    except Exception as e:
+        logger.error(f"Error getting current answerer for room {room_id}: {e}")
+        return None
+
+
+async def set_room_current_answerer(room_id: str, player_id: str) -> bool:
+    """设置当前答题者"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        await cast(Awaitable, redis.hset(key, "current_answerer", player_id))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        logger.debug(f"Set current answerer for room {room_id}: {player_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting current answerer for room {room_id}: {e}")
+        return False
+
+
+async def get_room_play_progress(room_id: str) -> int:
+    """获取房间播放进度（毫秒）"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        progress = await cast(Awaitable[Optional[bytes]],
+                              redis.hget(key, "play_progress"))
+        return int(progress) if progress else 0
+    except Exception as e:
+        logger.error(f"Error getting play progress for room {room_id}: {e}")
+        return 0
+
+
+async def update_room_playback_state(
+    room_id: str,
+    round_state: str,
+    progress_ms: int,
+    offset_ts: int,
+    audio_url: str | None,
+    event_ts: int,
+    event_name: str,
+) -> bool:
+    """更新房间播放状态（内部字段）"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        mapping = {
+            "current_round_state": round_state,
+            "play_progress": str(progress_ms),
+            "play_offset_ts": str(offset_ts),
+            "last_control_ts": str(event_ts),
+            "last_control_event": event_name,
+        }
+        if audio_url is not None:
+            mapping["audio_url"] = audio_url
+        await cast(Awaitable, redis.hset(key, mapping=mapping))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        logger.debug(f"Updated playback state for room {room_id}: {mapping}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating playback state for room {room_id}: {e}")
+        return False

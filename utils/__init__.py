@@ -1,5 +1,5 @@
-from . import dataframe
-from . import enumerations
+from __future__ import annotations
+from . import dataframe, enumerations
 
 from .dataframe import get_event_type
 from .logger import get_logger, init_logging
@@ -17,6 +17,7 @@ try:
         start_memory_monitoring,
         periodic_memory_report,
     )
+
     HAS_MEMORY_MONITOR = True
 except ImportError:
     HAS_MEMORY_MONITOR = False

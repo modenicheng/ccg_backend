@@ -1,26 +1,40 @@
+from __future__ import annotations
+
 import random
 
 import pytest
-from cache.room_cache import *
-from cache.schemas import *
-
 from rich import print
+
+from cache.room_cache import (
+    get_answer_queue,
+    get_room_players,
+    get_room_playback_state,
+    set_room_playback_state,
+    append_attempt_answer_player,
+    delete_room_playback_state,
+    save_room_players,
+    delete_room_players,
+    clear_answer_queue,
+)
+from cache.schemas import AnswerQueueItem, PlaybackState, RoomStatePlayerItem
 
 
 def random_string(length: int = 8, prefix: str = "") -> str:
     """生成随机字符串"""
-    letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-    return prefix + ''.join(random.choice(letters) for _ in range(length))
+    letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    return prefix + "".join(random.choice(letters) for _ in range(length))
 
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_room_playback_state_cache():
     """测试房间播放状态缓存"""
     room_id = "test-room-playback-123"
-    playback_state = PlaybackState(progress_ms=5000,
-                                   play_state="playing",
-                                   current_order=1,
-                                   audio_url="https://example.com/audio.mp3")
+    playback_state = PlaybackState(
+        progress_ms=5000,
+        play_state="playing",
+        current_order=1,
+        audio_url="https://example.com/audio.mp3",
+    )
 
     # 保存播放状态到 Redis
     await set_room_playback_state(room_id, playback_state)

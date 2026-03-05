@@ -1,22 +1,19 @@
+from __future__ import annotations
+
 import asyncio
 
-from sqlalchemy.orm import selectinload
-
-from cache import room_cache
-import cache
-import cache.schemas
-from client_manager import ClientManager
-from client_manager import Client
-from schemas.base_message import *
-from utils import get_logger
-from db import models
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import cache
+import cache.schemas
+from cache import room_cache
+from client_manager import ClientManager, Client
+from db import models
 from schemas.ws_messages import room_schemas as RoomSchema
-from schemas.ws_messages.judge_schemas import *
-from schemas.ws_messages.playback_schemas import *
-from schemas.ws_messages.room_schemas import *
-from schemas.ws_messages.round_event_schemas import *
+from schemas.ws_messages.room_schemas import AnswerQueueItem
+from utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -26,7 +23,7 @@ async def on_connect(
     cl: Client,
     clients: ClientManager,
     room_id: str,
-):
+) -> None:
     """
     Handle client connection to a room.
 
@@ -68,11 +65,12 @@ async def on_connect(
     user_obj = user_result.scalar_one_or_none()
     if user_obj:
         user_obj.online = True
-    await session.commit()
 
-    stmt = select(models.Room).where(models.Room.id == room_id).options(
-        selectinload(models.Room.users), selectinload(models.Room.tag_groups),
-        selectinload(models.Room.scores))
+    stmt = (select(models.Room).where(models.Room.id == room_id).options(
+        selectinload(models.Room.users),
+        selectinload(models.Room.tag_groups),
+        selectinload(models.Room.scores),
+    ))
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
     if room is None:
@@ -95,14 +93,25 @@ async def on_connect(
     room_state_message = RoomSchema.RoomStateMessage(data=message)
     join_message = RoomSchema.PlayerJoinMessage(
         data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-    res = await asyncio.gather(*[
-        cl.ws.send_json(room_state_message.model_dump()),
-        clients.broadcast(room_id,
-                          join_message.model_dump(),
-                          excluded_clients={cl})
-    ],
-                               return_exceptions=True)  # 让当前函数成为异步，避免阻塞后续代码
+    res = await asyncio.gather(
+        *[
+            cl.ws.send_json(room_state_message.model_dump()),
+            clients.broadcast(room_id,
+                              join_message.model_dump(),
+                              excluded_clients={cl}),
+        ],
+        return_exceptions=True,
+    )  # 让当前函数成为异步，避免阻塞后续代码
 
+    for i, r in enumerate(res):
+        if isinstance(r, Exception):
+            logger.error(
+                "Exception occurred in asyncio.gather task %d for client %s: %s",
+                i,
+                cl,
+                r,
+                exc_info=r,
+            )
     logger.debug("Finished sending initial room state to client %s: %s", cl,
                  res)
 
@@ -112,7 +121,7 @@ async def on_disconnect(
     cl: Client,
     clients: ClientManager,
     room_id: str,
-):
+) -> None:
     """
     Handle client disconnection from a room.
 
@@ -148,7 +157,6 @@ async def on_disconnect(
     user_obj = result.scalar_one_or_none()
     if user_obj:
         user_obj.online = False
-        await session.commit()
     await room_cache.set_room_player(room_id, player_item)
 
     clients.pop(room_id, cl)
