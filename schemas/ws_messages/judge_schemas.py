@@ -57,3 +57,15 @@ class ScoreUpdateData(BaseModel):
 class ScoreUpdateMessage(MessageBase):
     event: Literal[42] = GameEventType.SCORE_UPDATE.value
     data: ScoreUpdateData
+    
+class SkipRoundMessage(MessageBase):
+    event: Literal[43] = GameEventType.SKIP_ROUND.value
+    data: Any = None  # 可以根据需要添加字段
+
+class ShowAnswerData(BaseModel):
+    tag_ids: list[int] = Field(default_factory=list, description="正确标签ID列表")
+    description_ids: list[int] = Field(default_factory=list, description="正确描述ID列表")
+
+class ShowAnswerMessage(MessageBase):
+    event: Literal[44] = GameEventType.SHOW_ANSWER.value
+    data: ShowAnswerData

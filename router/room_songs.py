@@ -99,10 +99,20 @@ async def add_songs_to_room(
             detail=f"Songs with IDs {missing_song_ids} not found")
 
     # Add songs to room
-    added = await crud.add_songs_to_room(session,
-                                         roomid,
-                                         request.song_ids,
-                                         append_to_end=request.append_to_end)
+    try:
+        added = await crud.add_songs_to_room(session,
+                                             roomid,
+                                             request.song_ids,
+                                             append_to_end=request.append_to_end)
+        await session.commit()
+        logger.info(f"Added {len(added)} songs to room {roomid}")
+    except Exception as e:
+        logger.error(f"Failed to add songs to room {roomid}: {e}")
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add songs to room: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid,
@@ -126,10 +136,18 @@ async def remove_songs_from_room(
         raise HTTPException(status_code=404, detail="Room not found")
 
     # Remove songs
-    removed_count = await crud.remove_songs_from_room(session, roomid,
-                                                      request.song_ids)
-
-    logger.info(f"Removed {removed_count} songs from room {roomid}")
+    try:
+        removed_count = await crud.remove_songs_from_room(session, roomid,
+                                                          request.song_ids)
+        await session.commit()
+        logger.info(f"Removed {removed_count} songs from room {roomid}")
+    except Exception as e:
+        logger.error(f"Failed to remove songs from room {roomid}: {e}")
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove songs from room: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid,
@@ -164,10 +182,20 @@ async def batch_update_room_song_order(
 
     # Apply updates (simple sequential update - for complex reordering,
     # client should send complete new ordering)
-    for order_update in request.orders:
-        await crud.update_room_song_order(session, roomid,
-                                          order_update.song_id,
-                                          order_update.new_order)
+    try:
+        for order_update in request.orders:
+            await crud.update_room_song_order(session, roomid,
+                                              order_update.song_id,
+                                              order_update.new_order)
+        await session.commit()
+        logger.info(f"Updated song orders for {len(request.orders)} songs in room {roomid}")
+    except Exception as e:
+        logger.error(f"Failed to update song orders in room {roomid}: {e}")
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update song orders: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid,
@@ -189,9 +217,17 @@ async def clear_all_room_songs(
         raise HTTPException(status_code=404, detail="Room not found")
 
     # Clear all songs
-    removed_count = await crud.clear_room_songs(session, roomid)
-
-    logger.info(f"Cleared {removed_count} songs from room {roomid}")
+    try:
+        removed_count = await crud.clear_room_songs(session, roomid)
+        await session.commit()
+        logger.info(f"Cleared {removed_count} songs from room {roomid}")
+    except Exception as e:
+        logger.error(f"Failed to clear songs from room {roomid}: {e}")
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear songs from room: {str(e)}"
+        )
 
     # Return empty list
     return RoomSongsListResponse(room_id=roomid, list=[], total=0)

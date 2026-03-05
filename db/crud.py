@@ -1,18 +1,16 @@
 from typing import Any, Literal, Optional
 
-from fastapi import WebSocket
 from sqlalchemy import and_, select, tuple_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from utils import logger
-
 from . import models
 from utils.enumerations import MusicPlatform
+from utils import get_logger
 
-l = logger.get_logger(__name__)
+l = get_logger(__name__)
 
 
 def _apply_songlist_fields(songlist: models.Songlist, title: Optional[str],
@@ -430,11 +428,14 @@ async def update_task_record(
 
 
 async def get_room_songs(
-        session: AsyncSession,
-        room_id: str,
-        offset: int = 0,
-        limit: int = 20,
-        include_song_details: bool = True) -> list[models.RoomSong]:
+    session: AsyncSession,
+    room_id: str,
+    offset: int = 0,
+    limit: int = 20,
+    include_song_details: bool = True,
+    order: Literal["+song_order", "-song_order", "+song_id",
+                   "-song_id"] = "+song_id"
+) -> list[models.RoomSong]:
     """Get all songs associated with a room."""
     from sqlalchemy.orm import selectinload
 
@@ -444,8 +445,21 @@ async def get_room_songs(
         stmt = stmt.options(selectinload(models.RoomSong.song))
 
     # Order by song_order if available, then by song_id
-    stmt = stmt.order_by(models.RoomSong.song_order.nulls_last(),
-                         models.RoomSong.song_id)
+    if "song_order" in order:
+        if order.startswith("-"):
+            stmt = stmt.order_by(
+                models.RoomSong.song_order.desc().nulls_last(),
+                models.RoomSong.song_id.desc())
+        else:
+            stmt = stmt.order_by(models.RoomSong.song_order.nulls_last(),
+                                 models.RoomSong.song_id)
+    elif "song_id" in order:
+        if order.startswith("-"):
+            stmt = stmt.order_by(models.RoomSong.song_id.desc())
+        else:
+            stmt = stmt.order_by(models.RoomSong.song_id)
+    else:
+        l.warning(f"Invalid order parameter: {order}, defaulting to +song_id")
 
     # Apply offset and limit
     stmt = stmt.offset(offset)
@@ -992,7 +1006,6 @@ async def save_score_record(
 
 #     return answer_map
 
-
 # # 辅助函数：获取标签组映射
 # async def get_tag_group_map(db: AsyncSession, room_id: str):
 #     room = await fetch_room_object(db, room_id)
@@ -1006,7 +1019,6 @@ async def save_score_record(
 #         tag_group_map[tag_group.id] = tag_ids
 
 #     return tag_group_map
-
 
 # # 辅助函数：更新玩家答案顺序
 # async def update_player_answer_order(db: AsyncSession, room_id: str,
@@ -1029,7 +1041,6 @@ async def save_score_record(
 #         except ValueError:
 #             continue
 #     return updated_count
-
 
 # # 辅助函数：保存得分记录
 # async def save_score_record(db: AsyncSession, room_id: str, user_id: int,

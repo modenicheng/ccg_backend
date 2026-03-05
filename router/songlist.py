@@ -99,16 +99,26 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
             id=task_id,
         )
         tasks.huey.enqueue(task)
-        await create_task_record(
-            session=session,
-            task_id=task_id,
-            task_name="fetch_songlist",
-            status="pending",
-            result_json={
-                "platform": data.platform.value,
-                "platform_songlist_id": data.platform_songlist_id,
-            },
-        )
+        try:
+            await create_task_record(
+                session=session,
+                task_id=task_id,
+                task_name="fetch_songlist",
+                status="pending",
+                result_json={
+                    "platform": data.platform.value,
+                    "platform_songlist_id": data.platform_songlist_id,
+                },
+            )
+            await session.commit()
+            logger.info(f"Created task record for songlist fetch: {task_id}")
+        except Exception as e:
+            logger.error(f"Failed to create task record: {e}")
+            await session.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create task record: {str(e)}"
+            )
         return TaskResponse(
             task_id=task_id,
             task_name="fetch_songlist",

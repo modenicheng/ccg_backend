@@ -58,6 +58,20 @@ async def handle_game_start(
         await session.commit()
         await clients.broadcast(room_id, data.model_dump())
 
+        # 立即发送第一个回合开始事件
+        if room.room_songs:
+            await clients.broadcast(
+                room_id,
+                RoundStartMessage(data=RoundStartData(
+                    round_index=0,
+                    audio_url=room.room_songs[0].song.audio_url,
+                    start_pertent=0.0)).model_dump())
+        else:
+            logger.warning("Room %s has no songs when starting game", room_id)
+            await clients.broadcast_error(
+                room_id, ErrorEventType.HANDLER_EXCEPTION.value,
+                "Cannot start game: no songs in room")
+
 
 @regist(GameEventType.ROUND_END, data_validator=RoundEndMessage)
 async def handle_round_end(

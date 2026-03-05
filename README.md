@@ -222,44 +222,38 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `ROOM_CREATE`        | 10     | C→S      | 创建房间，附带用户名                                         | state update      |
 | `ROOM_JOIN`          | 11     | C→S      | 加入房间，附带房间ID、用户名                                 | state update      |
 | `ROOM_STATE`         | 12     | S→C      | 推送完整房间状态（玩家列表、准备状态、歌曲列表、标签组等）   | broadcast         |
+| `GAME_OVER`          | 13     | S→C      | 游戏结束，展示最终排名                                       | state & broadcast |
 | `START_POS_UPDATE`   | 14     | C→S      | 房主更新起始位置百分比 (0-80)                                | state & broadcast |
 | `KICK_USER`          | 15     | C→S      | 房主踢人                                                     | state & broadcast |
+| `PLAYER_LEAVE`       | 16     | C→S      | 玩家离开房间                                                 | state & broadcast |
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
 | `PLAY`               | 20     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构      | state & broadcast |
 | `PAUSE`              | 21     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
-| `SEEK`               | 22     | S→C      | 调整播放进度，但不改变播放状态                               | broadcast         |
-| `PRELOAD_AUDIO`      | 23     | S→C      | 音频预加载事件，通知客户端预加载下一首歌曲                     | state & broadcast |
+| `SEEK`               | 22     | C→S      | 调整播放进度，但不改变播放状态                               | broadcast         |
+| `PRELOAD_AUDIO`      | 23     | S→C      | 音频预加载事件，通知客户端预加载下一首歌曲                   | state & broadcast |
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
 | `PLAYER_READY`       | 30     | C→S      | 玩家准备/取消准备   弃用                                     | state & broadcast |
 | `GAME_START`         | 31     | S→C      | 房主开始游戏，禁止新玩家加入（断线重连可以）                 | state & broadcast |
-| `COUNTDOWN`          | 32     | S→C      | 倒计时更新（3,2,1）  【可以不要？】                          | state & broadcast |
+| `ROUND_START`        | 32     | S→C      | 回合开始，触发倒计时（3,2,1）                                | state & broadcast |
 | `ATTEMPT_ANSWER`     | 33     | C→S      | 玩家抢答，触发暂停和入队                                     | state & broadcast |
 | `YOUR_TURN`          | 34     | S→C      | 广播通知指定玩家开始作答，包含剩余时间（前端显示xxx正在作答）| state & broadcast |
 | `SUBMIT_ANSWER`      | 35     | C→S      | 玩家提交勾选的标签ID列表及精准描述文本                       | state & broadcast |
 | `ANSWER_BROADCAST`   | 36     | S→C      | 广播某玩家提交的答案（匿名或带玩家名，不含正确性）           | state & broadcast |
 | `ANSWER_QUEUE`       | 37     | S→C      | 广播当前抢答队列顺序（用于前端展示排队状态）                 | state & broadcast |
-| `CLEAR_ANSWER_QUEUE` | 38     | S→C      | 清除当前的抢答队列                                           | state & broadcast |
+| `ROUND_END`          | 38     | S→C      | 回合结束，准备下一轮                                         | state & broadcast |
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
 | `JUDGING`            | 40     | S→C      | 进入判分环节，房主端显示标准答案区（含标签组和描述候选）     | state & broadcast |
 | `JUDGE_SUBMIT`       | 41     | C→S      | 房主提交正确答案标签ID列表和描述ID列表（或“无描述”）         | state & broadcast |
 | `SCORE_UPDATE`       | 42     | S→C      | 更新积分榜                                                   | state & broadcast |
-
-| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
-|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `ROUND_END`          | 38     | S→C      | 回合结束，准备下一轮                                         | state & broadcast |
-
-| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
-|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `GAME_OVER`          | 13     | S→C      | 游戏结束，展示最终排名                                       | state & broadcast |
+| `SKIP_ROUND`         | 43     | C→S      | 房主跳过当前回合（不计分）                                   | state & broadcast |
 
 ## qqmusic
 
