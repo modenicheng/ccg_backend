@@ -123,6 +123,7 @@ app.include_router(tag_router)
 app.include_router(song_router)
 app.include_router(songlist_router)
 app.include_router(room_songs_router)
+app.include_router(audio_stream_router)
 
 ##############################
 

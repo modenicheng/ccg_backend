@@ -122,7 +122,7 @@ class Song(Base):
     subtitle: Mapped[str | None] = mapped_column(String, nullable=True)
     artist: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    audio_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # audio_url: Mapped[str | None] = mapped_column(String, nullable=True)
     cached_path: Mapped[str | None] = mapped_column(String, nullable=True)
     album_name: Mapped[str | None] = mapped_column(String, nullable=True)
     album_id: Mapped[int | None] = mapped_column(ForeignKey(

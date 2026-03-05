@@ -117,8 +117,7 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
             await session.rollback()
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create task record: {str(e)}"
-            )
+                detail=f"Failed to create task record: {str(e)}")
         return TaskResponse(
             task_id=task_id,
             task_name="fetch_songlist",
@@ -142,9 +141,7 @@ async def get_songlist_task_result(task_id: str,
     return await _build_task_response(session=session, task_record=task_record)
 
 
-@songlist_router.get("/{songlist_id}",
-                     response_model=SonglistResponse,
-                     response_class=ORJSONResponse)
+@songlist_router.get("/{songlist_id}", response_model=SonglistResponse)
 async def get_songlist_detail(songlist_id: int,
                               session: AsyncSession = Depends(get_db)):
 

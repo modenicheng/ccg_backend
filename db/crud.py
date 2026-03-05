@@ -32,7 +32,6 @@ def _apply_song_fields(song: models.Song, title: Optional[str],
     song.subtitle = subtitle
     song.artist = artist
     song.cover_url = cover_url
-    song.audio_url = audio_url
     song.cached_path = cached_path
     song.album_name = album_name
     song.metadata_json = metadata_json
@@ -509,7 +508,6 @@ async def add_songs_to_room(
         return []
 
     # Query database to get existing room songs (not just from session)
-    from sqlalchemy.orm import selectinload
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
     result = await session.execute(stmt)
     existing_songs = list(result.scalars().all())
@@ -556,9 +554,9 @@ async def add_songs_to_room(
 
     session.add_all(room_songs)
     await session.flush()
-
     await shuffle_room_songs(session, room_id)
-
+    room_songs: list[models.RoomSong] = sorted(
+        room_songs, key=lambda rs: rs.song_order or 0)
     return room_songs
 
 

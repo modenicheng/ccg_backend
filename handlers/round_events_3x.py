@@ -1,4 +1,5 @@
 # Standard library imports
+import asyncio
 import random
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ from client_manager import ClientManager, Client
 from db.session import session_scope
 from db import models
 from db.crud import get_current_song_info
-from utils import get_logger
+from utils import get_logger, generate_audio_token, get_audio_stream_url
 from utils.enumerations import GameEventType, EventType, ErrorEventType
 from utils.ts import get_ts_ms
 from . import regist
@@ -39,7 +40,10 @@ async def handle_game_start(
 
     async with session_scope() as session:
         room = (await session.execute(
-            select(models.Room).where(models.Room.id == room_id)
+            select(models.Room).where(models.Room.id == room_id).options(
+                selectinload(models.Room.room_songs).selectinload(
+                    models.RoomSong.song)
+            )
         )).scalar_one_or_none()
 
         if not room:
@@ -54,18 +58,37 @@ async def handle_game_start(
             await client.send_error(GameEventType.GAME_START,
                                     "Room is not in waiting state")
             return
-        room.status = models.RoomStatusORM.RUNNING
-        await session.commit()
-        await clients.broadcast(room_id, data.model_dump())
 
-        # 立即发送第一个回合开始事件
         if room.room_songs:
-            await clients.broadcast(
-                room_id,
-                RoundStartMessage(data=RoundStartData(
-                    round_index=0,
-                    audio_url=room.room_songs[0].song.audio_url,
-                    start_pertent=0.0)).model_dump())
+            room.status = models.RoomStatusORM.RUNNING
+            await session.commit()
+            await clients.broadcast(room_id, data.model_dump())
+
+            # 生成临时音频访问令牌
+            song = room.room_songs[0].song
+            audio_token = await generate_audio_token(song.id)
+            audio_url = get_audio_stream_url(audio_token)
+
+            # 立即发送第一个回合开始事件
+            room.current_song_index = 0
+            playback_state = cache_schemas.PlaybackState(
+                play_state="playing",
+                progress_ms=0,
+                offset_ts=0,
+                audio_url=audio_url,
+            )
+            tasks = [
+                clients.broadcast(
+                    room_id,
+                    RoundStartMessage(data=RoundStartData(
+                        round_index=0,
+                        audio_url=audio_url,
+                        start_pertent=0.0)).model_dump()),
+                session.commit(),
+                room_cache.set_room_playback_state(room_id, playback_state),
+            ]
+            # 使用 asyncio.gather 来并行执行广播和数据库提交
+            await asyncio.gather(*tasks, return_exceptions=True)
         else:
             logger.warning("Room %s has no songs when starting game", room_id)
             await clients.broadcast_error(
