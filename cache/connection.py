@@ -26,8 +26,7 @@ class RedisClient:
             bool: 连接是否成功
         """
         try:
-            redis_url = url or os.getenv("CCG_REDIS_URL",
-                                         "redis://localhost:6379/0")
+            redis_url = url or os.getenv("CCG_REDIS_URL", "redis://localhost:6379/0")
             self.client = redis.from_url(redis_url, decode_responses=True)
             # 测试连接
             await cast(Awaitable[bool], self.client.ping())

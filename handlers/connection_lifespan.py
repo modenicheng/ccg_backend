@@ -77,12 +77,10 @@ async def on_connect(
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
     if room is None:
-        logger.warning("Room %s not found during on_connect for client %s",
-                       room_id, cl)
+        logger.warning("Room %s not found during on_connect for client %s", room_id, cl)
         return
 
-    await room_cache.update_room_player_online_status(room_id, cl.user.id,
-                                                      True)
+    await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
     # 连接时发送当前播放状态
     message = RoomSchema.ClientRoomState.model_validate(room)
 
@@ -99,8 +97,7 @@ async def on_connect(
     res = await asyncio.gather(
         *[
             cl.ws.send_json(room_state_message.model_dump()),
-            clients.broadcast(room_id,
-                              join_message.model_dump(),
+            clients.broadcast(room_id, join_message.model_dump(),
                               excluded_clients={cl}),
         ],
         return_exceptions=True,
@@ -115,8 +112,7 @@ async def on_connect(
                 r,
                 exc_info=r,
             )
-    logger.debug("Finished sending initial room state to client %s: %s", cl,
-                 res)
+    logger.debug("Finished sending initial room state to client %s: %s", cl, res)
 
 
 async def on_disconnect(
@@ -151,9 +147,7 @@ async def on_disconnect(
 
     leave_message = RoomSchema.PlayerLeaveMessage(
         data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-    await clients.broadcast(room_id,
-                            leave_message.model_dump(),
-                            excluded_clients={cl})
+    await clients.broadcast(room_id, leave_message.model_dump(), excluded_clients={cl})
 
     user = select(models.User).where(models.User.id == cl.user.id)
     result = await session.execute(user)

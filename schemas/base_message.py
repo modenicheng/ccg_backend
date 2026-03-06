@@ -29,8 +29,7 @@ class AutoEventConvertMixin(BaseModel):
 
 class ErrorMessageData(AutoEventConvertMixin):
     message: str = Field(..., description="错误消息内容")
-    error_event: int | EventType | GameEventType = Field(
-        ..., description="引发错误的事件类型")
+    error_event: int | EventType | GameEventType = Field(..., description="引发错误的事件类型")
 
 
 class ErrorMessage(MessageBase, AutoEventConvertMixin):

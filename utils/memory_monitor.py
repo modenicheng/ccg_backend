@@ -223,12 +223,11 @@ async def periodic_memory_report(
             system_percent = system_memory.percent
 
             if detailed:
-                report = (
-                    f"内存报告 - {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"进程RSS: {rss_mb:.2f} MB\n"
-                    f"进程VMS: {vms_mb:.2f} MB\n"
-                    f"系统使用率: {system_percent:.1f}%\n"
-                    f"系统可用: {system_memory.available / 1024 / 1024:.2f} MB")
+                report = (f"内存报告 - {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                          f"进程RSS: {rss_mb:.2f} MB\n"
+                          f"进程VMS: {vms_mb:.2f} MB\n"
+                          f"系统使用率: {system_percent:.1f}%\n"
+                          f"系统可用: {system_memory.available / 1024 / 1024:.2f} MB")
                 logger.info(report)
             else:
                 logger.info(
@@ -241,8 +240,7 @@ async def periodic_memory_report(
                     "rss_mb": rss_mb,
                     "vms_mb": vms_mb,
                     "system_percent": system_percent,
-                    "system_available_mb":
-                    system_memory.available / 1024 / 1024,
+                    "system_available_mb": system_memory.available / 1024 / 1024,
                     "timestamp": time.time(),
                 }
                 callback(info)

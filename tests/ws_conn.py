@@ -215,8 +215,7 @@ def _extract_status_code_from_invalid_status(exc: Exception) -> int | None:
     return code if isinstance(code, int) else None
 
 
-async def _connect_websocket(url: str, cookie_header: str,
-                             timeout: float) -> Any:
+async def _connect_websocket(url: str, cookie_header: str, timeout: float) -> Any:
     connect_fn: Any = ws_connect
 
     for header_arg in ("additional_headers", "extra_headers"):
@@ -263,8 +262,7 @@ async def create_join_and_connect_ws(
         raise ValueError("room_id should not be provided when role='host'")
 
     http_base = base_http_url.rstrip("/")
-    ws_base = _normalize_ws_base_url(base_http_url=http_base,
-                                     base_ws_url=base_ws_url)
+    ws_base = _normalize_ws_base_url(base_http_url=http_base, base_ws_url=base_ws_url)
 
     own_http_client = http_client is None
     client = http_client or httpx.AsyncClient(timeout=connect_timeout)
@@ -333,8 +331,7 @@ async def create_join_and_connect_ws(
         ws_url = f"{ws_base}/ws/{room_id}"
 
         try:
-            ws = await _connect_websocket(ws_url, cookie_header,
-                                          connect_timeout)
+            ws = await _connect_websocket(ws_url, cookie_header, connect_timeout)
         except InvalidStatus as exc:
             status_code = _extract_status_code_from_invalid_status(exc)
             if status_code in (401, 403):
@@ -357,8 +354,8 @@ async def create_join_and_connect_ws(
         initial_message = None
         if expect_first_message:
             try:
-                initial_message = await asyncio.wait_for(
-                    ws.recv(), timeout=first_message_timeout)
+                initial_message = await asyncio.wait_for(ws.recv(),
+                                                         timeout=first_message_timeout)
             except asyncio.TimeoutError as exc:
                 await ws.close()
                 raise WsConnectError(

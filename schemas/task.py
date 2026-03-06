@@ -46,10 +46,9 @@ class TaskDownloadResult(BaseModel):
     platform_song_id: Optional[str] = Field(description="Platform song ID")
     status: TaskStatusEnum = Field(description="Download status")
     cached_path: Optional[str] = Field(
-        default=None,
-        description="Path to cached file if success, null otherwise")
-    error_message: Optional[str] = Field(
-        default=None, description="Error message if failed/retry")
+        default=None, description="Path to cached file if success, null otherwise")
+    error_message: Optional[str] = Field(default=None,
+                                         description="Error message if failed/retry")
     attempts: int = Field(description="Number of attempts made")
     duration_seconds: Optional[float] = Field(
         default=None, description="Duration of successful download in seconds")
@@ -58,8 +57,8 @@ class TaskDownloadResult(BaseModel):
 class TaskDownloadResponse(BaseModel):
     """Response schema for download and cache task completion."""
 
-    task_id: Optional[str] = Field(
-        default=None, description="Huey task ID for tracking in Redis")
+    task_id: Optional[str] = Field(default=None,
+                                   description="Huey task ID for tracking in Redis")
     songlist_id: int = Field(description="Songlist ID being processed")
     total_songs: int = Field(description="Total songs requested for download")
     successful: int = Field(description="Number of successfully cached songs")
@@ -68,7 +67,7 @@ class TaskDownloadResponse(BaseModel):
     results: List[TaskDownloadResult] = Field(
         description="Detailed result for each song")
     overall_status: TaskStatusEnum = Field(description="Overall task status")
-    error_summary: Optional[str] = Field(
-        default=None, description="Summary of any errors occurred")
+    error_summary: Optional[str] = Field(default=None,
+                                         description="Summary of any errors occurred")
     duration_seconds: Optional[float] = Field(
         default=None, description="Total task duration in seconds")

@@ -64,8 +64,8 @@ logger = get_logger(__name__)
 
 
 @regist(GameEventType.JUDGING, JudgingMessage)
-async def handle_judging(data: JudgingMessage, clients: ClientManager,
-                         client: Client, room_id: str, **kwargs) -> None:
+async def handle_judging(data: JudgingMessage, clients: ClientManager, client: Client,
+                         room_id: str, **kwargs) -> None:
     """处理进入判分环节事件"""
     # pylint: disable=unused-argument,too-many-locals
     try:
@@ -82,17 +82,14 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
             song_result = await db.execute(song_stmt)
             song = song_result.scalar_one_or_none()
             if not song:
-                await client.send_error(GameEventType.JUDGING,
-                                        "Song not found")
+                await client.send_error(GameEventType.JUDGING, "Song not found")
                 return
 
             # 获取历史标签
             tag_history_stmt = select(models.SongTagHistory.tag_id).where(
                 models.SongTagHistory.song_id == song_id)
             tag_history_result = await db.execute(tag_history_stmt)
-            history_tag_ids = [
-                tag_id[0] for tag_id in tag_history_result.all()
-            ]
+            history_tag_ids = [tag_id[0] for tag_id in tag_history_result.all()]
 
             # 获取参考精确描述（正确答案）
             description_history_stmt = select(
@@ -100,8 +97,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
                     models.SongDescriptionHistory.song_id == song_id,
                     models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
                 )
-            description_history_result = await db.execute(
-                description_history_stmt)
+            description_history_result = await db.execute(description_history_stmt)
             reference_descriptions = [
                 desc[0] for desc in description_history_result.all()
             ]
@@ -133,16 +129,12 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
                     user_stmt = select(
                         models.User.username).where(models.User.id == user_id)
                     user_result = await db.execute(user_stmt)
-                    username = user_result.scalar_one_or_none(
-                    ) or f"Player {user_id}"
+                    username = user_result.scalar_one_or_none() or f"Player {user_id}"
 
                     player_descriptions.append({
-                        "id":
-                        user_id,
-                        "username":
-                        username,
-                        "description":
-                        answer_data["description_text"],
+                        "id": user_id,
+                        "username": username,
+                        "description": answer_data["description_text"],
                     })
 
             # 构建歌曲信息
@@ -167,8 +159,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
             judging_message = JudgingMessage(data=judging_data)
             await clients.broadcast(room_id, judging_message.model_dump())
 
-            logger.info("Sent JUDGING event for room %s, song %s", room_id,
-                        song.title)
+            logger.info("Sent JUDGING event for room %s, song %s", room_id, song.title)
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during JUDGING event: %s", e)
@@ -206,8 +197,7 @@ async def handle_judge_submit(
             # 检查房间是否存在
             room = await fetch_room_object(db, room_id)
             if not room:
-                await client.send_error(GameEventType.JUDGE_SUBMIT,
-                                        "Room not found")
+                await client.send_error(GameEventType.JUDGE_SUBMIT, "Room not found")
                 return
 
             # 获取当前歌曲信息
@@ -281,13 +271,11 @@ async def handle_judge_submit(
             # 获取抢答队列（从Redis暂时获取，后续可能需要移到数据库）
             answer_queue_items = await room_cache.get_answer_queue(
                 room_id)  # 已排序的 AnswerQueueItem 列表
-            answer_queue = [
-                str(item.player_id) for item in answer_queue_items
-            ]  # 转换为玩家ID字符串列表
+            answer_queue = [str(item.player_id) for item in answer_queue_items
+                            ]  # 转换为玩家ID字符串列表
 
             if not answer_queue:
-                logger.warning("Empty answer queue for judging in room %s",
-                               room_id)
+                logger.warning("Empty answer queue for judging in room %s", room_id)
 
             # 从数据库获取玩家答案
             player_answers_raw = await get_player_answers_for_judging(
@@ -327,28 +315,26 @@ async def handle_judge_submit(
                     player_scores[player["id"]] = 0
 
             # 更新数据库中的抢答顺序（answer_order）
-            updated_count = await update_player_answer_order(
-                db, room_id, song_id, song_index, answer_queue)
-            logger.info("Updated answer_order for %d players in room %s",
-                        updated_count, room_id)
+            updated_count = await update_player_answer_order(db, room_id, song_id,
+                                                             song_index, answer_queue)
+            logger.info("Updated answer_order for %d players in room %s", updated_count,
+                        room_id)
 
             # 保存得分记录到数据库
             for player_id_str, score_delta in player_scores.items():
                 if score_delta > 0:
                     try:
                         user_id = int(player_id_str)
-                        await save_score_record(db, room_id, user_id,
-                                                song_index, score_delta)
+                        await save_score_record(db, room_id, user_id, song_index,
+                                                score_delta)
                     except (ValueError, Exception) as e:  # pylint: disable=broad-exception-caught
                         logger.error("Failed to save score for player %s: %s",
                                      player_id_str, e)
 
-            logger.info("Saved scoring results to database for room %s",
-                        room_id)
+            logger.info("Saved scoring results to database for room %s", room_id)
 
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error during judge submission for room %s: %s", room_id,
-                     e)
+        logger.error("Error during judge submission for room %s: %s", room_id, e)
         await client.send_error(GameEventType.JUDGE_SUBMIT.value,
                                 f"Internal server error: {str(e)}")
         return

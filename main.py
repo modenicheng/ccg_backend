@@ -40,8 +40,7 @@ from utils.enumerations import EventType, GameEventType, ErrorEventType
 from utils.logger import log_level_map
 from utils.memory_monitor import MemoryMonitor
 
-log_level = log_level_map.get(
-    os.getenv("CCG_LOG_LEVEL", "INFO").upper(), logging.INFO)
+log_level = log_level_map.get(os.getenv("CCG_LOG_LEVEL", "INFO").upper(), logging.INFO)
 
 init_logging(level=log_level)
 logger = get_logger(__name__)
@@ -91,8 +90,7 @@ async def lifespan(_app: FastAPI):
         await _app.state.clients.clear()
         logger.info("All websocket clients closed and online states flushed")
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error("Failed to flush websocket online state on shutdown: %s",
-                     exc)
+        logger.error("Failed to flush websocket online state on shutdown: %s", exc)
 
     # 断开 Redis 连接
     try:
@@ -106,9 +104,8 @@ async def lifespan(_app: FastAPI):
         async with session_scope() as session:
             await session.execute(update_stmt)
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error(
-            "Error resetting user online states in database on shutdown: %s",
-            exc)
+        logger.error("Error resetting user online states in database on shutdown: %s",
+                     exc)
 
     # 停止内存监控
     memory_monitor = getattr(_app.state, "memory_monitor", None)
@@ -323,15 +320,13 @@ async def serve_frontend(full_path: str):
 
         # 确保 resolved_path 在 static_dir_resolved 目录内
         if not str(resolved_path).startswith(str(static_dir_resolved)):
-            logger.warning("Path traversal attempt detected: %s -> %s",
-                           full_path, resolved_path)
+            logger.warning("Path traversal attempt detected: %s -> %s", full_path,
+                           resolved_path)
             # 返回 index.html（作为安全降级）
             raise HTTPException(status_code=404, detail="Not found")
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning("Path resolution error: %s", exc)
-        return HttpErrorResponse(error="Invalid path",
-                                 detail=None,
-                                 path=full_path)
+        return HttpErrorResponse(error="Invalid path", detail=None, path=full_path)
 
     if file_path.exists() and file_path.is_file():
         logger.debug("Serving static file: %s", file_path)
@@ -347,9 +342,8 @@ async def serve_frontend(full_path: str):
     # 如果文件不存在，返回 index.html（用于前端客户端路由）
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
-        logger.debug(
-            "File not found, serving index.html for client-side routing: %s",
-            full_path)
+        logger.debug("File not found, serving index.html for client-side routing: %s",
+                     full_path)
         return FileResponse(index_file)
 
     # 前端文件不存在

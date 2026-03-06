@@ -67,8 +67,7 @@ class SkipRoundMessage(MessageBase):
 
 class ShowAnswerData(BaseModel):
     tag_ids: list[int] = Field(default_factory=list, description="正确标签ID列表")
-    description_ids: list[int] = Field(default_factory=list,
-                                       description="正确描述ID列表")
+    description_ids: list[int] = Field(default_factory=list, description="正确描述ID列表")
 
 
 class ShowAnswerMessage(MessageBase):

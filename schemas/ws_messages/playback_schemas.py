@@ -7,9 +7,7 @@ from ..base_message import MessageBase
 
 class PlayControlData(BaseModel):
     progress_ms: int = Field(default=0, ge=0)
-    offset_ts: int | None = Field(default=None,
-                                  ge=0,
-                                  description="前端经过修正的时间戳，后端不用填入")
+    offset_ts: int | None = Field(default=None, ge=0, description="前端经过修正的时间戳，后端不用填入")
     audio_url: str | None = Field(default=None)
 
 

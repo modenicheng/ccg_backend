@@ -139,9 +139,7 @@ async def test_play_message_updates_redis_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(conn,
-                                                    payload,
-                                                    label="PLAY")
+    msg = await _send_message_and_receive_broadcast(conn, payload, label="PLAY")
 
     assert msg["event"] == 20
     assert msg["data"]["progress_ms"] == 4321
@@ -167,9 +165,7 @@ async def test_pause_message_updates_redis_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(conn,
-                                                    payload,
-                                                    label="PAUSE")
+    msg = await _send_message_and_receive_broadcast(conn, payload, label="PAUSE")
 
     assert msg["event"] == 21
     assert msg["data"]["progress_ms"] == 9876
@@ -198,9 +194,7 @@ async def test_seek_message_updates_redis_progress_and_broadcasts(shared_conn):
         },
     }
 
-    msg = await _send_message_and_receive_broadcast(conn,
-                                                    payload,
-                                                    label="SEEK")
+    msg = await _send_message_and_receive_broadcast(conn, payload, label="SEEK")
 
     assert msg["event"] == 22
     assert msg["data"]["progress_ms"] == 5555
@@ -260,9 +254,7 @@ async def test_playback_message_pipe_in_single_room(shared_conn):
     ]
 
     for label, payload, state_predicate in sequence:
-        msg = await _send_message_and_receive_broadcast(conn,
-                                                        payload,
-                                                        label=label)
+        msg = await _send_message_and_receive_broadcast(conn, payload, label=label)
         assert msg["event"] == payload["event"]
         assert msg["data"]["progress_ms"] == payload["data"]["progress_ms"]
 

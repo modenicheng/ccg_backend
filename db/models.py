@@ -28,42 +28,32 @@ class User(Base):
 
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String, nullable=False)
     room_id: Mapped[str | None] = mapped_column(ForeignKey("rooms.id",
                                                            ondelete="CASCADE"),
                                                 nullable=True)
-    is_owner: Mapped[bool] = mapped_column(Boolean,
-                                           default=False,
-                                           nullable=False)
+    is_owner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     token: Mapped[str] = mapped_column(String,
                                        nullable=False,
                                        unique=True,
                                        comment="用于用户身份验证的唯一令牌")
-    online: Mapped[bool] = mapped_column(Boolean,
-                                         default=False,
-                                         nullable=False)
+    online: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
         Index("idx_users_room_id", "room_id"),
-        UniqueConstraint("room_id",
-                         "username",
-                         name="uq_users_room_id_username"),
+        UniqueConstraint("room_id", "username", name="uq_users_room_id_username"),
     )
 
     room: Mapped[Room | None] = relationship(back_populates="users")
     judged_song_tags: Mapped[list[SongTagHistory]] = relationship(
         back_populates="judged_by_user")
-    judged_song_descriptions: Mapped[
-        list[SongDescriptionHistory]] = relationship(
-            back_populates="judged_by_user")
+    judged_song_descriptions: Mapped[list[SongDescriptionHistory]] = relationship(
+        back_populates="judged_by_user")
     scores: Mapped[list[Score]] = relationship(back_populates="user")
-    player_answers: Mapped[list[PlayerAnswer]] = relationship(
-        back_populates="user")
+    player_answers: Mapped[list[PlayerAnswer]] = relationship(back_populates="user")
 
 
 class Songlist(Base):
@@ -71,24 +61,20 @@ class Songlist(Base):
 
     __tablename__ = "songlists"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str | None] = mapped_column(String, nullable=True)
-    platform_songlist_id: Mapped[str | None] = mapped_column(String,
-                                                             nullable=True)
+    platform_songlist_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     creator_name: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
-                                                                 nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (UniqueConstraint("platform",
                                        "platform_songlist_id",
-                                       name="uq_songlist_platform_id"), )
+                                       name="uq_songlist_platform_id"),)
 
-    songs: Mapped[list[SonglistSong]] = relationship(
-        back_populates="songlist", cascade="all, delete-orphan")
+    songs: Mapped[list[SonglistSong]] = relationship(back_populates="songlist",
+                                                     cascade="all, delete-orphan")
 
 
 class SonglistSong(Base):
@@ -99,8 +85,7 @@ class SonglistSong(Base):
     songlist_id: Mapped[int] = mapped_column(ForeignKey("songlists.id",
                                                         ondelete="CASCADE"),
                                              primary_key=True)
-    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
-                                                    ondelete="CASCADE"),
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"),
                                          primary_key=True)
     song_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -113,9 +98,7 @@ class Song(Base):
 
     __tablename__ = "songs"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str | None] = mapped_column(String, nullable=True)
     platform_song_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -125,46 +108,39 @@ class Song(Base):
     # audio_url: Mapped[str | None] = mapped_column(String, nullable=True)
     cached_path: Mapped[str | None] = mapped_column(String, nullable=True)
     album_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    album_id: Mapped[int | None] = mapped_column(ForeignKey(
-        "albums.id", ondelete="SET NULL"),
+    album_id: Mapped[int | None] = mapped_column(ForeignKey("albums.id",
+                                                            ondelete="SET NULL"),
                                                  nullable=True)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
-                                                                 nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (UniqueConstraint("platform",
                                        "platform_song_id",
-                                       name="uq_song_platform_id"), )
+                                       name="uq_song_platform_id"),)
 
     rooms: Mapped[list[RoomSong]] = relationship(back_populates="song")
-    album: Mapped[Album | None] = relationship(back_populates="songs",
-                                               uselist=False)
+    album: Mapped[Album | None] = relationship(back_populates="songs", uselist=False)
     songlists: Mapped[list[SonglistSong]] = relationship(back_populates="song")
     song_tag_histories: Mapped[list[SongTagHistory]] = relationship(
         back_populates="song")
-    song_description_histories: Mapped[
-        list[SongDescriptionHistory]] = relationship(back_populates="song")
-    player_answers: Mapped[list[PlayerAnswer]] = relationship(
+    song_description_histories: Mapped[list[SongDescriptionHistory]] = relationship(
         back_populates="song")
+    player_answers: Mapped[list[PlayerAnswer]] = relationship(back_populates="song")
 
 
 class Album(Base):
     __tablename__ = "albums"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str | None] = mapped_column(String, nullable=True)
-    platform_album_id: Mapped[str | None] = mapped_column(String,
-                                                          nullable=True)
+    platform_album_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     artist: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
-                                                                 nullable=True)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (UniqueConstraint("platform",
                                        "platform_album_id",
-                                       name="uq_album_platform_id"), )
+                                       name="uq_album_platform_id"),)
 
     songs: Mapped[list[Song]] = relationship(back_populates="album")
 
@@ -176,34 +152,31 @@ class Room(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[RoomStatusORM] = mapped_column(
-        Integer, default=RoomStatusORM.WAITING, nullable=False)
+    status: Mapped[RoomStatusORM] = mapped_column(Integer,
+                                                  default=RoomStatusORM.WAITING,
+                                                  nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    song_start_range_percent: Mapped[float | None] = mapped_column(
-        Float, nullable=True)
+    song_start_range_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     current_song_index: Mapped[int | None] = mapped_column(Integer,
                                                            nullable=True,
                                                            default=None)
 
-    __table_args__ = (CheckConstraint("status in (0, 1, 2)",
-                                      name="ck_rooms_status"), )
+    __table_args__ = (CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),)
 
     users: Mapped[list[User]] = relationship(back_populates="room",
                                              cascade="all, delete-orphan")
     room_songs: Mapped[list[RoomSong]] = relationship(back_populates="room")
-    tag_groups: Mapped[list[TagGroup]] = relationship(
-        back_populates="rooms", secondary="tag_groups_rooms")
+    tag_groups: Mapped[list[TagGroup]] = relationship(back_populates="rooms",
+                                                      secondary="tag_groups_rooms")
     scores: Mapped[list[Score]] = relationship(back_populates="room")
-    player_answers: Mapped[list[PlayerAnswer]] = relationship(
+    player_answers: Mapped[list[PlayerAnswer]] = relationship(back_populates="room")
+    song_tag_history: Mapped[list[SongTagHistory]] = relationship(back_populates="room")
+    song_description_history: Mapped[list[SongDescriptionHistory]] = relationship(
         back_populates="room")
-    song_tag_history: Mapped[list[SongTagHistory]] = relationship(
-        back_populates="room")
-    song_description_history: Mapped[
-        list[SongDescriptionHistory]] = relationship(back_populates="room")
 
 
 class RoomSong(Base):
@@ -211,11 +184,9 @@ class RoomSong(Base):
 
     __tablename__ = "room_songs"
 
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="CASCADE"),
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"),
                                          primary_key=True)
-    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
-                                                    ondelete="CASCADE"),
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"),
                                          primary_key=True)
 
     # 这里用于记录歌曲在房间内的顺序，数值越小表示越靠前。可以为 null，表示没有特定顺序要求。
@@ -230,9 +201,7 @@ class TagGroup(Base):
 
     __tablename__ = "tag_groups"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -252,8 +221,7 @@ class TagGroupRoom(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id",
                                                      ondelete="CASCADE"),
                                           primary_key=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="CASCADE"),
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"),
                                          primary_key=True)
 
 
@@ -262,8 +230,7 @@ class TagGroupTag(Base):
 
     __tablename__ = "tag_group_tags"
 
-    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id",
-                                                   ondelete="CASCADE"),
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"),
                                         primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("tag_groups.id",
                                                      ondelete="CASCADE"),
@@ -275,15 +242,12 @@ class Tag(Base):
 
     __tablename__ = "tags"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
 
     groups: Mapped[list[TagGroup]] = relationship(secondary="tag_group_tags",
                                                   back_populates="tags")
-    song_history: Mapped[list[SongTagHistory]] = relationship(
-        back_populates="tag")
+    song_history: Mapped[list[SongTagHistory]] = relationship(back_populates="tag")
 
 
 class SongTagHistory(Base):
@@ -291,28 +255,22 @@ class SongTagHistory(Base):
 
     __tablename__ = "song_tag_history"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
-    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
-                                                    ondelete="CASCADE"),
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"),
                                          nullable=False)
-    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id",
-                                                   ondelete="CASCADE"),
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"),
                                         nullable=False)
-    judged_by_user_id: Mapped[int] = mapped_column(ForeignKey(
-        "users.id", ondelete="SET NULL"),
+    judged_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id",
+                                                              ondelete="SET NULL"),
                                                    nullable=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="SET NULL"),
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="SET NULL"),
                                          nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
     song: Mapped[Song] = relationship(back_populates="song_tag_histories")
     tag: Mapped[Tag] = relationship(back_populates="song_history")
-    judged_by_user: Mapped[User] = relationship(
-        back_populates="judged_song_tags")
+    judged_by_user: Mapped[User] = relationship(back_populates="judged_song_tags")
     room: Mapped[Room] = relationship(back_populates="song_tag_history")
 
 
@@ -321,31 +279,23 @@ class SongDescriptionHistory(Base):
 
     __tablename__ = "song_description_history"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
-    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
-                                                    ondelete="CASCADE"),
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"),
                                          nullable=False)
     description_text: Mapped[str] = mapped_column(Text, nullable=False)
-    is_correct: Mapped[bool] = mapped_column(Boolean,
-                                             default=True,
-                                             nullable=False)
-    judged_by_user_id: Mapped[int] = mapped_column(ForeignKey(
-        "users.id", ondelete="SET NULL"),
+    is_correct: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    judged_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id",
+                                                              ondelete="SET NULL"),
                                                    nullable=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="SET NULL"),
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="SET NULL"),
                                          nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
-    song: Mapped[Song] = relationship(
-        back_populates="song_description_histories")
+    song: Mapped[Song] = relationship(back_populates="song_description_histories")
     judged_by_user: Mapped[User] = relationship(
         back_populates="judged_song_descriptions")
-    room: Mapped[Room] = relationship(
-        back_populates="song_description_history")
+    room: Mapped[Room] = relationship(back_populates="song_description_history")
 
 
 class Score(Base):
@@ -353,14 +303,10 @@ class Score(Base):
 
     __tablename__ = "scores"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="CASCADE"),
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"),
                                          nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id",
-                                                    ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"),
                                          nullable=False)
     round_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -377,21 +323,15 @@ class PlayerAnswer(Base):
 
     __tablename__ = "player_answers"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id",
-                                                    ondelete="CASCADE"),
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="CASCADE"),
                                          nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id",
-                                                    ondelete="CASCADE"),
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"),
                                          nullable=False)
-    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id",
-                                                    ondelete="CASCADE"),
+    song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"),
                                          nullable=False)
     round_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    selected_tag_ids: Mapped[list[int] | None] = mapped_column(JSON,
-                                                               nullable=True)
+    selected_tag_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
     description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     answer_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -407,14 +347,11 @@ class Tasks(Base):
 
     __tablename__ = "tasks"
 
-    id: Mapped[int] = mapped_column(Integer,
-                                    primary_key=True,
-                                    autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     task_name: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON,
-                                                               nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(

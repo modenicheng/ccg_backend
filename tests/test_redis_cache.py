@@ -54,17 +54,10 @@ async def test_room_players_cache():
     """测试房间玩家缓存"""
     room_id = "test-room-players-456"
     players = [
-        RoomStatePlayerItem(id=1, username="Alice", is_owner=True,
-                            online=True),
+        RoomStatePlayerItem(id=1, username="Alice", is_owner=True, online=True),
         RoomStatePlayerItem(id=2, username="Bob", is_owner=False, online=True),
-        RoomStatePlayerItem(id=3,
-                            username="Charlie",
-                            is_owner=False,
-                            online=False),
-        RoomStatePlayerItem(id=4,
-                            username="David",
-                            is_owner=False,
-                            online=True),
+        RoomStatePlayerItem(id=3, username="Charlie", is_owner=False, online=False),
+        RoomStatePlayerItem(id=4, username="David", is_owner=False, online=True),
     ]
 
     try:
@@ -88,8 +81,9 @@ async def test_room_players_cache():
 
 def random_player_attempt_answer_data() -> list[tuple[int, int]]:
     """生成随机的玩家答题数据"""
-    return [(i, random.randint(1772296393000, 1772296393000 + 1000000))
-            for i in range(10)]
+    return [
+        (i, random.randint(1772296393000, 1772296393000 + 1000000)) for i in range(10)
+    ]
 
 
 @pytest.mark.asyncio(loop_scope="session")

@@ -7,8 +7,7 @@ from utils.enumerations import EventType, GameEventType, ErrorEventType
 
 
 class WebSocketErrorEvent(BaseModel):
-    event: Literal[255] | EventType = Field(default=255,
-                                            description="事件类型，固定为 255")
+    event: Literal[255] | EventType = Field(default=255, description="事件类型，固定为 255")
     error_event: EventType | GameEventType | ErrorEventType = Field(
         ..., description="引发错误的事件类型或错误类型")
     message: str = Field(..., description="错误消息内容")

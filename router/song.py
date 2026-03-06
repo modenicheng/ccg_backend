@@ -38,8 +38,7 @@ def _build_range_response(content: bytes, media_type: str,
 
     range_spec = range_header.replace("bytes=", "", 1).strip()
     if "," in range_spec:
-        raise HTTPException(status_code=416,
-                            detail="Multiple ranges are not supported")
+        raise HTTPException(status_code=416, detail="Multiple ranges are not supported")
 
     start_str, sep, end_str = range_spec.partition("-")
     if sep != "-":
@@ -60,8 +59,7 @@ def _build_range_response(content: bytes, media_type: str,
             else:
                 end = int(end_str)
     except ValueError as e:
-        raise HTTPException(status_code=416,
-                            detail="Invalid Range header") from e
+        raise HTTPException(status_code=416, detail="Invalid Range header") from e
 
     if total == 0 or start < 0 or end < start or start >= total:
         return Response(status_code=416,
@@ -72,14 +70,14 @@ def _build_range_response(content: bytes, media_type: str,
 
     end = min(end, total - 1)
     partial = content[start:end + 1]
-    return Response(content=partial,
-                    status_code=206,
-                    media_type=media_type,
-                    headers={
-                        **common_headers, "Content-Range":
-                        f"bytes {start}-{end}/{total}",
-                        "Content-Length": str(len(partial))
-                    })
+    return Response(
+        content=partial,
+        status_code=206,
+        media_type=media_type,
+        headers={
+            **common_headers, "Content-Range": f"bytes {start}-{end}/{total}",
+            "Content-Length": str(len(partial))
+        })
 
 
 @song_router.get("/", response_model=SongListResponse)
@@ -105,23 +103,21 @@ async def song_list(offset: int = Query(default=0, ge=0),
     song_list_data = [
         SongResponse.model_validate(
             {c.name: getattr(song, c.name)
-             for c in song.__table__.columns}) for song in songs
+             for c in song.__table__.columns})
+        for song in songs
     ]
     return SongListResponse(total=total, list=song_list_data)
 
 
 @song_router.post("/", response_model=SongResponse)
-async def create_song(song_data: SongCreate,
-                      session: AsyncSession = Depends(get_db)):
+async def create_song(song_data: SongCreate, session: AsyncSession = Depends(get_db)):
     # 检查是否已存在相同的平台歌曲ID
     if song_data.platform_song_id:
-        stmt = select(Song).where(
-            Song.platform_song_id == song_data.platform_song_id)
+        stmt = select(Song).where(Song.platform_song_id == song_data.platform_song_id)
         existing = await session.execute(stmt)
         if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail="Song with this platform ID already exists")
+            raise HTTPException(status_code=400,
+                                detail="Song with this platform ID already exists")
 
     # 基本验证：至少需要标题或平台ID
     if not song_data.title and not song_data.platform_song_id:
@@ -133,8 +129,7 @@ async def create_song(song_data: SongCreate,
     if song_data.platform_song_id and not song_data.platform:
         raise HTTPException(
             status_code=400,
-            detail="'platform' is required when 'platform_song_id' is provided"
-        )
+            detail="'platform' is required when 'platform_song_id' is provided")
 
     dump_data = song_data.model_dump(exclude_unset=True)
     # 记录即将创建的数据用于调试
@@ -149,12 +144,10 @@ async def create_song(song_data: SongCreate,
     except Exception as e:
         logger.error(f"Failed to create song: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to create song: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create song: {str(e)}")
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name)
-         for c in song.__table__.columns})
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.get("/{song_id}", response_model=SongResponse)
@@ -166,8 +159,7 @@ async def get_song(song_id: int, session: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Song not found")
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name)
-         for c in song.__table__.columns})
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.put("/{song_id}", response_model=SongResponse)
@@ -188,8 +180,7 @@ async def update_song(song_id: int,
     await session.refresh(song)
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name)
-         for c in song.__table__.columns})
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.delete("/{song_id}")
@@ -231,8 +222,7 @@ BASE_ASSETS_PATH = os.getenv("CCG_AUDIO_DOWNLOAD_DIR", "assets/audio")
 
 
 @song_router.post("/cache/{song_id}")
-async def cache_song_asset(song_id: int,
-                           session: AsyncSession = Depends(get_db)):
+async def cache_song_asset(song_id: int, session: AsyncSession = Depends(get_db)):
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
     song = result.scalar_one_or_none()

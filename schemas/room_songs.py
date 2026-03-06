@@ -59,18 +59,16 @@ class RoomSongsListResponse(BaseModel):
     """Response schema for a list of room songs."""
 
     room_id: str = Field(description="Room ID")
-    list: List[RoomSongResponse] = Field(
-        description="List of songs in this room")
-    total: int | None = Field(description="Total number of songs in room",
-                              default=0)
+    list: List[RoomSongResponse] = Field(description="List of songs in this room")
+    total: int | None = Field(description="Total number of songs in room", default=0)
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "room_id":
-                "ABCD12",
+                    "ABCD12",
                 "total":
-                2,
+                    2,
                 "list": [{
                     "room_id": "ABCD12",
                     "song_id": 1,
@@ -105,32 +103,25 @@ class RoomSongsListResponse(BaseModel):
 class AddRoomSongsRequest(BaseModel):
     """Request schema for adding songs to a room."""
 
-    song_ids: List[int] = Field(
-        description="List of song IDs to add to the room")
+    song_ids: List[int] = Field(description="List of song IDs to add to the room")
     append_to_end: bool = Field(
         default=True,
         description=
-        "If true, append songs to the end of queue; if false, insert at beginning"
-    )
+        "If true, append songs to the end of queue; if false, insert at beginning")
 
-    model_config = ConfigDict(json_schema_extra={
-        "example": {
+    model_config = ConfigDict(
+        json_schema_extra={"example": {
             "song_ids": [1, 2, 3],
             "append_to_end": True
-        }
-    })
+        }})
 
 
 class RemoveRoomSongsRequest(BaseModel):
     """Request schema for removing songs from a room."""
 
-    song_ids: List[int] = Field(
-        description="List of song IDs to remove from the room")
+    song_ids: List[int] = Field(description="List of song IDs to remove from the room")
 
-    model_config = ConfigDict(
-        json_schema_extra={"example": {
-            "song_ids": [1, 2]
-        }})
+    model_config = ConfigDict(json_schema_extra={"example": {"song_ids": [1, 2]}})
 
 
 class UpdateRoomSongOrderRequest(BaseModel):

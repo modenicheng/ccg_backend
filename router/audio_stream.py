@@ -44,8 +44,7 @@ def _build_range_response(content: bytes, media_type: str,
 
     range_spec = range_header.replace("bytes=", "", 1).strip()
     if "," in range_spec:
-        raise HTTPException(status_code=416,
-                            detail="Multiple ranges are not supported")
+        raise HTTPException(status_code=416, detail="Multiple ranges are not supported")
 
     start_str, sep, end_str = range_spec.partition("-")
     if sep != "-":
@@ -66,8 +65,7 @@ def _build_range_response(content: bytes, media_type: str,
             else:
                 end = int(end_str)
     except ValueError as e:
-        raise HTTPException(status_code=416,
-                            detail="Invalid Range header") from e
+        raise HTTPException(status_code=416, detail="Invalid Range header") from e
 
     if total == 0 or start < 0 or end < start or start >= total:
         return Response(status_code=416,
@@ -78,14 +76,14 @@ def _build_range_response(content: bytes, media_type: str,
 
     end = min(end, total - 1)
     partial = content[start:end + 1]
-    return Response(content=partial,
-                    status_code=206,
-                    media_type=media_type,
-                    headers={
-                        **common_headers, "Content-Range":
-                        f"bytes {start}-{end}/{total}",
-                        "Content-Length": str(len(partial))
-                    })
+    return Response(
+        content=partial,
+        status_code=206,
+        media_type=media_type,
+        headers={
+            **common_headers, "Content-Range": f"bytes {start}-{end}/{total}",
+            "Content-Length": str(len(partial))
+        })
 
 
 @audio_stream_router.get("/stream/{token}")
@@ -112,8 +110,7 @@ async def stream_audio(
 
     if not song_id:
         logger.warning(f"Invalid or expired audio token: {token[:8]}...")
-        raise HTTPException(status_code=403,
-                            detail="Invalid or expired audio token")
+        raise HTTPException(status_code=403, detail="Invalid or expired audio token")
 
     logger.info(f"Audio token valid, song_id: {song_id}")
 

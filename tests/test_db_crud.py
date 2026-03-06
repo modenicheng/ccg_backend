@@ -89,8 +89,7 @@ async def test_create_or_update_song_existing_song_adds_songlist_link(
     )
     await session.commit()
 
-    links = (await
-             session.execute(select(models.SonglistSong))).scalars().all()
+    links = (await session.execute(select(models.SonglistSong))).scalars().all()
 
     assert updated.id == song.id
     assert updated.title == "updated"
@@ -128,8 +127,7 @@ async def test_create_or_update_song_does_not_duplicate_songlist_link(
     )
     await session.commit()
 
-    links = (await
-             session.execute(select(models.SonglistSong))).scalars().all()
+    links = (await session.execute(select(models.SonglistSong))).scalars().all()
 
     assert song.id is not None
     assert len(links) == 1
@@ -138,8 +136,7 @@ async def test_create_or_update_song_does_not_duplicate_songlist_link(
 
 
 @pytest.mark.asyncio
-async def test_create_or_update_songs_bulk_upserts(
-        session: AsyncSession) -> None:
+async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -187,10 +184,8 @@ async def test_create_or_update_songs_bulk_upserts(
     await session.commit()
 
     songs = (await session.execute(
-        select(models.Song).order_by(models.Song.platform_song_id)
-    )).scalars().all()
-    links = (await
-             session.execute(select(models.SonglistSong))).scalars().all()
+        select(models.Song).order_by(models.Song.platform_song_id))).scalars().all()
+    links = (await session.execute(select(models.SonglistSong))).scalars().all()
 
     assert len(updated) == 2
     assert len(songs) == 3

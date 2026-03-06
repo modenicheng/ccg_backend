@@ -68,8 +68,7 @@ async def save_room_state(room_id: str, state: RoomBaseStateCache) -> None:
         logger.error(f"Error saving room state for room {room_id}: {e}")
 
 
-async def set_room_playback_state(room_id: str,
-                                  playback_state: PlaybackState) -> None:
+async def set_room_playback_state(room_id: str, playback_state: PlaybackState) -> None:
     """将房间播放状态保存到 Redis
 
     Args:
@@ -80,8 +79,7 @@ async def set_room_playback_state(room_id: str,
 
     try:
         key = RedisKeys.playback_state(room_id)
-        await cast(Awaitable,
-                   redis.hset(key, mapping=playback_state.to_redis_hash()))
+        await cast(Awaitable, redis.hset(key, mapping=playback_state.to_redis_hash()))
         await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
         logger.debug(f"Saved playback state for room {room_id}")
     except Exception as e:
@@ -115,8 +113,7 @@ async def set_room_playback_progress(room_id: str, progress_ms: int,
             f"Updated playback progress for room {room_id}: progress_ms={progress_ms}, offset_ts={offset_ts}"
         )
     except Exception as e:
-        logger.error(
-            f"Error updating playback progress for room {room_id}: {e}")
+        logger.error(f"Error updating playback progress for room {room_id}: {e}")
 
 
 async def get_room_playback_state(room_id: str) -> PlaybackState | None:
@@ -173,14 +170,11 @@ async def save_room_players(room_id: str,
         async with redis.pipeline(transaction=True) as pipe:
             await cast(Awaitable, pipe.sadd(key, *player_ids))
             for player in players:
-                player_key = RedisKeys.room_player_status(
-                    room_id, str(player.id))
-                await cast(
-                    Awaitable,
-                    pipe.hset(player_key, mapping=player.to_redis_hash()))
+                player_key = RedisKeys.room_player_status(room_id, str(player.id))
+                await cast(Awaitable,
+                           pipe.hset(player_key, mapping=player.to_redis_hash()))
             result = await pipe.execute()
-            logger.debug(
-                f"Saved room players for room {room_id}, result: {result}")
+            logger.debug(f"Saved room players for room {room_id}, result: {result}")
         return result
     except Exception as e:
         logger.error(f"Error saving room players for room {room_id}: {e}")
@@ -205,8 +199,7 @@ async def get_room_players(room_id: str) -> list[RoomStatePlayerItem]:
                         player = RoomStatePlayerItem.from_redis_hash(data)
                         players.append(player)
                     except Exception as e:
-                        logger.error(
-                            f"Error parsing player data from Redis: {e}")
+                        logger.error(f"Error parsing player data from Redis: {e}")
         logger.debug(f"Retrieved {len(players)} players for room {room_id}")
         return players
     except Exception as e:
@@ -226,25 +219,21 @@ async def delete_room_players(room_id: str) -> list | None:
                 player_key = RedisKeys.room_player_status(room_id, pid)
                 await cast(Awaitable, pipe.delete(player_key))
             result = await pipe.execute()
-            logger.debug(
-                f"Deleted room players for room {room_id}, result: {result}")
+            logger.debug(f"Deleted room players for room {room_id}, result: {result}")
         return result
     except Exception as e:
         logger.error(f"Error deleting room players for room {room_id}: {e}")
         return None
 
 
-async def set_room_player(room_id: str,
-                          player: RoomStatePlayerItem) -> int | None:
+async def set_room_player(room_id: str, player: RoomStatePlayerItem) -> int | None:
     redis = await get_redis()
 
     try:
         key = RedisKeys.room_player_status(room_id, str(player.id))
-        result = await cast(Awaitable,
-                            redis.hset(key, mapping=player.to_redis_hash()))
+        result = await cast(Awaitable, redis.hset(key, mapping=player.to_redis_hash()))
         logger.debug(
-            f"Set room player {player.id} for room {room_id}, result: {result}"
-        )
+            f"Set room player {player.id} for room {room_id}, result: {result}")
         return result
     except Exception as e:
         logger.error(f"Error setting room player for room {room_id}: {e}")
@@ -262,8 +251,7 @@ async def get_room_player(room_id: str,
             logger.debug(f"No player {player_id} found for room {room_id}")
             return None
         player = RoomStatePlayerItem.from_redis_hash(data)
-        logger.debug(
-            f"Retrieved player {player_id} for room {room_id}: {player}")
+        logger.debug(f"Retrieved player {player_id} for room {room_id}: {player}")
         return player
     except Exception as e:
         logger.error(f"Error getting room player for room {room_id}: {e}")
@@ -282,8 +270,7 @@ async def update_room_player_online_status(room_id: str, player_id: int,
         )
         return result
     except Exception as e:
-        logger.error(
-            f"Error updating player online status for room {room_id}: {e}")
+        logger.error(f"Error updating player online status for room {room_id}: {e}")
         return None
 
 
@@ -340,14 +327,12 @@ async def append_attempt_answer_player(room_id: str,
             logger.warning(
                 f"Player {data.player_id} is already in the answer queue for room {room_id}, skipping append"
             )
-            raise ValueError(
-                f"Player {data.player_id} is already in the answer queue")
+            raise ValueError(f"Player {data.player_id} is already in the answer queue")
 
         # Then add to queue
         result = await cast(
             Awaitable,
-            redis.zadd(key,
-                       {member_key: data.server_ts * 0.0001 + data.offset_ts}),
+            redis.zadd(key, {member_key: data.server_ts * 0.0001 + data.offset_ts}),
         )
         logger.debug(
             f"Appended player {data.player_id} to answer queue for room {room_id}, result: {result}"
@@ -387,8 +372,7 @@ async def get_answer_queue(room_id: str) -> list[RoomSchemas.AnswerQueueItem]:
                 p, strict=False).model_copy(update={"order": o + 1})
             for o, p in enumerate(entries)
         ]
-        logger.debug(
-            f"Retrieved answer queue for room {room_id}: {answer_queue}")
+        logger.debug(f"Retrieved answer queue for room {room_id}: {answer_queue}")
         return answer_queue
     except Exception as e:
         logger.error(f"Error getting answer queue for room {room_id}: {e}")
@@ -413,8 +397,7 @@ async def clear_answer_queue(room_id: str) -> int | None:
     key = RedisKeys.answer_queue(room_id)
     try:
         result = await cast(Awaitable, redis.delete(key))
-        logger.debug(
-            f"Cleared answer queue for room {room_id}, result: {result}")
+        logger.debug(f"Cleared answer queue for room {room_id}, result: {result}")
         return result
     except Exception as e:
         logger.error(f"Error clearing answer queue for room {room_id}: {e}")
@@ -442,12 +425,10 @@ async def remove_from_answer_queue(room_id: str, player_id: int) -> int | None:
         for member_json in members:
             try:
                 # Parse the JSON to check player_id
-                item = AnswerQueueItem.model_validate_json(member_json,
-                                                           strict=False)
+                item = AnswerQueueItem.model_validate_json(member_json, strict=False)
                 if item.player_id == player_id:
                     # Remove this member
-                    result = await cast(Awaitable,
-                                        redis.zrem(key, member_json))
+                    result = await cast(Awaitable, redis.zrem(key, member_json))
                     if result:
                         removed_count += 1
                         logger.debug(
@@ -459,8 +440,7 @@ async def remove_from_answer_queue(room_id: str, player_id: int) -> int | None:
 
         return removed_count
     except Exception as e:
-        logger.error(
-            f"Error removing player from answer queue for room {room_id}: {e}")
+        logger.error(f"Error removing player from answer queue for room {room_id}: {e}")
         return None
 
 

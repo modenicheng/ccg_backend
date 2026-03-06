@@ -41,19 +41,16 @@ huey = RedisHuey("ccg-backend", url=REDIS_URI)
 
 from pydub import AudioSegment
 
-SONGLIST_FETCH_CONCURRENCY = int(
-    os.getenv("CCG_SONGLIST_FETCH_CONCURRENCY", "8"))
+SONGLIST_FETCH_CONCURRENCY = int(os.getenv("CCG_SONGLIST_FETCH_CONCURRENCY", "8"))
 SONGLIST_FETCH_RETRIES = int(os.getenv("CCG_SONGLIST_FETCH_RETRIES", "5"))
 SONGLIST_FETCH_BACKOFF_SECONDS = float(
     os.getenv("CCG_SONGLIST_FETCH_BACKOFF_SECONDS", "0.4"))
 DOWNLOAD_RETRIES = int(os.getenv("CCG_AUDIO_DOWNLOAD_RETRIES", "3"))
-DOWNLOAD_BACKOFF_SECONDS = float(
-    os.getenv("CCG_AUDIO_DOWNLOAD_BACKOFF_SECONDS", "0.4"))
+DOWNLOAD_BACKOFF_SECONDS = float(os.getenv("CCG_AUDIO_DOWNLOAD_BACKOFF_SECONDS", "0.4"))
 SONG_URL_RETRIES = int(os.getenv("CCG_SONG_URL_RETRIES", "3"))
-SONG_URL_BACKOFF_SECONDS = float(
-    os.getenv("CCG_SONG_URL_BACKOFF_SECONDS", "0.4"))
-AUDIO_DOWNLOAD_DIR = (os.getenv("CCG_AUDIO_DOWNLOAD_DIR",
-                                "assets/audio").strip() or "assets/audio")
+SONG_URL_BACKOFF_SECONDS = float(os.getenv("CCG_SONG_URL_BACKOFF_SECONDS", "0.4"))
+AUDIO_DOWNLOAD_DIR = (os.getenv("CCG_AUDIO_DOWNLOAD_DIR", "assets/audio").strip() or
+                      "assets/audio")
 QQ_MUSIC_COOKIE = os.getenv("CCG_QQ_MUSIC_COOKIE", "").strip()
 T = TypeVar("T")
 
@@ -178,11 +175,9 @@ def _resolve_audio_download_path(mid: str,
 
     parsed_path = urlparse(url).path
     ext = os.path.splitext(parsed_path)[1] or ".ogg"
-    safe_mid = mid.strip() if isinstance(mid,
-                                         str) and mid.strip() else "unknown"
+    safe_mid = mid.strip() if isinstance(mid, str) and mid.strip() else "unknown"
 
-    project_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), ".."))
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     configured_dir = AUDIO_DOWNLOAD_DIR.strip().lstrip("/\\")
     target_dir = (AUDIO_DOWNLOAD_DIR if os.path.isabs(AUDIO_DOWNLOAD_DIR) else
                   os.path.join(project_root, configured_dir))
@@ -227,21 +222,18 @@ def convert_to_opus(input_path, output_path=None, bitrate="128k"):
 
 @huey.task()
 def download_audio_file(url, save_path=None, mid: str | None = None):
-    return _run_async(
-        _download_audio_file_impl(url=url, save_path=save_path, mid=mid))
+    return _run_async(_download_audio_file_impl(url=url, save_path=save_path, mid=mid))
 
 
-async def _download_audio_file_impl(url,
-                                    save_path=None,
-                                    mid: str | None = None):
+async def _download_audio_file_impl(url, save_path=None, mid: str | None = None):
     """
     下载音频文件并保存到指定路径。
     """
     try:
-        target_mid = (mid or os.path.splitext(
-            os.path.basename(urlparse(url).path))[0] or "unknown")
-        final_save_path = _resolve_audio_download_path(target_mid, url,
-                                                       save_path)
+        target_mid = (mid or
+                      os.path.splitext(os.path.basename(urlparse(url).path))[0] or
+                      "unknown")
+        final_save_path = _resolve_audio_download_path(target_mid, url, save_path)
 
         async with httpx.AsyncClient() as http_client:
             response = await _with_retry(
@@ -256,14 +248,13 @@ async def _download_audio_file_impl(url,
         logger.info(f"Audio downloaded successfully: {final_save_path}")
         return final_save_path
     except Exception as e:
-        logger.error(f"Error when downloading audio from {url}: {e}",
-                     exc_info=True)
+        logger.error(f"Error when downloading audio from {url}: {e}", exc_info=True)
         return None
 
 
 async def _get_song_url(
-    mid: str,
-    filetype: qapi.song.SongFileType = qapi.song.SongFileType.OGG_320
+        mid: str,
+        filetype: qapi.song.SongFileType = qapi.song.SongFileType.OGG_320
 ) -> str | None:
     try:
 
@@ -284,8 +275,7 @@ async def _get_song_url(
             logger.error(f"No URL found for song mid {mid}")
         return url
     except Exception as e:
-        logger.error(f"Error fetching song URL for mid {mid}: {e}",
-                     exc_info=True)
+        logger.error(f"Error fetching song URL for mid {mid}: {e}", exc_info=True)
         return None
 
 
@@ -301,19 +291,16 @@ def download_and_cache_song(mid: str, save_path: str | None = None):
     Returns:
         _type_: _description_
     """
-    return _run_async(
-        _download_and_cache_song_impl(mid=mid, save_path=save_path))
+    return _run_async(_download_and_cache_song_impl(mid=mid, save_path=save_path))
 
 
-async def _download_and_cache_song_impl(mid: str,
-                                        save_path: str | None = None):
+async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
     """下载单曲并将本地缓存路径写回数据库。"""
     if not mid:
         logger.error("download_and_cache_song got empty mid")
         return None
 
-    song_url = await _get_song_url(mid,
-                                   filetype=qapi.song.SongFileType.OGG_320)
+    song_url = await _get_song_url(mid, filetype=qapi.song.SongFileType.OGG_320)
     if not song_url:
         return None
 
@@ -337,8 +324,7 @@ async def _download_and_cache_song_impl(mid: str,
                     f"Audio downloaded for {mid} but song not found in DB, skipped cached_path update: {downloaded_path}"
                 )
             else:
-                logger.info(
-                    f"Updated cached_path for {mid}: {downloaded_path}")
+                logger.info(f"Updated cached_path for {mid}: {downloaded_path}")
             return downloaded_path
         except Exception as err:
             await session.rollback()
@@ -359,8 +345,7 @@ def fetch_songlist(songlist_id: int,
 
     try:
         result = _run_async(
-            _fetch_songlist_impl(songlist_id=songlist_id,
-                                 cookie_str=cookie_str))
+            _fetch_songlist_impl(songlist_id=songlist_id, cookie_str=cookie_str))
 
         if task_id:
             if result is None:
@@ -392,8 +377,7 @@ def fetch_songlist(songlist_id: int,
         raise
 
 
-async def _fetch_songlist_impl(songlist_id: int,
-                               cookie_str: str | None = None):
+async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
     """
     使用 qqmusic_api 获取歌单信息。
     {
@@ -455,8 +439,7 @@ async def _fetch_songlist_impl(songlist_id: int,
     }
     """
     if cookie_str:
-        credential = qapi.Credential.from_cookies_dict(
-            parse_cookie_string(cookie_str))
+        credential = qapi.Credential.from_cookies_dict(parse_cookie_string(cookie_str))
         qapi.get_session().credential = credential
         logger.info(
             f"Using custom credential from provided cookie string for fetching songlist {songlist_id}"
@@ -480,8 +463,8 @@ async def _fetch_songlist_impl(songlist_id: int,
             async with semaphore:
                 for attempt in range(1, SONGLIST_FETCH_RETRIES + 1):
                     try:
-                        songlist_page = await qapi.songlist.get_detail(
-                            songlist_id, page=page)
+                        songlist_page = await qapi.songlist.get_detail(songlist_id,
+                                                                       page=page)
                         return songlist_page["songlist"]
                     except Exception as page_err:
                         if attempt >= SONGLIST_FETCH_RETRIES:
@@ -489,8 +472,8 @@ async def _fetch_songlist_impl(songlist_id: int,
                                 f"Failed to fetch page {page} of songlist {songlist_id} after {attempt} attempts: {page_err}"
                             )
                             raise
-                        sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(
-                            attempt - 1))
+                        sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(attempt -
+                                                                              1))
                         logger.warning(
                             f"Fetch page {page} failed on attempt {attempt}/{SONGLIST_FETCH_RETRIES}, retrying in {sleep_seconds:.2f}s: {page_err}"
                         )
@@ -545,8 +528,8 @@ async def _fetch_songlist_impl(songlist_id: int,
                         f"DB operation hit asyncpg busy-connection error on attempt {attempt}/{db_retries}, disposing engine and retrying: {db_err}"
                     )
                     await engine.dispose()
-                    sleep_seconds = max(
-                        0.1, SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
+                    sleep_seconds = max(0.1,
+                                        SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
                     await asyncio.sleep(sleep_seconds)
 
         return None

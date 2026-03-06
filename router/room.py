@@ -50,8 +50,8 @@ def generate_room_id(length: int = 6) -> str:
 
 @room_router.post("/", response_model=CreateRoomResponse)
 async def create_room(
-    info: CreateRoomRequest, session: AsyncSession = Depends(get_db)
-) -> CreateRoomResponse:
+    info: CreateRoomRequest,
+    session: AsyncSession = Depends(get_db)) -> CreateRoomResponse:
     room_id = generate_room_id()
     logger.info(f"Creating room with ID: {room_id}")
 
@@ -88,9 +88,8 @@ async def join_room(roomid: str,
 
     # 如果房间已经在游戏中，拒绝加入
     if room.status != RoomStatusORM.WAITING:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot join a room that is not in waiting state")
+        raise HTTPException(status_code=400,
+                            detail="Cannot join a room that is not in waiting state")
 
     new_user = User(username=data.username,
                     is_owner=False,
@@ -124,10 +123,8 @@ async def room_info(
 
 @room_router.patch("/{roomid}", response_model=RoomInfoResponse)
 async def room_setting(
-    roomid: str,
-    payload: PatchRoomRequest,
-    session: AsyncSession = Depends(get_db)
-) -> RoomInfoResponse:
+    roomid: str, payload: PatchRoomRequest,
+    session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
     stmt = (select(Room).where(Room.id == roomid).options(
         selectinload(Room.users),
         selectinload(Room.tag_groups).selectinload(TagGroup.tags),

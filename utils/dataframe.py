@@ -181,8 +181,7 @@ class HeartbeatFrame(BaseFrame):
         if uid:
             self.uid = uid
         else:
-            self.uid = "".join(
-                random.sample(string.ascii_letters + string.digits, 8))
+            self.uid = "".join(random.sample(string.ascii_letters + string.digits, 8))
         if t1 == 0 and heartbeat_type == HeartbeatType.PING:
             t1 = self.timestamp
         self.t1 = t1
@@ -207,8 +206,7 @@ class HeartbeatFrame(BaseFrame):
     def load(data: bytes):
         try:
             unpacked: tuple[int, int, int, bytes, int, int, int,
-                            int] = struct.unpack(HeartbeatFrame._data_format,
-                                                 data)
+                            int] = struct.unpack(HeartbeatFrame._data_format, data)
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
             raise InvalidFrameError("Invalid data for HeartbeatFrame") from e

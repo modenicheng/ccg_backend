@@ -25,8 +25,7 @@ async def _create_tags(tag_names: list[str], session: AsyncSession):
     await session.execute(stmt)
 
     # 查询所有标签（包括刚插入的和已存在的）
-    result = await session.execute(
-        select(Tag).where(Tag.name.in_(tag_name_list)))
+    result = await session.execute(select(Tag).where(Tag.name.in_(tag_name_list)))
     tags = result.scalars().all()
     return tags
 
@@ -38,14 +37,11 @@ async def _get_existing_tags_by_ids(tag_ids: list[int],
 
     # 去重并保持输入顺序，避免重复校验/查询
     unique_tag_ids = list(dict.fromkeys(tag_ids))
-    result = await session.execute(
-        select(Tag).where(Tag.id.in_(unique_tag_ids)))
+    result = await session.execute(select(Tag).where(Tag.id.in_(unique_tag_ids)))
     existing_tags = list(result.scalars().all())
 
     found_ids = {tag.id for tag in existing_tags}
-    missing_ids = [
-        tag_id for tag_id in unique_tag_ids if tag_id not in found_ids
-    ]
+    missing_ids = [tag_id for tag_id in unique_tag_ids if tag_id not in found_ids]
     if missing_ids:
         raise HTTPException(status_code=404,
                             detail=f"Tags with IDs {missing_ids} not found")
@@ -58,8 +54,7 @@ async def create_tags(tag_names: TagsCreateRequest,
                       session: AsyncSession = Depends(get_db)):
     tags = await _create_tags(tag_names.tags, session)
     await session.commit()
-    return TagListResponse(
-        tags=[TagResponse.model_validate(tag) for tag in tags])
+    return TagListResponse(tags=[TagResponse.model_validate(tag) for tag in tags])
 
 
 @tag_router.get("/")
@@ -70,8 +65,7 @@ async def get_tags(
 ):
     result = await session.execute(select(Tag).limit(limit).offset(offset))
     tags = result.scalars().all()
-    return TagListResponse(
-        tags=[TagResponse.model_validate(tag) for tag in tags])
+    return TagListResponse(tags=[TagResponse.model_validate(tag) for tag in tags])
 
 
 @tag_router.patch("/{tag_id}", response_model=TagResponse)
@@ -135,8 +129,7 @@ async def create_tag_group(data: TagGroupCreate,
 
     # 处理现有标签ID
     if data.existing_tag_ids:
-        existing_tags = await _get_existing_tags_by_ids(
-            data.existing_tag_ids, session)
+        existing_tags = await _get_existing_tags_by_ids(data.existing_tag_ids, session)
         tags_to_associate.extend(existing_tags)
 
     # 去重：基于标签ID去除重复
@@ -163,8 +156,7 @@ async def create_tag_group(data: TagGroupCreate,
 
 
 @tag_router.patch("/groups/", response_model=TagGroupResponse)
-async def patch_tag_group(data: TagGroupPatch,
-                          session: AsyncSession = Depends(get_db)):
+async def patch_tag_group(data: TagGroupPatch, session: AsyncSession = Depends(get_db)):
     group_id = data.id
     # 1. 获取标签组
     result = await session.execute(
@@ -185,9 +177,7 @@ async def patch_tag_group(data: TagGroupPatch,
     # 3. 处理要移除的标签ID（通过 ORM 关系维护中间表）
     if "remove_tag_ids" in data.model_fields_set and data.remove_tag_ids:
         remove_ids_set = set(data.remove_tag_ids)
-        tag_group.tags = [
-            tag for tag in tag_group.tags if tag.id not in remove_ids_set
-        ]
+        tag_group.tags = [tag for tag in tag_group.tags if tag.id not in remove_ids_set]
 
     existing_tag_ids = {tag.id for tag in tag_group.tags}
 
@@ -201,15 +191,14 @@ async def patch_tag_group(data: TagGroupPatch,
 
     # 6. 处理新增的已有标签ID
     if "add_existing_tag_ids" in data.model_fields_set and data.add_existing_tag_ids:
-        existing_tags = await _get_existing_tags_by_ids(
-            data.add_existing_tag_ids, session)
+        existing_tags = await _get_existing_tags_by_ids(data.add_existing_tag_ids,
+                                                        session)
         tags_to_add.extend(existing_tags)
 
     # 7. 去重：基于标签ID去除重复（包括已关联的标签）
     unique_tags_to_add = [
         tag for tag_id, tag in {
-            tag.id: tag
-            for tag in tags_to_add
+            tag.id: tag for tag in tags_to_add
         }.items() if tag_id not in existing_tag_ids
     ]
 
@@ -229,10 +218,8 @@ async def patch_tag_group(data: TagGroupPatch,
 
 
 @tag_router.delete("/groups/{group_id}", status_code=204)
-async def delete_tag_group(group_id: int,
-                           session: AsyncSession = Depends(get_db)):
-    result = await session.execute(
-        select(TagGroup).where(TagGroup.id == group_id))
+async def delete_tag_group(group_id: int, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(TagGroup).where(TagGroup.id == group_id))
     tag_group = result.scalar_one_or_none()
     if not tag_group:
         raise HTTPException(status_code=404, detail="Tag group not found")

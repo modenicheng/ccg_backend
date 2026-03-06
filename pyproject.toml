@@ -34,3 +34,9 @@ minversion = "7.0"
 addopts = "-ra -s"
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.yapf]
+based_on_style = "google"      # 基础风格: pep8 / google / facebook / chromium
+indent_width = 4             # 缩进空格数
+column_limit = 88            # 每行最大字符数
+align_closing_bracket_with_visual_indent = true  # 对齐闭括号

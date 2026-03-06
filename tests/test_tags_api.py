@@ -53,8 +53,7 @@ async def client(session: AsyncSession) -> AsyncIterator[TestClient]:
 
 
 @pytest.mark.asyncio
-async def test_patch_tag_group_basic(client: TestClient,
-                                     session: AsyncSession):
+async def test_patch_tag_group_basic(client: TestClient, session: AsyncSession):
     """Test PATCH /api/tags/groups/{group_id} with basic fields."""
     # First create a tag group
     tag_group = TagGroup(name="Test Group", description="Original description")
@@ -76,8 +75,7 @@ async def test_patch_tag_group_basic(client: TestClient,
     assert data["tags"] == []
 
     # Verify in database
-    result = await session.execute(
-        select(TagGroup).where(TagGroup.id == tag_group.id))
+    result = await session.execute(select(TagGroup).where(TagGroup.id == tag_group.id))
     updated_group = result.scalar_one()
     assert updated_group.name == "Updated Group"
 
@@ -100,15 +98,13 @@ async def test_patch_tag_group_description_null(client: TestClient,
     data = response.json()
     assert data["description"] is None
 
-    result = await session.execute(
-        select(TagGroup).where(TagGroup.id == tag_group.id))
+    result = await session.execute(select(TagGroup).where(TagGroup.id == tag_group.id))
     updated_group = result.scalar_one()
     assert updated_group.description is None
 
 
 @pytest.mark.asyncio
-async def test_patch_tag_group_add_tags(client: TestClient,
-                                        session: AsyncSession):
+async def test_patch_tag_group_add_tags(client: TestClient, session: AsyncSession):
     """Test adding new tags and existing tags."""
     # Create a tag group
     tag_group = TagGroup(name="Test Group")
@@ -127,8 +123,7 @@ async def test_patch_tag_group_add_tags(client: TestClient,
     # Patch: add new tags and existing tags
     response = client.patch(f"/api/tags/groups/",
                             json={
-                                "id":
-                                tag_group.id,
+                                "id": tag_group.id,
                                 "add_tags": [{
                                     "name": "New Tag 1"
                                 }, {
@@ -141,9 +136,7 @@ async def test_patch_tag_group_add_tags(client: TestClient,
     data = response.json()
     assert len(data["tags"]) == 4
     tag_names = {tag["name"] for tag in data["tags"]}
-    assert tag_names == {
-        "Existing Tag 1", "Existing Tag 2", "New Tag 1", "New Tag 2"
-    }
+    assert tag_names == {"Existing Tag 1", "Existing Tag 2", "New Tag 1", "New Tag 2"}
 
     # Verify associations in database
     result = await session.execute(
@@ -153,8 +146,7 @@ async def test_patch_tag_group_add_tags(client: TestClient,
 
 
 @pytest.mark.asyncio
-async def test_patch_tag_group_remove_tags(client: TestClient,
-                                           session: AsyncSession):
+async def test_patch_tag_group_remove_tags(client: TestClient, session: AsyncSession):
     """Test removing tags from a group."""
     # Create tags
     tag1 = Tag(name="Tag 1")
@@ -238,11 +230,7 @@ async def test_patch_tag_group_add_and_remove(client: TestClient,
 @pytest.mark.asyncio
 async def test_patch_tag_group_not_found(client: TestClient):
     """Test PATCH with non-existent group ID."""
-    response = client.patch("/api/tags/groups/",
-                            json={
-                                "id": 9999,
-                                "name": "Updated"
-                            })
+    response = client.patch("/api/tags/groups/", json={"id": 9999, "name": "Updated"})
     assert response.status_code == 404
     assert response.json()["detail"] == "Tag group not found"
 

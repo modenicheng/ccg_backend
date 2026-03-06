@@ -50,14 +50,13 @@ async def songlist_list(
         session: AsyncSession = Depends(get_db),
 ):
     # 子查询统计每个歌单的歌曲数量
-    song_count_subq = (select(
-        func.count(SonglistSong.song_id).label("song_count")).where(
+    song_count_subq = (select(func.count(
+        SonglistSong.song_id).label("song_count")).where(
             SonglistSong.songlist_id == Songlist.id).scalar_subquery())
 
     # 主查询，不再加载歌曲关系
-    stmt = (select(
-        Songlist,
-        song_count_subq.label("song_count")).offset(offset).limit(limit))
+    stmt = (select(Songlist,
+                   song_count_subq.label("song_count")).offset(offset).limit(limit))
 
     if kw:
         stmt = stmt.where(Songlist.title.ilike(f"%{kw}%"))
@@ -106,7 +105,7 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
     if data.platform == MusicPlatform.QQ:
         task_id = str(uuid4())
         task = tasks.fetch_songlist.task_class(
-            args=(int(data.platform_songlist_id), ),
+            args=(int(data.platform_songlist_id),),
             kwargs={
                 "cookie_str": data.cookie_str,
                 "task_id": task_id,
@@ -130,9 +129,8 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
         except Exception as e:
             logger.error(f"Failed to create task record: {e}")
             await session.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create task record: {str(e)}")
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to create task record: {str(e)}")
         return TaskResponse(
             task_id=task_id,
             task_name="fetch_songlist",
@@ -149,8 +147,7 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
 @songlist_router.get("/task/{task_id}")
 async def get_songlist_task_result(task_id: str,
                                    session: AsyncSession = Depends(get_db)):
-    task_record = await get_task_record_by_task_id(session=session,
-                                                   task_id=task_id)
+    task_record = await get_task_record_by_task_id(session=session, task_id=task_id)
     if not task_record:
         raise HTTPException(status_code=404, detail="Task not found")
     return await _build_task_response(session=session, task_record=task_record)
@@ -225,10 +222,7 @@ async def update_songlist(
     # Convert SQLAlchemy Song objects to dictionaries to avoid async context issues
     song_responses = []
     for song in songs:
-        song_dict = {
-            c.name: getattr(song, c.name)
-            for c in song.__table__.columns
-        }
+        song_dict = {c.name: getattr(song, c.name) for c in song.__table__.columns}
         song_responses.append(SongResponse.model_validate(song_dict))
 
     return SonglistResponse(
@@ -243,8 +237,7 @@ async def update_songlist(
 
 
 @songlist_router.delete("/{songlist_id}")
-async def delete_songlist(songlist_id: int,
-                          session: AsyncSession = Depends(get_db)):
+async def delete_songlist(songlist_id: int, session: AsyncSession = Depends(get_db)):
     stmt = select(Songlist).where(Songlist.id == songlist_id)
     result = await session.execute(stmt)
     songlist = result.scalar_one_or_none()

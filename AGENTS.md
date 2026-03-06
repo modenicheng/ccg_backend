@@ -149,4 +149,24 @@ Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`
 
 ---
 
+## Coding Style Manual
+
+1. Formmating the code
+   
+   use yapf.
+
+   ```bash
+   uv run yapf -i -r .
+   ```
+
+2. Linting the code
+   
+   use pylint.
+
+   ```bash
+   pylint $(git ls-files '*.py') # All python files
+   ```
+
+   May be you can ignore the `tests/` and `alembic` directories.
+
 *Last updated: March 2026*

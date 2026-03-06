@@ -36,8 +36,7 @@ class RoundEndData(BaseModel):
 
 class AnswerQueueData(BaseModel):
     """抢答队列数据"""
-    queue: List[AnswerQueueItem] = Field(default_factory=list,
-                                         description="抢答队列")
+    queue: List[AnswerQueueItem] = Field(default_factory=list, description="抢答队列")
 
 
 class AnswerQueueMessage(MessageBase):
@@ -72,8 +71,7 @@ class YourTurnMessage(MessageBase):
 
 class SubmitAnswerData(BaseModel):
     """提交答案数据"""
-    selected_tag_ids: List[int] = Field(default_factory=list,
-                                        description="选择的标签ID列表")
+    selected_tag_ids: List[int] = Field(default_factory=list, description="选择的标签ID列表")
     description_text: str | None = Field(default=None, description="精准描述文本")
 
 
@@ -86,8 +84,7 @@ class AnswerBroadcastData(BaseModel):
     """答案广播数据"""
     # 可以匿名化，或者包含玩家ID
     player_id: str = Field(..., description="玩家ID")
-    selected_tag_ids: List[int] = Field(default_factory=list,
-                                        description="选择的标签ID列表")
+    selected_tag_ids: List[int] = Field(default_factory=list, description="选择的标签ID列表")
     description_text: str | None = Field(default=None, description="精准描述文本")
 
 

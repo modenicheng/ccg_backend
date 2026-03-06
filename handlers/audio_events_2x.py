@@ -29,9 +29,7 @@ async def handle_play(
     state.play_state = "playing"  # 确保状态是 playing
     res = await asyncio.gather(
         set_room_playback_state(room_id, state),
-        clients.broadcast(room_id,
-                          data.model_dump(),
-                          excluded_clients={client}),
+        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):
@@ -57,9 +55,7 @@ async def handle_pause(
     state.play_state = "paused"  # 确保状态是 paused
     res = await asyncio.gather(
         set_room_playback_state(room_id, state),
-        clients.broadcast(room_id,
-                          data.model_dump(),
-                          excluded_clients={client}),
+        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):
@@ -85,11 +81,8 @@ async def handle_seek(
     data.data.offset_ts = (int(data.data.offset_ts)
                            if data.data.offset_ts is not None else data.ts)
     res = await asyncio.gather(
-        set_room_playback_progress(room_id, data.data.progress_ms,
-                                   data.data.offset_ts),
-        clients.broadcast(room_id,
-                          data.model_dump(),
-                          excluded_clients={client}),
+        set_room_playback_progress(room_id, data.data.progress_ms, data.data.offset_ts),
+        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):

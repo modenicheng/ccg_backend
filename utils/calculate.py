@@ -46,9 +46,7 @@ def calculate_player_scores(
                 continue
 
             # Check if player selected exactly the correct tags for this group
-            player_group_tags = [
-                tag for tag in selected_tags if tag in group_tags
-            ]
+            player_group_tags = [tag for tag in selected_tags if tag in group_tags]
             if player_group_tags == group_correct_tags:
                 # Award 1 point
                 player_scores[player_id] += 1

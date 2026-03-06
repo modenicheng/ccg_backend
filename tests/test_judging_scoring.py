@@ -130,9 +130,8 @@ def test_calculate_player_scores_description_points():
     }
     tag_group_map = {}
     correct_tags = []
-    correct_description_ids = [
-        1002, 1003
-    ]  # Players 1002 and 1003 have correct descriptions
+    correct_description_ids = [1002,
+                               1003]  # Players 1002 and 1003 have correct descriptions
 
     scores = calculate_player_scores(
         answer_queue=answer_queue,
@@ -457,8 +456,8 @@ def test_calculate_player_scores_overlapping_tag_groups():
             'description_text': None,
         },
         "1002": {
-            'selected_tag_ids':
-            [101, 103],  # Could match group 2 but tag 101 already used
+            'selected_tag_ids': [101,
+                                 103],  # Could match group 2 but tag 101 already used
             'description_text': None,
         }
     }

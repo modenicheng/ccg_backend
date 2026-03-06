@@ -43,8 +43,7 @@ class PlaybackState(BaseModel):
     progress_ms: int = Field(default=0, ge=0)
     # 这个字段主要是为了让前端知道状态更新时间，方便算播放进度
     updated_at: int = Field(default_factory=lambda: int(time() * 1000))
-    offset_ts: int = Field(default=0, ge=0,
-                           description="前端经过修正的时间戳, ms")  # 前端经过修正的时间戳
+    offset_ts: int = Field(default=0, ge=0, description="前端经过修正的时间戳, ms")  # 前端经过修正的时间戳
     play_state: Literal["playing", "paused"] = Field(default="paused")
     current_order: int = Field(default=0, ge=0)
     audio_url: str | None = None
@@ -66,12 +65,10 @@ class ClientRoomState(BaseModel):
     title: str | None = None
     status: Literal[0, 1, 2] = RoomStatus.WAITING.value
     song_start_range_percent: float | None = Field(default=0, ge=0, le=100)
-    players: list[RoomStatePlayerItem] = Field(default_factory=list,
-                                               alias="users")
+    players: list[RoomStatePlayerItem] = Field(default_factory=list, alias="users")
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
     answer_queue: list[AnswerQueueItem] = Field(default_factory=list)
-    playback_status: PlaybackState | None = Field(default=None,
-                                                  description="当前播放状态")
+    playback_status: PlaybackState | None = Field(default=None, description="当前播放状态")
     scores: list[ScoreItem] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

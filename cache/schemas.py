@@ -75,10 +75,9 @@ class TaskResult(RedisModel):
         "Current status of the task (e.g., 'pending', 'completed', 'failed')",
     )
     result: Optional[Any] = Field(
-        default=None,
-        description="Result of the task if completed successfully")
-    error: Optional[str] = Field(
-        default=None, description="Error message if the task failed")
+        default=None, description="Result of the task if completed successfully")
+    error: Optional[str] = Field(default=None,
+                                 description="Error message if the task failed")
 
 
 class RoomStateTagItem(RedisModel):

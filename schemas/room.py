@@ -46,8 +46,7 @@ class PatchRoomRequest(BaseModel):
     )
     title: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=500)
-    tag_group_ids: list[int] | None = Field(default=None,
-                                            description="房间关联的标签组 ID 列表")
+    tag_group_ids: list[int] | None = Field(default=None, description="房间关联的标签组 ID 列表")
     tag_groups: list[TagGroupResponse] | None = Field(default=None,
                                                       description="房间标签分组配置")
     model_config = ConfigDict(from_attributes=True)

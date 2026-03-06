@@ -40,9 +40,7 @@ def init_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
-    if not any(
-            isinstance(handler, RichHandler)
-            for handler in root_logger.handlers):
+    if not any(isinstance(handler, RichHandler) for handler in root_logger.handlers):
         rich_handler = RichHandler(
             rich_tracebacks=True,
             markup=rich_markup,
@@ -60,8 +58,7 @@ def init_logging(
         encoding="utf-8",
     )
     file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
     root_logger.addHandler(file_handler)
 
     _CONFIGURED = True

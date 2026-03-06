@@ -1,4 +1,3 @@
-
 """
 Event handler registration and dispatch manager.
 This module provides a decorator-based system for registering and dispatching
@@ -63,12 +62,10 @@ async def handle(
     parsed_data: Any = data
     if data_validator is not bytes:
         try:
-            parsed_data = cast(type[BaseModel],
-                               data_validator).model_validate(data)
+            parsed_data = cast(type[BaseModel], data_validator).model_validate(data)
         except Exception as exc:
             logger.warning("Failed to parse data for event %s", event.name)
-            raise ValueError(
-                f"Failed to parse data for event {event.name}") from exc
+            raise ValueError(f"Failed to parse data for event {event.name}") from exc
     result = handler(parsed_data,
                      clients=clients,
                      client=client,

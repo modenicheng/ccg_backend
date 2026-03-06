@@ -154,14 +154,12 @@ async def make_request(client: httpx.AsyncClient, url: str,
                              error=None)
     except Exception as e:
         elapsed = time.perf_counter() - start_time
-        return RequestResult(status_code=0,
-                             response_time=elapsed,
-                             error=str(e))
+        return RequestResult(status_code=0, response_time=elapsed, error=str(e))
 
 
 async def worker(client: httpx.AsyncClient, url: str, config: RequestConfig,
-                 request_count: int, results: List[RequestResult],
-                 progress: Progress, task_id: int) -> None:
+                 request_count: int, results: List[RequestResult], progress: Progress,
+                 task_id: int) -> None:
     """
     工作协程：发送指定数量的请求
     """
@@ -198,17 +196,15 @@ async def run_load_test(url: str,
     # 创建HTTP客户端
     limits = httpx.Limits(max_keepalive_connections=concurrent,
                           max_connections=concurrent)
-    async with httpx.AsyncClient(limits=limits,
-                                 timeout=config.timeout) as client:
+    async with httpx.AsyncClient(limits=limits, timeout=config.timeout) as client:
         # 启动worker任务
         tasks = []
         for i in range(concurrent):
-            worker_requests = requests_per_worker + (1 if i < extra_requests
-                                                     else 0)
+            worker_requests = requests_per_worker + (1 if i < extra_requests else 0)
             if worker_requests > 0:
                 task = asyncio.create_task(
-                    worker(client, url, config, worker_requests, results,
-                           progress, task_id))
+                    worker(client, url, config, worker_requests, results, progress,
+                           task_id))
                 tasks.append(task)
 
         # 显示进度条
@@ -221,8 +217,8 @@ async def run_load_test(url: str,
     total_time = time.perf_counter() - start_time
 
     # 统计结果
-    successful = sum(1 for r in results
-                     if r.error is None and 200 <= r.status_code < 400)
+    successful = sum(
+        1 for r in results if r.error is None and 200 <= r.status_code < 400)
     failed = total_requests - successful
     response_times = [r.response_time for r in results if r.error is None]
 
@@ -233,15 +229,13 @@ async def run_load_test(url: str,
                          response_times=response_times)
 
 
-def display_results(stats: LoadTestStats, url: str,
-                    config: RequestConfig) -> None:
+def display_results(stats: LoadTestStats, url: str, config: RequestConfig) -> None:
     """
     使用Rich显示测试结果
     """
     console.print()
     console.print(
-        Panel.fit(f"[bold cyan]压力测试结果 - {url}[/bold cyan]",
-                  border_style="cyan"))
+        Panel.fit(f"[bold cyan]压力测试结果 - {url}[/bold cyan]", border_style="cyan"))
 
     # 显示请求配置
     console.print(f"[dim]方法: {config.method}, 超时: {config.timeout}s[/dim]")
@@ -267,9 +261,7 @@ def display_results(stats: LoadTestStats, url: str,
     console.print(table)
 
     # 响应时间表格
-    time_table = Table(show_header=True,
-                       header_style="bold green",
-                       title="响应时间统计")
+    time_table = Table(show_header=True, header_style="bold green", title="响应时间统计")
     time_table.add_column("统计项", style="dim", width=20)
     time_table.add_column("时间 (秒)", justify="right")
     time_table.add_column("时间 (毫秒)", justify="right")
@@ -319,8 +311,7 @@ def display_results(stats: LoadTestStats, url: str,
     # 显示错误摘要（如果有）
     if stats.failed_requests > 0:
         console.print()
-        console.print(
-            Panel.fit("[bold red]错误摘要[/bold red]", border_style="red"))
+        console.print(Panel.fit("[bold red]错误摘要[/bold red]", border_style="red"))
         console.print(
             f"[red]失败请求数: {stats.failed_requests} ({stats.failed_requests/stats.total_requests*100:.1f}%)[/red]"
         )
@@ -349,23 +340,18 @@ def parse_args():
                         type=int,
                         default=100,
                         help="总请求数 (默认: 100)")
-    parser.add_argument(
-        "-m",
-        "--method",
-        type=str,
-        default="GET",
-        choices=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"],
-        help="HTTP方法 (默认: GET)")
+    parser.add_argument("-m",
+                        "--method",
+                        type=str,
+                        default="GET",
+                        choices=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"],
+                        help="HTTP方法 (默认: GET)")
     parser.add_argument("-H",
                         "--header",
                         action="append",
                         help="请求头，格式: 'Key: Value'，可多次使用")
-    parser.add_argument("--json",
-                        type=str,
-                        help="JSON请求体，例如: '{\"key\": \"value\"}'")
-    parser.add_argument("--data",
-                        action="append",
-                        help="表单数据，格式: 'key=value'，可多次使用")
+    parser.add_argument("--json", type=str, help="JSON请求体，例如: '{\"key\": \"value\"}'")
+    parser.add_argument("--data", action="append", help="表单数据，格式: 'key=value'，可多次使用")
     parser.add_argument("--timeout",
                         type=float,
                         default=30.0,

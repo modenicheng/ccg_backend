@@ -7,8 +7,7 @@ from anyio import open_file
 from fastapi import HTTPException
 
 ASSET_CACHE_MAX_ITEMS = int(os.getenv("CCG_ASSET_CACHE_MAX_ITEMS", "64"))
-_song_asset_cache: OrderedDict[str, tuple[float, int, bytes,
-                                          str]] = OrderedDict()
+_song_asset_cache: OrderedDict[str, tuple[float, int, bytes, str]] = OrderedDict()
 
 
 async def load_song_asset_with_cache(path: str) -> tuple[bytes, str]:
@@ -19,8 +18,7 @@ async def load_song_asset_with_cache(path: str) -> tuple[bytes, str]:
     """
     abs_path = os.path.abspath(path)
     if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=404,
-                            detail="Cached audio file not found")
+        raise HTTPException(status_code=404, detail="Cached audio file not found")
 
     stat = os.stat(abs_path)
     mtime = stat.st_mtime
@@ -34,8 +32,7 @@ async def load_song_asset_with_cache(path: str) -> tuple[bytes, str]:
     async with await open_file(abs_path, mode="rb") as f:
         content = await f.read()
 
-    media_type = mimetypes.guess_type(
-        abs_path)[0] or "application/octet-stream"
+    media_type = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
     _song_asset_cache[abs_path] = (mtime, size, content, media_type)
     _song_asset_cache.move_to_end(abs_path)
 

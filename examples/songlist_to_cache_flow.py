@@ -36,8 +36,7 @@ async def run(songlist_id: int = 9519555384) -> None:
     if not db_songs:
         raise RuntimeError(
             "songlist persisted but has no songs. "
-            "Please verify songlist visibility and CCG_QQ_MUSIC_COOKIE validity."
-        )
+            "Please verify songlist visibility and CCG_QQ_MUSIC_COOKIE validity.")
 
     first_song = db_songs[0]
     if not first_song.platform_song_id:
@@ -62,8 +61,7 @@ async def run(songlist_id: int = 9519555384) -> None:
         raise RuntimeError("song not found in DB after cache flow")
     if song.cached_path != cached_path:
         raise RuntimeError(
-            f"cached_path mismatch: db={song.cached_path}, returned={cached_path}"
-        )
+            f"cached_path mismatch: db={song.cached_path}, returned={cached_path}")
 
     file_path = Path(cached_path)
     if not file_path.exists():

@@ -20,15 +20,12 @@ class SonglistBase(BaseModel):
     """Base schema for songlist data."""
 
     platform: Optional[str] = Field(
-        default=None,
-        description="Platform identifier (e.g., 'qqmusic', 'netease')")
+        default=None, description="Platform identifier (e.g., 'qqmusic', 'netease')")
     platform_songlist_id: Optional[str] = Field(
         default=None, description="Platform-specific songlist ID")
     title: Optional[str] = Field(default=None, description="Songlist title")
-    creator_name: Optional[str] = Field(default=None,
-                                        description="Creator/author name")
-    cover_url: Optional[str] = Field(default=None,
-                                     description="Cover image URL")
+    creator_name: Optional[str] = Field(default=None, description="Creator/author name")
+    cover_url: Optional[str] = Field(default=None, description="Cover image URL")
     # metadata_json: Optional[dict[str, Any]] = Field(
     #     default=None, description="Additional metadata as JSON")
 
@@ -45,15 +42,12 @@ class SonglistFetchRequest(BaseModel):
 
     platform_songlist_id: str = Field(
         ...,
-        description=
-        "Platform-specific songlist ID (e.g., '123456789' for QQ Music)")
+        description="Platform-specific songlist ID (e.g., '123456789' for QQ Music)")
     platform: str = Field(
         default="qqmusic",
         description="Platform identifier (e.g., 'qqmusic', 'netease')")
     max_retries: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Optional override for max retry attempts")
+        default=None, ge=1, description="Optional override for max retry attempts")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -69,13 +63,10 @@ class SonglistCreateRequest(BaseModel):
     """Request schema for creating/importing a songlist."""
 
     platform: str = Field(description="Platform identifier")
-    platform_songlist_id: str = Field(
-        description="Platform-specific songlist ID")
+    platform_songlist_id: str = Field(description="Platform-specific songlist ID")
     title: Optional[str] = Field(default=None, description="Songlist title")
-    creator_name: Optional[str] = Field(default=None,
-                                        description="Creator/author name")
-    cover_url: Optional[str] = Field(default=None,
-                                     description="Cover image URL")
+    creator_name: Optional[str] = Field(default=None, description="Creator/author name")
+    cover_url: Optional[str] = Field(default=None, description="Cover image URL")
     metadata_json: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata as JSON")
 
@@ -98,14 +89,12 @@ class SonglistResponse(SonglistBase):
     """Response schema for songlist details."""
 
     id: int = Field(description="Database ID")
-    cover_url: Optional[str] = Field(default=None,
-                                     description="Cover image URL")
+    cover_url: Optional[str] = Field(default=None, description="Cover image URL")
     count: int = Field(description="Number of songs in this list")
     songs: Optional[List[SongResponse]] = Field(
         default=None,
         description=
-        "List of songs in this songlist (optional, only included in detail view)"
-    )
+        "List of songs in this songlist (optional, only included in detail view)")
 
     model_config = ConfigDict(from_attributes=True,
                               json_schema_extra={
@@ -115,8 +104,7 @@ class SonglistResponse(SonglistBase):
                                       "platform_songlist_id": "123456789",
                                       "title": "My Favorite Songs",
                                       "creator_name": "John Doe",
-                                      "cover_url":
-                                      "https://example.com/cover.jpg",
+                                      "cover_url": "https://example.com/cover.jpg",
                                       "count": 50,
                                       "songs": None,
                                       "metadata_json": None
@@ -128,14 +116,13 @@ class SonglistListResponse(BaseModel):
     """Response schema for a list of songlists."""
 
     total: int = Field(description="Total number of songlists available")
-    list: List[SonglistResponse] = Field(
-        description="List of songlist details")
+    list: List[SonglistResponse] = Field(description="List of songlist details")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "total":
-                2,
+                    2,
                 "list": [{
                     "id": 1,
                     "platform": "qqmusic",
@@ -165,11 +152,9 @@ class SonglistFromMidRequest(BaseModel):
     """Request schema for creating a songlist from a platform-specific ID."""
 
     platform: MusicPlatform = Field(description="Platform identifier")
-    platform_songlist_id: str = Field(
-        description="Platform-specific songlist ID")
+    platform_songlist_id: str = Field(description="Platform-specific songlist ID")
     cookie_str: Optional[str] = Field(
-        default=None,
-        description="Optional cookie string for authenticated requests")
+        default=None, description="Optional cookie string for authenticated requests")
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "platform": "qq",

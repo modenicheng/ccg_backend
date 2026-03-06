@@ -75,17 +75,15 @@ class ClientManager:
 
     def get_room_snapshot(self) -> dict[str, set[Client]]:
         """获取房间-连接快照（用于遍历，避免直接操作内部引用）。"""
-        return {
-            room_id: set(clients)
-            for room_id, clients in self._rooms.items()
-        }
+        return {room_id: set(clients) for room_id, clients in self._rooms.items()}
 
     async def clear(self, room_id: str | None = None):
         if room_id is None:
             results = await asyncio.gather(
                 *[
                     client.ws.close(code=1000, reason="Server shutdown")
-                    for clients in self._rooms.values() for client in clients
+                    for clients in self._rooms.values()
+                    for client in clients
                 ],
                 return_exceptions=True,
             )
@@ -163,7 +161,8 @@ class ClientManager:
         clients = self._rooms.get(room_id, set())
         results = await asyncio.gather(
             *[
-                self.send(client, message) for client in clients
+                self.send(client, message)
+                for client in clients
                 if client not in excluded_clients
             ],
             return_exceptions=True,
@@ -189,8 +188,7 @@ class ClientManager:
             await client.ws.close(code=code, reason=reason)
         except Exception as e:
             logger.error(
-                f"Failed to kick client {client.user.username}<{client.user.id}>: {e}"
-            )
+                f"Failed to kick client {client.user.username}<{client.user.id}>: {e}")
         finally:
             self.pop(room_id, client)
             del client

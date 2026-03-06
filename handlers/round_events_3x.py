@@ -51,8 +51,8 @@ async def handle_game_start(
     async with session_scope() as session:
         room = (await session.execute(
             select(models.Room).where(models.Room.id == room_id).options(
-                selectinload(models.Room.room_songs).selectinload(
-                    models.RoomSong.song)))).scalar_one_or_none()
+                selectinload(models.Room.room_songs).selectinload(models.RoomSong.song))
+        )).scalar_one_or_none()
 
         if not room:
             logger.error("Room %s not found", room_id)
@@ -130,9 +130,8 @@ async def handle_round_end(
             client.user.username,
             room_id,
         )
-        await client.send_error(
-            GameEventType.ROUND_END,
-            "Only the room owner can end the round manually")
+        await client.send_error(GameEventType.ROUND_END,
+                                "Only the room owner can end the round manually")
         return
 
     await clients.broadcast(room_id, data.model_dump())
@@ -172,8 +171,7 @@ async def handle_attempt_answer(
         is_answering=False,
     )
     try:
-        result = await room_cache.append_attempt_answer_player(
-            room_id, answer_item)
+        result = await room_cache.append_attempt_answer_player(room_id, answer_item)
     except ValueError:
         logger.warning(
             "Player %s attempted to answer in room %s but is already in the queue",
@@ -187,8 +185,8 @@ async def handle_attempt_answer(
         return
 
     if result is None:
-        logger.error("Failed to add player %s to answer queue in room %s",
-                     player_id, room_id)
+        logger.error("Failed to add player %s to answer queue in room %s", player_id,
+                     room_id)
         await client.send_error(
             GameEventType.ATTEMPT_ANSWER.value,
             "Failed to join answer queue, please try again",
@@ -226,8 +224,7 @@ async def handle_attempt_answer(
         your_turn_data = YourTurnData()
         your_turn_message = YourTurnMessage(data=your_turn_data)
         await client.send(your_turn_message.model_dump())
-        logger.info("Sent YOUR_TURN to player %s in room %s", player_id,
-                    room_id)
+        logger.info("Sent YOUR_TURN to player %s in room %s", player_id, room_id)
 
     # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
     sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
@@ -264,8 +261,7 @@ async def handle_submit_answer(
     player_id = str(client.user.id)
     current_answerer = await room_cache.get_room_current_answerer(room_id)
     if current_answerer != player_id:
-        await client.send_error(GameEventType.SUBMIT_ANSWER,
-                                "Not your turn to answer")
+        await client.send_error(GameEventType.SUBMIT_ANSWER, "Not your turn to answer")
         return
 
     # 将答案保存到数据库（PlayerAnswer表）
@@ -311,8 +307,7 @@ async def handle_submit_answer(
         selected_tag_ids=data.data.selected_tag_ids,
         description_text=data.data.description_text,
     )
-    answer_broadcast_message = AnswerBroadcastMessage(
-        data=answer_broadcast_data)
+    answer_broadcast_message = AnswerBroadcastMessage(data=answer_broadcast_data)
     await clients.broadcast(room_id, answer_broadcast_message.model_dump())
 
     # 玩家提交答案后不清除队列，只更新当前作答者状态
@@ -330,8 +325,7 @@ async def handle_submit_answer(
                 current_player_index = i
                 break
 
-        if current_player_index >= 0 and current_player_index + 1 < len(
-                current_queue):
+        if current_player_index >= 0 and current_player_index + 1 < len(current_queue):
             # 有下一个玩家
             next_player_item = current_queue[current_player_index + 1]
             next_player = str(next_player_item.player_id)
@@ -348,8 +342,8 @@ async def handle_submit_answer(
                 your_turn_data = YourTurnData()
                 your_turn_message = YourTurnMessage(data=your_turn_data)
                 await next_client_found.send(your_turn_message.model_dump())
-                logger.info("Sent YOUR_TURN to next player %s in room %s",
-                            next_player, room_id)
+                logger.info("Sent YOUR_TURN to next player %s in room %s", next_player,
+                            room_id)
             else:
                 logger.warning(
                     "Could not find WebSocket for next player %s in room %s",

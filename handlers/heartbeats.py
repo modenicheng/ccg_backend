@@ -29,8 +29,7 @@ async def handle_heartbeat(data: bytes,
     websocket: WebSocket = client.ws
 
     if frame.heartbeat_type == enumerations.HeartbeatType.PING:
-        logger.debug("Heartbeat ping received: t1=%s t2=%s", frame.t1,
-                     server_recv_ts)
+        logger.debug("Heartbeat ping received: t1=%s t2=%s", frame.t1, server_recv_ts)
         response = HeartbeatFrame(
             heartbeat_type=enumerations.HeartbeatType.PONG,
             uid=frame.uid,
