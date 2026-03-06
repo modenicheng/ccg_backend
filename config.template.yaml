@@ -1,16 +1,36 @@
 ccg:
-  CCG_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/ccg
-  CCG_DATABASE_ECHO: false
-  CCG_REDIS_URL: redis://localhost:6379/0
-  CCG_QQ_MUSIC_COOKIE: ""
-  CCG_SONGLIST_FETCH_CONCURRENCY: 8
-  CCG_SONGLIST_FETCH_RETRIES: 5
-  CCG_SONGLIST_FETCH_BACKOFF_SECONDS: 0.4
-  CCG_AUDIO_DOWNLOAD_RETRIES: 3
-  CCG_AUDIO_DOWNLOAD_BACKOFF_SECONDS: 0.4
-  CCG_AUDIO_DOWNLOAD_DIR: assets/audio
-  CCG_SONG_URL_RETRIES: 3
-  CCG_SONG_URL_BACKOFF_SECONDS: 0.4
-  CCG_LOG_LEVEL: INFO
-  CCG_AUDIO_TOKEN_TTL: 21600
-  CCG_ASSET_CACHE_MAX_ITEMS: 64
+  database:
+    url: postgresql+asyncpg://postgres:postgres@localhost:5432/ccg
+    echo: false
+
+  redis:
+    url: redis://localhost:6379/0
+
+  qq_music:
+    cookie: ""
+
+  songlist:
+    fetch:
+      concurrency: 8
+      retries: 5
+      backoff_seconds: 0.4
+
+  audio:
+    download:
+      retries: 3
+      backoff_seconds: 0.4
+      dir: assets/audio
+    token:
+      ttl: 21600
+
+  song:
+    url:
+      retries: 3
+      backoff_seconds: 0.4
+
+  app:
+    log_level: INFO
+
+  cache:
+    asset:
+      max_items: 64

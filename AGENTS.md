@@ -8,6 +8,7 @@
 - Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependencies
 - Copy `.env.template` → `.env` (all env vars prefixed `CCG_`)
 - Optional: copy `config.template.yaml` → `config.yaml`
+- `config.yaml` should use semantic module-based hierarchy (e.g. `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys
 - Runtime config merge order: `os.environ > .env > config.yaml`
 - Optional YAML path override: `CCG_CONFIG_YAML_PATH`
 

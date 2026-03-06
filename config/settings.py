@@ -8,6 +8,8 @@ from typing import Any
 from rich import print as rprint
 import yaml
 
+from .schema_map import YAML_PATH_TO_ENV_KEY
+
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_ENV_PATH = _ROOT_DIR / ".env"
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -111,6 +113,19 @@ def _normalize_database_url(raw_url: str | None) -> str:
     return url
 
 
+def _flatten_yaml_paths(values: dict[str, Any],
+                        parent: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
+    result: dict[tuple[str, ...], Any] = {}
+    for key, value in values.items():
+        path_part = str(key).strip().lower()
+        current_path = parent + (path_part,)
+        if isinstance(value, dict):
+            result.update(_flatten_yaml_paths(value, current_path))
+            continue
+        result[current_path] = value
+    return result
+
+
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(
@@ -131,9 +146,25 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
         nested = loaded["ccg"]
         if not isinstance(nested, dict):
             raise ValueError("YAML key 'ccg' must be an object (mapping)")
-        return nested
+        source = nested
+    else:
+        source = loaded
 
-    return loaded
+    flattened_paths = _flatten_yaml_paths(source)
+    normalized: dict[str, Any] = {}
+
+    for path_parts, value in flattened_paths.items():
+        if len(path_parts) == 1:
+            raw_key = path_parts[0]
+            if raw_key.startswith("ccg_"):
+                normalized[raw_key.upper()] = value
+                continue
+
+        env_key = YAML_PATH_TO_ENV_KEY.get(path_parts)
+        if env_key:
+            normalized[env_key] = value
+
+    return normalized
 
 
 def _pick_value(values: dict[str, Any], env_key: str, fallback: Any) -> Any:

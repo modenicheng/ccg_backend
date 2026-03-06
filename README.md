@@ -276,6 +276,24 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 如需使用 YAML 配置，可将 `config.template.yaml` 复制为 `config.yaml`（或通过
 `CCG_CONFIG_YAML_PATH` 指定其他路径）。
 
+`config.yaml` 推荐使用按模块分级的语义化结构（不是把所有 `CCG_*` 平铺在一起），例如：
+
+```yaml
+ccg:
+  database:
+    url: postgresql+asyncpg://postgres:postgres@localhost:5432/ccg
+    echo: false
+  redis:
+    url: redis://localhost:6379/0
+  songlist:
+    fetch:
+      concurrency: 8
+      retries: 5
+      backoff_seconds: 0.4
+```
+
+为了兼容旧配置，YAML 中仍可使用扁平 `CCG_*` 键，但建议仅在迁移期使用。
+
 服务启动时配置加载顺序与覆盖关系如下（后者覆盖前者）：
 
 1. `config.yaml`（如果存在）
