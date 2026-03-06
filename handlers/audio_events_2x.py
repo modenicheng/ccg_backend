@@ -1,18 +1,18 @@
+"""WebSocket event handlers for audio playback events (play, pause, seek)."""
 from __future__ import annotations
+
 import asyncio
 
 from cache.schemas import PlaybackState
-from client_manager import ClientManager, Client
-from schemas.base_message import ErrorMessage, ErrorMessageData
-from schemas.ws_messages import playback_schemas
-from utils import get_logger
 from cache.room_cache import (
     set_room_playback_progress,
     set_room_playback_state,
-    get_room_playback_state,
 )
-from . import regist
+from client_manager import ClientManager, Client
+from schemas.ws_messages import playback_schemas
+from utils import get_logger
 from utils.enumerations import GameEventType
+from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -24,6 +24,7 @@ async def handle_play(
     client: Client,
     room_id: str,
 ) -> None:
+    """Handle PLAY event: update playback state to playing and broadcast."""
     state = PlaybackState.model_validate(data.data)
     state.play_state = "playing"  # 确保状态是 playing
     res = await asyncio.gather(
@@ -51,6 +52,7 @@ async def handle_pause(
     client: Client,
     room_id: str,
 ) -> None:
+    """Handle PAUSE event: update playback state to paused and broadcast."""
     state = PlaybackState.model_validate(data.data)
     state.play_state = "paused"  # 确保状态是 paused
     res = await asyncio.gather(
@@ -78,6 +80,7 @@ async def handle_seek(
     client: Client,
     room_id: str,
 ) -> None:
+    """Handle SEEK event: update playback progress and broadcast."""
     # 如果前端没有传 offset_ts，就用当前时间戳
     data.data.offset_ts = (int(data.data.offset_ts)
                            if data.data.offset_ts is not None else data.ts)

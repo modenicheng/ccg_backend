@@ -1,33 +1,29 @@
+"""FastAPI application entrypoint for CCG backend."""
+
 from __future__ import annotations
 
+import json
 import logging
-import orjson
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import (
-    Depends,
     FastAPI,
     HTTPException,
-    Query,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy import update
 
 from cache.connection import redis_client
 from client_manager import ClientManager, Client
-from db import models
 from db.crud import fetch_room_object, simple_authentication
-from db.models import User, Room, TagGroup
-from db.session import get_db, session_scope
-from handlers import handle
+from db.models import User
+from db.session import session_scope
+from handlers.registe_manager import handle
 from handlers.connection_lifespan import on_connect, on_disconnect
 from router import (
     room_router,
@@ -52,11 +48,8 @@ logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """应用生命周期管理：启动和关闭事件处理"""
-    global memory_monitor
-    global clients
-
     # 启动逻辑
     # 连接 Redis
     try:
@@ -66,16 +59,16 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning(
                 "Failed to connect to Redis, some features may be unavailable")
-    except Exception as e:
-        logger.error(f"Error connecting to Redis: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Error connecting to Redis: %s", exc)
 
     try:
         update_stmt = update(User).values(online=False)
         async with session_scope() as session:
             await session.execute(update_stmt)
         logger.info("Database user online states reset to offline on startup")
-    except Exception as e:
-        logger.error(f"Error resetting user online states in database: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Error resetting user online states in database: %s", exc)
 
     # 启动内存监控
     try:
@@ -85,43 +78,46 @@ async def lifespan(app: FastAPI):
             detailed_report=True,  # 输出详细报告
         )
         await memory_monitor.start()
+        _app.state.memory_monitor = memory_monitor
         logger.info("Memory monitor started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start memory monitor: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to start memory monitor: %s", exc)
 
     # 应用运行
     yield
 
     # 关闭逻辑
     try:
-        await clients.clear()
+        await _app.state.clients.clear()
         logger.info("All websocket clients closed and online states flushed")
-    except Exception as e:
-        logger.error(
-            f"Failed to flush websocket online state on shutdown: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to flush websocket online state on shutdown: %s",
+                     exc)
 
     # 断开 Redis 连接
     try:
         await redis_client.disconnect()
         logger.info("Redis disconnected successfully")
-    except Exception as e:
-        logger.error(f"Failed to disconnect Redis: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to disconnect Redis: %s", exc)
 
     try:
         update_stmt = update(User).values(online=False)
         async with session_scope() as session:
             await session.execute(update_stmt)
-    except Exception as e:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.error(
-            f"Error resetting user online states in database on shutdown: {e}")
+            "Error resetting user online states in database on shutdown: %s",
+            exc)
 
     # 停止内存监控
+    memory_monitor = getattr(_app.state, "memory_monitor", None)
     if memory_monitor:
         try:
             await memory_monitor.stop()
             logger.info("Memory monitor stopped successfully")
-        except Exception as e:
-            logger.error(f"Failed to stop memory monitor: {e}")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to stop memory monitor: %s", exc)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -143,17 +139,17 @@ app.include_router(audio_stream_router)
 
 ##############################
 
-clients = ClientManager()
-memory_monitor = None  # 内存监控器实例
+app.state.clients = ClientManager()
+app.state.memory_monitor = None  # 内存监控器实例
 
 # 前端静态文件目录配置
 STATIC_DIR = Path(__file__).parent.parent / "ccg_frontend" / "dist"
-logger.info(f"Static directory path: {STATIC_DIR}")
+logger.info("Static directory path: %s", STATIC_DIR)
 
 if STATIC_DIR.exists():
-    logger.info(f"Frontend dist directory found: {STATIC_DIR}")
+    logger.info("Frontend dist directory found: %s", STATIC_DIR)
 else:
-    logger.warning(f"Frontend dist directory not found: {STATIC_DIR}")
+    logger.warning("Frontend dist directory not found: %s", STATIC_DIR)
 
 
 @app.get("/")
@@ -181,9 +177,13 @@ async def root():
 
 
 @app.websocket("/ws/{roomid}")
-async def websocket_endpoint(websocket: WebSocket, roomid: str):
+async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-statements
+    websocket: WebSocket,
+    roomid: str,
+):
+    """Handle websocket lifecycle, authentication, and game events for a room."""
     async with session_scope() as session:
-        global clients
+        clients_manager: ClientManager = app.state.clients
         user = await simple_authentication(session, websocket.cookies, roomid)
         if not user:
             await websocket.close(code=1008, reason="Authentication failed")
@@ -198,7 +198,7 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
         await client.ws.accept()
 
         logger.info("WebSocket connected: %s", websocket.client)
-        clients.push(roomid, client)
+        clients_manager.push(roomid, client)
 
         ## test scores
         # test_scores = [
@@ -223,7 +223,7 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
         #     session.add(score)
         # await session.commit()
 
-        await on_connect(session, client, clients, roomid)
+        await on_connect(session, client, clients_manager, roomid)
 
     try:
         while True:
@@ -240,12 +240,12 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
             if "text" in data:
                 payload_text = data["text"]
                 try:
-                    parsed_data = orjson.loads(payload_text)
-                except orjson.JSONDecodeError as e:
+                    parsed_data = json.loads(payload_text)
+                except json.JSONDecodeError as exc:
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.INVALID_JSON,
-                            message=f"Invalid JSON payload: {e}",
+                            message=f"Invalid JSON payload: {exc}",
                         ).model_dump())
                     continue
 
@@ -273,38 +273,38 @@ async def websocket_endpoint(websocket: WebSocket, roomid: str):
                 event: EventType | GameEventType = get_event_type(parsed_data)
 
             else:
-                logger.warning(
-                    f"Received unsupported data type from {client.ws.client}: {data}"
-                )
+                logger.warning("Received unsupported data type from %s: %s",
+                               client.ws.client, data)
                 continue
 
             try:
                 await handle(event,
                              parsed_data,
-                             clients=clients,
+                             clients=clients_manager,
                              client=client,
                              room_id=roomid)
-            except Exception as e:
-                logger.error(
-                    f"Failed to handle event: {event.name}, error: {e}",
-                    exc_info=True)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error("Failed to handle event: %s, error: %s",
+                             event.name,
+                             exc,
+                             exc_info=True)
                 await client.ws.send_json(
                     WebSocketErrorEvent(
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
-                        message=f"Failed to handle event {event.name}: {e}",
+                        message=f"Failed to handle event {event.name}: {exc}",
                     ).model_dump())
 
-    except (WebSocketDisconnect, RuntimeError) as e:
+    except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
         try:
             await client.ws.close()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
-        clients.pop(roomid, client)
+        clients_manager.pop(roomid, client)
         logger.info("WebSocket removed from clients: %s", client.ws.client)
         async with session_scope() as session:
-            await on_disconnect(session, client, clients, roomid)
+            await on_disconnect(session, client, clients_manager, roomid)
 
 
 # Catch-all 路由：处理前端的客户端路由（必须放在所有路由的最后）
@@ -313,7 +313,7 @@ async def serve_frontend(full_path: str):
     """处理所有其他路由，返回静态文件或前端应用（用于 SPA 客户端路由）"""
     # 尝试返回请求的静态文件
     file_path = STATIC_DIR / full_path
-    logger.debug(f"Requested path: {full_path}, Resolved to: {file_path}")
+    logger.debug("Requested path: %s, Resolved to: %s", full_path, file_path)
 
     # 防目录越界检查：确保解析后的路径在 STATIC_DIR 内
     try:
@@ -323,38 +323,37 @@ async def serve_frontend(full_path: str):
 
         # 确保 resolved_path 在 static_dir_resolved 目录内
         if not str(resolved_path).startswith(str(static_dir_resolved)):
-            logger.warning(
-                f"Path traversal attempt detected: {full_path} -> {resolved_path}"
-            )
+            logger.warning("Path traversal attempt detected: %s -> %s",
+                           full_path, resolved_path)
             # 返回 index.html（作为安全降级）
             raise HTTPException(status_code=404, detail="Not found")
-    except Exception as e:
-        logger.warning(f"Path resolution error: {e}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("Path resolution error: %s", exc)
         return HttpErrorResponse(error="Invalid path",
                                  detail=None,
                                  path=full_path)
 
     if file_path.exists() and file_path.is_file():
-        logger.debug(f"Serving static file: {file_path}")
+        logger.debug("Serving static file: %s", file_path)
         return FileResponse(file_path)
 
     # 检查是否是目录（目录访问重定向到 index.html）
     if file_path.exists() and file_path.is_dir():
         index_file = file_path / "index.html"
         if index_file.exists():
-            logger.debug(f"Serving index.html from directory: {file_path}")
+            logger.debug("Serving index.html from directory: %s", file_path)
             return FileResponse(index_file)
 
     # 如果文件不存在，返回 index.html（用于前端客户端路由）
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         logger.debug(
-            f"File not found, serving index.html for client-side routing: {full_path}"
-        )
+            "File not found, serving index.html for client-side routing: %s",
+            full_path)
         return FileResponse(index_file)
 
     # 前端文件不存在
-    logger.warning(f"Not found: {full_path}, index.html also not found")
+    logger.warning("Not found: %s, index.html also not found", full_path)
     return HttpErrorResponse(error="Not found", detail=None, path=full_path)
 
 

@@ -1,3 +1,4 @@
+"""WebSocket heartbeat event handler."""
 from __future__ import annotations
 from datetime import datetime
 from fastapi import WebSocket
@@ -5,7 +6,7 @@ from fastapi import WebSocket
 from client_manager import ClientManager, Client
 from utils import enumerations, get_logger
 from utils.dataframe import HeartbeatFrame
-from . import regist
+from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -15,6 +16,8 @@ async def handle_heartbeat(data: bytes,
                            clients: ClientManager,
                            client: Client,
                            room_id: str | None = None) -> None:
+    """Handle HEARTBEAT events (ping/pong)."""
+    # pylint: disable=unused-argument
     server_recv_ts = int(datetime.now().timestamp() * 1000)
     frame: HeartbeatFrame = HeartbeatFrame.load(data)
     logger.debug(

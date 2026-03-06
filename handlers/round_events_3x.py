@@ -1,16 +1,13 @@
+"""WebSocket round event handlers."""
 from __future__ import annotations
 
 # Standard library imports
 import asyncio
-import random
-from datetime import datetime, timezone
+from typing import Any
 
 # Third-party imports
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Any
 
 # Local imports
 from client_manager import ClientManager, Client
@@ -18,12 +15,10 @@ from db.session import session_scope
 from db import models
 from db.crud import get_current_song_info
 from utils import get_logger, generate_audio_token, get_audio_stream_url
-from utils.enumerations import GameEventType, EventType, ErrorEventType
+from utils.enumerations import GameEventType, ErrorEventType
 from utils.ts import get_ts_ms
-from . import regist
 from cache import room_cache
 import cache.schemas as cache_schemas
-from schemas.ws_messages.room_schemas import AnswerQueueItem
 from schemas.ws_messages.round_event_schemas import (
     AttemptAnswerMessage,
     AnswerBroadcastData,
@@ -38,6 +33,7 @@ from schemas.ws_messages.round_event_schemas import (
     YourTurnData,
     YourTurnMessage,
 )
+from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -49,6 +45,7 @@ async def handle_game_start(
     client: Client,
     room_id: str,
 ) -> None:
+    """Handle GAME_START event: initialize game round."""
     logger.info("Handling game start event for room %s", room_id)
 
     async with session_scope() as session:
@@ -102,7 +99,8 @@ async def handle_game_start(
             for i, r in enumerate(res):
                 if isinstance(r, Exception):
                     logger.error(
-                        "Exception occurred in asyncio.gather task %d for GAME_START event in room %s: %s",
+                        "Exception occurred in asyncio.gather task %d for GAME_START "
+                        "event in room %s: %s",
                         i,
                         room_id,
                         r,
@@ -124,6 +122,7 @@ async def handle_round_end(
     client: Client,
     room_id: str,
 ) -> None:
+    """Handle ROUND_END event: manually end current round."""
     logger.info("Handling round end event for room %s", room_id)
     if not client.user.is_owner:
         logger.warning(
@@ -147,6 +146,8 @@ async def handle_attempt_answer(
     room_id: str,
     **kwargs: Any,
 ) -> None:
+    """Handle ATTEMPT_ANSWER event: add player to answer queue."""
+    # pylint: disable=too-many-locals,unused-argument
     if client is None or room_id is None:
         return
 
@@ -229,8 +230,7 @@ async def handle_attempt_answer(
                     room_id)
 
     # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
-    sorted_queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(
-        room_id)
+    sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
 
     # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
     await clients.broadcast(
@@ -259,6 +259,7 @@ async def handle_submit_answer(
     **kwargs,
 ) -> None:
     """处理玩家提交答案事件"""
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements,unused-argument
     # 验证当前玩家是否为当前作答者
     player_id = str(client.user.id)
     current_answerer = await room_cache.get_room_current_answerer(room_id)
@@ -298,7 +299,7 @@ async def handle_submit_answer(
                 song_id,
                 room_id,
             )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Failed to save player answer to database: %s", e)
         await client.send_error(GameEventType.SUBMIT_ANSWER,
                                 f"Failed to save answer: {str(e)}")

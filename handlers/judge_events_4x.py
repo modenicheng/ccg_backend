@@ -1,14 +1,11 @@
+"""WebSocket judge event handlers."""
 from __future__ import annotations
 
 # Standard library imports
 import random
 
 # Third-party imports
-from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Any
 
 # Local imports
 from client_manager import ClientManager, Client
@@ -23,8 +20,8 @@ from db.crud import (
     fetch_room_object,
 )
 from utils import get_logger
-from utils.enumerations import GameEventType, EventType, ErrorEventType
-from . import regist
+from utils.enumerations import GameEventType
+from utils.calculate import calculate_player_scores
 from cache import room_cache
 from schemas.ws_messages.judge_schemas import (
     JudgingData,
@@ -35,9 +32,8 @@ from schemas.ws_messages.judge_schemas import (
     ScoreUpdateMessage,
     SongInfo,
 )
-from schemas.ws_messages.room_schemas import AnswerQueueItem
 from schemas.ws_messages.round_event_schemas import RoundEndMessage
-from utils.calculate import calculate_player_scores
+from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -71,6 +67,7 @@ logger = get_logger(__name__)
 async def handle_judging(data: JudgingMessage, clients: ClientManager,
                          client: Client, room_id: str, **kwargs) -> None:
     """处理进入判分环节事件"""
+    # pylint: disable=unused-argument,too-many-locals
     try:
         async with session_scope() as db:
             # 获取当前歌曲信息
@@ -101,7 +98,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
             description_history_stmt = select(
                 models.SongDescriptionHistory.description_text).where(
                     models.SongDescriptionHistory.song_id == song_id,
-                    models.SongDescriptionHistory.is_correct == True,
+                    models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
                 )
             description_history_result = await db.execute(
                 description_history_stmt)
@@ -173,7 +170,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager,
             logger.info("Sent JUDGING event for room %s, song %s", room_id,
                         song.title)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during JUDGING event: %s", e)
         await client.send_error(GameEventType.JUDGING,
                                 f"Internal server error: {str(e)}")
@@ -188,6 +185,7 @@ async def handle_judge_submit(
     **kwargs,
 ) -> None:
     """处理房主提交正确答案事件"""
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements,unused-argument
     # 验证房主身份
     if not client.user.is_owner:
         await client.send_error(GameEventType.JUDGE_SUBMIT,
@@ -341,14 +339,14 @@ async def handle_judge_submit(
                         user_id = int(player_id_str)
                         await save_score_record(db, room_id, user_id,
                                                 song_index, score_delta)
-                    except (ValueError, Exception) as e:
+                    except (ValueError, Exception) as e:  # pylint: disable=broad-exception-caught
                         logger.error("Failed to save score for player %s: %s",
                                      player_id_str, e)
 
             logger.info("Saved scoring results to database for room %s",
                         room_id)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during judge submission for room %s: %s", room_id,
                      e)
         await client.send_error(GameEventType.JUDGE_SUBMIT.value,

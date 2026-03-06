@@ -1,3 +1,4 @@
+"""WebSocket connection lifespan event handlers."""
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +34,8 @@ async def on_connect(
     3. Fetches the current room state with associated users, tag groups, and scores
     4. Updates the room's player online status in cache
     5. Retrieves the current playback state and answer queue for the room
-    6. Sends the room state to the connected client and broadcasts a player join message to other clients
+     6. Sends the room state to the connected client and broadcasts a player join message
+        to other clients
 
     Args:
         session (AsyncSession): The async database session for executing queries and commits
@@ -53,6 +55,7 @@ async def on_connect(
         - Uses asyncio.gather to concurrently send messages to avoid blocking subsequent code
         - Excludes the connecting client from the broadcast join message
     """
+    # pylint: disable=too-many-locals
     player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
     player_item.online = True
     await room_cache.set_room_player(room_id, player_item)
@@ -140,7 +143,7 @@ async def on_disconnect(
     """
     try:
         await cl.ws.close(code=1000, reason="Client disconnected")
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         logger.warning("Failed to close websocket for client %s", cl)
 
     player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
