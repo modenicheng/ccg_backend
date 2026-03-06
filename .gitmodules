@@ -1,3 +1,0 @@
-[submodule "qq_api"]
-	path = qq_api
-	url = git@github.com:modenicheng/QQMusicApi.git
