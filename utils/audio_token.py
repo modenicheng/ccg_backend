@@ -10,10 +10,11 @@ import time
 import orjson
 from typing import Optional
 from cache import connection
+from config import app_config
 
 # 环境变量
 AUDIO_TOKEN_PREFIX = "audio_token:"
-AUDIO_TOKEN_TTL = int(os.getenv("CCG_AUDIO_TOKEN_TTL", "21600"))  # 默认6小时
+AUDIO_TOKEN_TTL = app_config.audio_token_ttl
 
 
 async def get_song_id_from_token(token: str) -> Optional[int]:

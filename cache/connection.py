@@ -1,9 +1,9 @@
 from __future__ import annotations
-import os
 import redis.asyncio as redis
 from redis.asyncio import Redis
 from typing import Optional, Awaitable, cast
 
+from config import app_config
 from utils import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +26,7 @@ class RedisClient:
             bool: 连接是否成功
         """
         try:
-            redis_url = url or os.getenv("CCG_REDIS_URL", "redis://localhost:6379/0")
+            redis_url = url or app_config.redis_url
             self.client = redis.from_url(redis_url, decode_responses=True)
             # 测试连接
             await cast(Awaitable[bool], self.client.ping())

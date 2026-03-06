@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from sqlalchemy import update
 
 from cache.connection import redis_client
 from client_manager import ClientManager, Client
+from config import app_config
 from db.crud import fetch_room_object, simple_authentication
 from db.models import User
 from db.session import session_scope
@@ -40,7 +40,7 @@ from utils.enumerations import EventType, GameEventType, ErrorEventType
 from utils.logger import log_level_map
 from utils.memory_monitor import MemoryMonitor
 
-log_level = log_level_map.get(os.getenv("CCG_LOG_LEVEL", "INFO").upper(), logging.INFO)
+log_level = log_level_map.get(app_config.log_level, logging.INFO)
 
 init_logging(level=log_level)
 logger = get_logger(__name__)

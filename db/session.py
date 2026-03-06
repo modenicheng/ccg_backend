@@ -1,43 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-import os
-from pathlib import Path
 from typing import AsyncIterator
 
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from config import app_config
 from .models import Base
 
-import dotenv
-
-dotenv.load_dotenv()
-
-
-def _normalize_database_url(raw_url: str | None) -> str:
-    """Normalize database URL and provide a SQLite default for local dev."""
-    if raw_url:
-        url = raw_url.strip()
-    else:
-        default_db_path = Path("data") / "game.db"
-        default_db_path.parent.mkdir(parents=True, exist_ok=True)
-        url = f"sqlite+aiosqlite:///{default_db_path.as_posix()}"
-
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    return url
-
-
-DATABASE_URL = _normalize_database_url(os.getenv("CCG_DATABASE_URL"))
-DATABASE_ECHO = os.getenv("CCG_DATABASE_ECHO", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+DATABASE_URL = app_config.database_url
+DATABASE_ECHO = app_config.database_echo
 
 engine = create_async_engine(
     DATABASE_URL,

@@ -273,6 +273,21 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 
 复制 `.env.template` 并重命名为 `.env` ，在其中填写配置即可。
 
+如需使用 YAML 配置，可将 `config.template.yaml` 复制为 `config.yaml`（或通过
+`CCG_CONFIG_YAML_PATH` 指定其他路径）。
+
+服务启动时配置加载顺序与覆盖关系如下（后者覆盖前者）：
+
+1. `config.yaml`（如果存在）
+2. `.env`
+3. 进程环境变量（`os.environ`）
+
+即：`os.environ > .env > config.yaml`。
+
+配置解析由 `config/settings.py` 统一处理。若配置值非法（例如类型错误），会在
+导入阶段直接抛错并阻止启动（无论是 `uv run python main.py` 还是
+`uv run uvicorn main:app`）。
+
 > 约定：所有环境变量必须以 `CCG_` 为前缀，用于区分其他项目。
 
 ### 启动服务
@@ -296,7 +311,7 @@ uv run uvicorn main:app --reload --port 8000
 
 - 配置文件：`alembic.ini`
 - 迁移目录：`alembic/versions/`
-- 默认数据库 URL：读取 `.env` 中的 `CCG_DATABASE_URL`
+- 默认数据库 URL：通过统一配置模块解析（`os.environ > .env > config.yaml`）
 
 常用流程（推荐通过 uv 执行）：
 
@@ -343,6 +358,8 @@ uv run uvicorn main:app --reload --port 8000
 - `CCG_SONG_URL_RETRIES`：歌曲 URL 获取重试次数（默认 `3`）
 - `CCG_SONG_URL_BACKOFF_SECONDS`：歌曲 URL 获取重试退避基数秒数（默认 `0.4`）
 - `CCG_ASSET_CACHE_MAX_ITEMS`：音频文件内存缓存最大条目数（默认 `64`）
+- `CCG_LOG_LEVEL`：后端日志级别（默认 `INFO`）
+- `CCG_CONFIG_YAML_PATH`：YAML 配置文件路径（默认 `config.yaml`）
 
 端到端链路文档（歌单 ID → 入库 → 首曲缓存）：`docs/songlist_cache_flow.md`
 

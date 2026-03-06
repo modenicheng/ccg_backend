@@ -5,8 +5,9 @@ from collections import OrderedDict
 
 from anyio import open_file
 from fastapi import HTTPException
+from config import app_config
 
-ASSET_CACHE_MAX_ITEMS = int(os.getenv("CCG_ASSET_CACHE_MAX_ITEMS", "64"))
+ASSET_CACHE_MAX_ITEMS = app_config.asset_cache_max_items
 _song_asset_cache: OrderedDict[str, tuple[float, int, bytes, str]] = OrderedDict()
 
 

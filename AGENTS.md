@@ -7,6 +7,9 @@
 ### Environment Setup
 - Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependencies
 - Copy `.env.template` → `.env` (all env vars prefixed `CCG_`)
+- Optional: copy `config.template.yaml` → `config.yaml`
+- Runtime config merge order: `os.environ > .env > config.yaml`
+- Optional YAML path override: `CCG_CONFIG_YAML_PATH`
 
 ### Running the Application
 ```bash
@@ -138,7 +141,10 @@ uv run pytest -v --log-level=DEBUG
 ```
 
 ## Environment Variables (CCG_*)
-Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`, `CCG_QQ_MUSIC_COOKIE`, `CCG_AUDIO_DOWNLOAD_DIR`, `CCG_AUDIO_TOKEN_TTL`. See `.env.template` for defaults and additional tuning parameters.
+Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`, `CCG_QQ_MUSIC_COOKIE`, `CCG_AUDIO_DOWNLOAD_DIR`, `CCG_AUDIO_TOKEN_TTL`, `CCG_LOG_LEVEL`, `CCG_ASSET_CACHE_MAX_ITEMS`, `CCG_CONFIG_YAML_PATH`.
+
+Config is centralized in `config/settings.py` and validated at import time. Invalid config should fail fast and block startup for both `uv run python main.py` and `uv run uvicorn main:app`.
+See `.env.template` and `config.template.yaml` for defaults/examples.
 
 ## Troubleshooting
 - **Database**: Check `CCG_DATABASE_URL` in `.env`; PostgreSQL required for production features

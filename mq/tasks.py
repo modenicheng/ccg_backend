@@ -10,6 +10,7 @@ import httpx
 import threading
 
 import qqmusic_api as qapi
+from config import app_config
 
 from db.crud import (
     create_or_update_songlist,
@@ -21,11 +22,8 @@ from db.session import AsyncSessionLocal, engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
 from utils import parse_cookie_string
-from dotenv import load_dotenv
 import asyncio
 import logging
-
-load_dotenv()
 # from db.session import AsyncSessionLocal
 # from db.models import Song
 
@@ -35,23 +33,21 @@ _ASYNC_LOOP_LOCK = threading.Lock()
 _ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
 _ASYNC_LOOP_THREAD: threading.Thread | None = None
 
-REDIS_URI = os.getenv("CCG_REDIS_URL", "redis://localhost:6379/0").strip()
+REDIS_URI = app_config.redis_url
 
 huey = RedisHuey("ccg-backend", url=REDIS_URI)
 
 from pydub import AudioSegment
 
-SONGLIST_FETCH_CONCURRENCY = int(os.getenv("CCG_SONGLIST_FETCH_CONCURRENCY", "8"))
-SONGLIST_FETCH_RETRIES = int(os.getenv("CCG_SONGLIST_FETCH_RETRIES", "5"))
-SONGLIST_FETCH_BACKOFF_SECONDS = float(
-    os.getenv("CCG_SONGLIST_FETCH_BACKOFF_SECONDS", "0.4"))
-DOWNLOAD_RETRIES = int(os.getenv("CCG_AUDIO_DOWNLOAD_RETRIES", "3"))
-DOWNLOAD_BACKOFF_SECONDS = float(os.getenv("CCG_AUDIO_DOWNLOAD_BACKOFF_SECONDS", "0.4"))
-SONG_URL_RETRIES = int(os.getenv("CCG_SONG_URL_RETRIES", "3"))
-SONG_URL_BACKOFF_SECONDS = float(os.getenv("CCG_SONG_URL_BACKOFF_SECONDS", "0.4"))
-AUDIO_DOWNLOAD_DIR = (os.getenv("CCG_AUDIO_DOWNLOAD_DIR", "assets/audio").strip() or
-                      "assets/audio")
-QQ_MUSIC_COOKIE = os.getenv("CCG_QQ_MUSIC_COOKIE", "").strip()
+SONGLIST_FETCH_CONCURRENCY = app_config.songlist_fetch_concurrency
+SONGLIST_FETCH_RETRIES = app_config.songlist_fetch_retries
+SONGLIST_FETCH_BACKOFF_SECONDS = app_config.songlist_fetch_backoff_seconds
+DOWNLOAD_RETRIES = app_config.audio_download_retries
+DOWNLOAD_BACKOFF_SECONDS = app_config.audio_download_backoff_seconds
+SONG_URL_RETRIES = app_config.song_url_retries
+SONG_URL_BACKOFF_SECONDS = app_config.song_url_backoff_seconds
+AUDIO_DOWNLOAD_DIR = app_config.audio_download_dir
+QQ_MUSIC_COOKIE = app_config.qq_music_cookie
 T = TypeVar("T")
 
 

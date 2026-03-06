@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from cache.file_cache import load_song_asset_with_cache
+from config import app_config
 from db.models import Song
 from db.session import get_db
 from schemas.song import SongResponse, SongCreate, SongListResponse
@@ -218,7 +219,7 @@ async def get_song_asset(
     return response
 
 
-BASE_ASSETS_PATH = os.getenv("CCG_AUDIO_DOWNLOAD_DIR", "assets/audio")
+BASE_ASSETS_PATH = app_config.audio_download_dir
 
 
 @song_router.post("/cache/{song_id}")
