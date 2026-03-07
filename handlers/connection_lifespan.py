@@ -94,6 +94,9 @@ async def on_connect(
     # 连接时发送当前播放状态
     message = RoomSchema.ClientRoomState.model_validate(room)
 
+    # 设置回合状态
+    message.round_state = room.round_state or 0
+
     playback_state = await room_cache.get_room_playback_state(room_id)
     if playback_state:
         message.playback_status = RoomSchema.PlaybackState.model_validate(
