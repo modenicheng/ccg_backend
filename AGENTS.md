@@ -8,7 +8,7 @@
 - Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependencies
 - Copy `.env.template` → `.env` (all env vars prefixed `CCG_`)
 - Optional: copy `config.template.yaml` → `config.yaml`
-- `config.yaml` should use semantic module-based hierarchy (e.g. `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys
+- `config.yaml` should use semantic module‑based hierarchy (e.g. `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys
 - Runtime config merge order: `os.environ > .env > config.yaml`
 - Optional YAML path override: `CCG_CONFIG_YAML_PATH`
 
@@ -23,6 +23,15 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000   # production style
 uv run alembic revision --autogenerate -m "description"
 uv run alembic upgrade head
 uv run alembic downgrade -1
+```
+
+### Formatting and Linting
+```bash
+uv run yapf -i -r .               # format all Python files
+uv run yapf -i --recursive .      # alternative
+pylint $(git ls-files '*.py')     # lint all tracked Python files (excludes tests, alembic)
+pylint --ignore=tests,alembic .   # alternative
+# CI: GitHub Actions workflow (.github/workflows/pylint.yml) runs pylint on push
 ```
 
 ### Testing
@@ -44,8 +53,6 @@ uv run huey_consumer.py mq.tasks.huey
 ```
 
 ## Code Style Guidelines
-
-*Note: No automated linting/formatting is configured. Follow existing patterns.*
 
 ### Imports
 - Absolute imports from project root: `from db import crud`
@@ -141,10 +148,20 @@ uv run pytest -k "pattern" -v
 uv run pytest -v --log-level=DEBUG
 ```
 
+## Ambiguous Patterns & Pitfalls
+
+- **Redis access**: Use `get_redis()` (from `cache.connection`) NOT `redis_client.get_client()` for Redis access. The former handles connection lifecycle.
+- **JSON serialization**: Prefer `orjson.loads()` and `orjson.dumps()` for performance (supports non‑string keys via `orjson.OPT_NON_STR_KEYS`). Redis hash serialization uses `to_redis_hash()`/`from_redis_hash()` methods on Pydantic schemas.
+- **Database transactions**: FastAPI endpoints use `get_db` dependency yielding AsyncSession; commit/rollback handled automatically. Non‑HTTP flows (tasks, scripts) must use `session_scope` async context manager from `db.session`. CRUD functions in `db/crud.py` expect caller to manage commit.
+- **Error handling in WebSocket handlers**: Raise `ValueError` for client errors; errors are sent via `ErrorMessage` schema with `ErrorEventType`. Use `asyncio.gather(..., return_exceptions=True)` for concurrent operations.
+- **WebSocket event registration**: Import handler modules in `handlers/__init__.py` to trigger decorator registration; otherwise handlers won't be discovered.
+- **MemoryMonitor**: Started automatically in FastAPI lifespan; logs memory usage changes ≥20 MB. Configurable with `interval` and `report_threshold_mb`. May be noisy in logs.
+- **Repeat function bugs**: Watch for repeat function bugs in `connection_lifespan.py` (known issue).
+
 ## Environment Variables (CCG_*)
 Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`, `CCG_QQ_MUSIC_COOKIE`, `CCG_AUDIO_DOWNLOAD_DIR`, `CCG_AUDIO_TOKEN_TTL`, `CCG_LOG_LEVEL`, `CCG_ASSET_CACHE_MAX_ITEMS`, `CCG_CONFIG_YAML_PATH`.
 
-Config is centralized in `config/settings.py` and validated at import time. Invalid config should fail fast and block startup for both `uv run python main.py` and `uv run uvicorn main:app`.
+Config is centralized in `config/settings.py` and validated at import time. `config.yaml` should use semantic module‑based hierarchy (e.g., `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys. Invalid config should fail fast and block startup for both `uv run python main.py` and `uv run uvicorn main:app`.
 See `.env.template` and `config.template.yaml` for defaults/examples.
 
 ## Troubleshooting
@@ -158,17 +175,17 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
 
 ## Coding Style Manual
 
-1. Formmating the code
-   
-   use yapf.
+1. Formatting the code
+
+   Use yapf.
 
    ```bash
    uv run yapf -i -r .
    ```
 
 2. Linting the code
-   
-   use pylint.
+
+   Use pylint.
 
    ```bash
    pylint $(git ls-files '*.py') # All python files
