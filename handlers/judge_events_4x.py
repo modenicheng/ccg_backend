@@ -19,8 +19,9 @@ from db.crud import (
     get_current_song_info,
     fetch_room_object,
 )
+from room_state import RoundStateMachine
 from utils import get_logger
-from utils.enumerations import GameEventType
+from utils.enumerations import GameEventType, RoundState
 from utils.calculate import calculate_player_scores
 from cache import room_cache
 from schemas.ws_messages.judge_schemas import (
@@ -33,6 +34,7 @@ from schemas.ws_messages.judge_schemas import (
     SongInfo,
 )
 from schemas.ws_messages.round_event_schemas import RoundEndMessage
+from schemas.ws_messages.round_state_schemas import RoundStateUpdateMessage, RoundStateUpdateData
 from .registe_manager import regist
 
 logger = get_logger(__name__)
@@ -155,6 +157,25 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
                 player_descriptions=player_descriptions,
             )
 
+            # 触发状态转换到 JUDGING
+            try:
+                await RoundStateMachine.transition(db, room_id, RoundState.JUDGING)
+                # 广播状态更新消息
+                round_state_update_data = RoundStateUpdateData(
+                    round_state=RoundState.JUDGING.value,
+                    round_state_name=RoundState.JUDGING.name
+                )
+                round_state_update_message = RoundStateUpdateMessage(
+                    data=round_state_update_data
+                )
+                await clients.broadcast(
+                    room_id,
+                    round_state_update_message.model_dump()
+                )
+                logger.info(f"Room {room_id} round state transitioned to JUDGING")
+            except Exception as e:
+                logger.error(f"Failed to transition to JUDGING: {e}")
+            
             # 广播JUDGING事件给所有客户端
             judging_message = JudgingMessage(data=judging_data)
             await clients.broadcast(room_id, judging_message.model_dump())
@@ -360,6 +381,26 @@ async def handle_judge_submit(
     # 广播得分更新事件
     await clients.broadcast(room_id, score_update_message.model_dump())
 
+    # 触发状态转换到 COMPLETED
+    try:
+        async with session_scope() as session:
+            await RoundStateMachine.transition(session, room_id, RoundState.COMPLETED)
+            # 广播状态更新消息
+            round_state_update_data = RoundStateUpdateData(
+                round_state=RoundState.COMPLETED.value,
+                round_state_name=RoundState.COMPLETED.name
+            )
+            round_state_update_message = RoundStateUpdateMessage(
+                data=round_state_update_data
+            )
+            await clients.broadcast(
+                room_id,
+                round_state_update_message.model_dump()
+            )
+            logger.info(f"Room {room_id} round state transitioned to COMPLETED")
+    except Exception as e:
+        logger.error(f"Failed to transition to COMPLETED: {e}")
+    
     # 广播回合结束事件
     round_end_message = RoundEndMessage()
     await clients.broadcast(room_id, round_end_message.model_dump())

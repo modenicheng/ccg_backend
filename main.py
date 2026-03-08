@@ -182,43 +182,31 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
     async with session_scope() as session:
         clients_manager: ClientManager = app.state.clients
         user = await simple_authentication(session, websocket.cookies, roomid)
-        if not user:
-            await websocket.close(code=1008, reason="Authentication failed")
-            return
         room = await fetch_room_object(session, roomid)
         if not room:
             await websocket.close(code=1008, reason="Room not found")
             return
 
-        client = Client(websocket, user, room)
+        # 如果没有身份信息，创建一个观战者客户端
+        if not user:
+            logger.info(f"WebSocket connection for room {roomid} as spectator")
+            # 创建一个临时的观战者用户对象
+            from db.models import User
+            spectator_user = User(
+                id=0,
+                username="Spectator",
+                token="",
+                room_id=roomid,
+                is_owner=False
+            )
+            client = Client(websocket, spectator_user, room)
+        else:
+            client = Client(websocket, user, room)
 
         await client.ws.accept()
 
         logger.info("WebSocket connected: %s", websocket.client)
         clients_manager.push(roomid, client)
-
-        ## test scores
-        # test_scores = [
-        #     models.Score(user=user,
-        #                  round_index=1,
-        #                  score_delta=10,
-        #                  total_score=10,
-        #                  room=room),
-        #     models.Score(user=user,
-        #                  round_index=2,
-        #                  score_delta=-5,
-        #                  total_score=5,
-        #                  room=room),
-        #     models.Score(user=room.users[1],
-        #                  round_index=3,
-        #                  score_delta=15,
-        #                  total_score=15,
-        #                  room=room),
-        # ]
-
-        # for score in test_scores:
-        #     session.add(score)
-        # await session.commit()
 
         await on_connect(session, client, clients_manager, roomid)
 
@@ -290,6 +278,66 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
                         message=f"Failed to handle event {event.name}: {exc}",
                     ).model_dump())
+
+    except (WebSocketDisconnect, RuntimeError):
+        logger.info("WebSocket disconnected: %s", client.ws.client)
+    finally:
+        try:
+            await client.ws.close()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+        clients_manager.pop(roomid, client)
+        logger.info("WebSocket removed from clients: %s", client.ws.client)
+        async with session_scope() as session:
+            await on_disconnect(session, client, clients_manager, roomid)
+
+
+@app.websocket("/ws/{roomid}/watch")
+async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-many-statements
+    websocket: WebSocket,
+    roomid: str,
+):
+    """Handle websocket lifecycle for spectator mode."""
+    async with session_scope() as session:
+        clients_manager: ClientManager = app.state.clients
+        room = await fetch_room_object(session, roomid)
+        if not room:
+            await websocket.close(code=1008, reason="Room not found")
+            return
+
+        # 直接创建一个观战者客户端
+        logger.info(f"WebSocket connection for room {roomid} as spectator (watch endpoint)")
+        from db.models import User
+        spectator_user = User(
+            id=0,
+            username="Spectator",
+            token="",
+            room_id=roomid,
+            is_owner=False
+        )
+        client = Client(websocket, spectator_user, room)
+
+        await client.ws.accept()
+
+        logger.info("WebSocket connected: %s", websocket.client)
+        clients_manager.push(roomid, client)
+
+        await on_connect(session, client, clients_manager, roomid)
+
+    try:
+        while True:
+            data = await client.ws.receive()
+            if data.get("type") == "websocket.disconnect":
+                logger.info(
+                    "WebSocket disconnect event received from %s: code=%s reason=%s",
+                    client.ws.client,
+                    data.get("code"),
+                    data.get("reason", ""),
+                )
+                break
+
+            # 观战者不需要处理任何事件，只接收消息
+            logger.debug("Spectator received message, ignoring: %s", data)
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)

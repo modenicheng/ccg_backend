@@ -48,6 +48,7 @@ class GameEventType(Enum):
     # We consider the skipping as a judging state event
     SKIP_ROUND = 43
     SHOW_ANSWER = 44
+    ROUND_STATE_UPDATE = 45
 
     # 全量的玩家答案，用于房间内所有客户端的同步显示与断线重连恢复
     PLAYER_ANSWER = 50
@@ -75,3 +76,11 @@ class RoomStatus(Enum):
     WAITING = 0
     RUNNING = 1
     ENDED = 2
+
+
+class RoundState(Enum):
+    PENDING = 0
+    PLAYING_AUDIO = 1
+    ANSWERING = 2
+    JUDGING = 3
+    COMPLETED = 4

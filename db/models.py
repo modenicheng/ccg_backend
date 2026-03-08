@@ -165,7 +165,14 @@ class Room(Base):
                                                            nullable=True,
                                                            default=None)
 
-    __table_args__ = (CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),)
+    round_state: Mapped[int | None] = mapped_column(Integer,
+                                                   nullable=True,
+                                                   default=0)  # 0 for PENDING
+
+    __table_args__ = (
+        CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
+        CheckConstraint("round_state in (0, 1, 2, 3, 4)", name="ck_rooms_round_state"),
+    )
 
     users: Mapped[list[User]] = relationship(back_populates="room",
                                              cascade="all, delete-orphan")

@@ -14,8 +14,9 @@ from client_manager import ClientManager, Client
 from db.session import session_scope
 from db import models
 from db.crud import get_current_song_info
+from room_state import RoundStateMachine
 from utils import get_logger, generate_audio_token, get_audio_stream_url
-from utils.enumerations import GameEventType, ErrorEventType
+from utils.enumerations import GameEventType, ErrorEventType, RoundState
 from utils.ts import get_ts_ms
 from cache import room_cache
 import cache.schemas as cache_schemas
@@ -33,6 +34,7 @@ from schemas.ws_messages.round_event_schemas import (
     YourTurnData,
     YourTurnMessage,
 )
+from schemas.ws_messages.round_state_schemas import RoundStateUpdateMessage, RoundStateUpdateData
 from .registe_manager import regist
 
 logger = get_logger(__name__)
@@ -85,6 +87,26 @@ async def handle_game_start(
                 offset_ts=0,
                 audio_url=audio_url,
             )
+            
+            # 触发状态转换到 PLAYING_AUDIO
+            try:
+                await RoundStateMachine.transition(session, room_id, RoundState.PLAYING_AUDIO)
+                # 广播状态更新消息
+                round_state_update_data = RoundStateUpdateData(
+                    round_state=RoundState.PLAYING_AUDIO.value,
+                    round_state_name=RoundState.PLAYING_AUDIO.name
+                )
+                round_state_update_message = RoundStateUpdateMessage(
+                    data=round_state_update_data
+                )
+                await clients.broadcast(
+                    room_id,
+                    round_state_update_message.model_dump()
+                )
+                logger.info(f"Room {room_id} round state transitioned to PLAYING_AUDIO")
+            except Exception as e:
+                logger.error(f"Failed to transition to PLAYING_AUDIO: {e}")
+            
             tasks = [
                 clients.broadcast(
                     room_id,
@@ -216,6 +238,26 @@ async def handle_attempt_answer(
             event_ts=server_ts,
             event_name="PAUSE",
         )
+
+        # 触发状态转换到 ANSWERING
+        try:
+            async with session_scope() as session:
+                await RoundStateMachine.transition(session, room_id, RoundState.ANSWERING)
+                # 广播状态更新消息
+                round_state_update_data = RoundStateUpdateData(
+                    round_state=RoundState.ANSWERING.value,
+                    round_state_name=RoundState.ANSWERING.name
+                )
+                round_state_update_message = RoundStateUpdateMessage(
+                    data=round_state_update_data
+                )
+                await clients.broadcast(
+                    room_id,
+                    round_state_update_message.model_dump()
+                )
+                logger.info(f"Room {room_id} round state transitioned to ANSWERING")
+        except Exception as e:
+            logger.error(f"Failed to transition to ANSWERING: {e}")
 
         # 设置当前作答玩家
         await room_cache.set_room_current_answerer(room_id, player_id)
