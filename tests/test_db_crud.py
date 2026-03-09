@@ -13,32 +13,14 @@ from router import room_songs as room_songs_router
 
 
 @pytest_asyncio.fixture
-async def session(tmp_path) -> AsyncIterator[AsyncSession]:
-    db_path = tmp_path / "test_crud.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}",
-                                 future=True)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all)
-
-    session_factory = async_sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autoflush=False,
-    )
-
-    async with session_factory() as db_session:
-        yield db_session
-
-    async with engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.drop_all)
-    await engine.dispose()
+async def session(db_session) -> AsyncIterator[AsyncSession]:
+    """使用共享的数据库会话fixture"""
+    yield db_session
 
 
 @pytest.mark.asyncio
 async def test_create_or_update_songlist_updates_existing_row(
-        session: AsyncSession) -> None:
+    session: AsyncSession,) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -64,7 +46,7 @@ async def test_create_or_update_songlist_updates_existing_row(
 
 @pytest.mark.asyncio
 async def test_create_or_update_song_existing_song_adds_songlist_link(
-        session: AsyncSession) -> None:
+    session: AsyncSession,) -> None:
     song = await crud.create_or_update_song(
         session,
         songlist_id=None,
@@ -102,7 +84,7 @@ async def test_create_or_update_song_existing_song_adds_songlist_link(
 
 @pytest.mark.asyncio
 async def test_create_or_update_song_does_not_duplicate_songlist_link(
-        session: AsyncSession) -> None:
+    session: AsyncSession,) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -174,7 +156,7 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
             {
                 "platform": "qq",
                 "platform_song_id": "bulk-song-1",
-                "title": "song-1-updated"
+                "title": "song-1-updated",
             },
             {
                 "platform": "qq",
@@ -185,8 +167,8 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
     )
     await session.commit()
 
-    songs = (await session.execute(
-        select(models.Song).order_by(models.Song.platform_song_id))).scalars().all()
+    songs = ((await session.execute(
+        select(models.Song).order_by(models.Song.platform_song_id))).scalars().all())
     links = (await session.execute(select(models.SonglistSong))).scalars().all()
 
     assert len(updated) == 2
@@ -198,7 +180,7 @@ async def test_create_or_update_songs_bulk_upserts(session: AsyncSession) -> Non
 
 @pytest.mark.asyncio
 async def test_create_or_update_songs_accepts_qq_song_shape(
-        session: AsyncSession) -> None:
+    session: AsyncSession,) -> None:
     songlist = await crud.create_or_update_songlist(
         session,
         platform="qq",
@@ -234,7 +216,7 @@ async def test_create_or_update_songs_accepts_qq_song_shape(
 
 @pytest.mark.asyncio
 async def test_update_song_cached_path_only_updates_cache_field(
-        session: AsyncSession) -> None:
+    session: AsyncSession,) -> None:
     created = await crud.create_or_update_song(
         session,
         songlist_id=None,
@@ -401,12 +383,21 @@ async def test_refresh_default_playback_initial_song_follows_latest_song_order(
                                               song_id: int) -> str:
         return f"token-{song_id}"
 
-    monkeypatch.setattr(room_songs_router.room_cache, "set_room_playback_state",
-                        _fake_set_room_playback_state)
-    monkeypatch.setattr(room_songs_router.room_cache, "delete_room_playback_state",
-                        _fake_delete_room_playback_state)
-    monkeypatch.setattr(room_songs_router.crud, "get_or_create_audio_token",
-                        _fake_get_or_create_audio_token)
+    monkeypatch.setattr(
+        room_songs_router.room_cache,
+        "set_room_playback_state",
+        _fake_set_room_playback_state,
+    )
+    monkeypatch.setattr(
+        room_songs_router.room_cache,
+        "delete_room_playback_state",
+        _fake_delete_room_playback_state,
+    )
+    monkeypatch.setattr(
+        room_songs_router.crud,
+        "get_or_create_audio_token",
+        _fake_get_or_create_audio_token,
+    )
     monkeypatch.setattr(room_songs_router, "get_audio_stream_url",
                         lambda token: f"/audio/{token}")
 

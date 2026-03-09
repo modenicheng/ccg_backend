@@ -19,6 +19,7 @@ from cache import room_cache
 from cache.room_state_manager import RoomStateManager
 import cache.schemas as cache_schemas
 from utils import get_logger, get_audio_stream_url
+from handlers.audio_common import preload_and_broadcast_audio
 from utils.enumerations import GameEventType, ErrorEventType, RoundState
 from utils.ts import get_ts_ms
 from schemas.ws_messages.round_event_schemas import (
@@ -86,21 +87,8 @@ async def _trigger_and_broadcast_preload_for_index(
             return
 
         try:
-            preload_audio_token = await crud.get_or_create_audio_token(
-                session,
-                room_id,
-                preload_song_id,
-            )
-            preload_audio_url = get_audio_stream_url(preload_audio_token)
-            preload_message = PreloadAudioMessage(
-                data=PlayControlData(audio_url=preload_audio_url))
-            await clients.broadcast(room_id, preload_message.model_dump())
-            logger.info(
-                "Broadcast PRELOAD_AUDIO for song %s (index %s) in room %s",
-                preload_song_id,
-                preload_index,
-                room_id,
-            )
+            await preload_and_broadcast_audio(session, room_id, preload_song_id,
+                                              clients, preload_index)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Failed to broadcast PRELOAD_AUDIO for song %s in room %s: %s",
@@ -308,12 +296,11 @@ async def handle_skip_round(
                                             RoundState.PLAYING_AUDIO)
 
         # 4) 向所有客户端发送新一轮开始
-        round_start_message = RoundStartMessage(
-            data=RoundStartData(
-                round_index=next_index,
-                audio_url=audio_url,
-                start_pertent=0.0,
-            ))
+        round_start_message = RoundStartMessage(data=RoundStartData(
+            round_index=next_index,
+            audio_url=audio_url,
+            start_pertent=0.0,
+        ))
         await clients.broadcast(room_id, round_start_message.model_dump())
 
         # 兼容保留：广播原始SKIP_ROUND事件

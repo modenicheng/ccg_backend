@@ -15,28 +15,9 @@ from main import app
 
 
 @pytest_asyncio.fixture
-async def session(tmp_path) -> AsyncIterator[AsyncSession]:
-    """Create a test database session."""
-    db_path = tmp_path / "test_tags.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}",
-                                 future=True)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    session_factory = async_sessionmaker(
-        bind=engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autoflush=False,
-    )
-
-    async with session_factory() as db_session:
-        yield db_session
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+async def session(db_session) -> AsyncIterator[AsyncSession]:
+    """使用共享的数据库会话fixture"""
+    yield db_session
 
 
 @pytest_asyncio.fixture
@@ -121,16 +102,18 @@ async def test_patch_tag_group_add_tags(client: TestClient, session: AsyncSessio
     await session.refresh(tag2)
 
     # Patch: add new tags and existing tags
-    response = client.patch(f"/api/tags/groups/",
-                            json={
-                                "id": tag_group.id,
-                                "add_tags": [{
-                                    "name": "New Tag 1"
-                                }, {
-                                    "name": "New Tag 2"
-                                }],
-                                "add_existing_tag_ids": [tag1.id, tag2.id]
-                            })
+    response = client.patch(
+        f"/api/tags/groups/",
+        json={
+            "id": tag_group.id,
+            "add_tags": [{
+                "name": "New Tag 1"
+            }, {
+                "name": "New Tag 2"
+            }],
+            "add_existing_tag_ids": [tag1.id, tag2.id],
+        },
+    )
     print(response.json())
     assert response.status_code == 200
     data = response.json()
@@ -172,11 +155,13 @@ async def test_patch_tag_group_remove_tags(client: TestClient, session: AsyncSes
     await session.refresh(tag_group)
 
     # Remove two tags
-    response = client.patch(f"/api/tags/groups/",
-                            json={
-                                "id": tag_group.id,
-                                "remove_tag_ids": [tag1.id, tag2.id]
-                            })
+    response = client.patch(
+        f"/api/tags/groups/",
+        json={
+            "id": tag_group.id,
+            "remove_tag_ids": [tag1.id, tag2.id]
+        },
+    )
     assert response.status_code == 200
     data = response.json()
     assert len(data["tags"]) == 1
@@ -211,15 +196,17 @@ async def test_patch_tag_group_add_and_remove(client: TestClient,
     await session.refresh(tag_group)
 
     # Remove tag1, add tag2 and a new tag
-    response = client.patch(f"/api/tags/groups/",
-                            json={
-                                "id": tag_group.id,
-                                "remove_tag_ids": [tag1.id],
-                                "add_existing_tag_ids": [tag2.id],
-                                "add_tags": [{
-                                    "name": "New Tag"
-                                }]
-                            })
+    response = client.patch(
+        f"/api/tags/groups/",
+        json={
+            "id": tag_group.id,
+            "remove_tag_ids": [tag1.id],
+            "add_existing_tag_ids": [tag2.id],
+            "add_tags": [{
+                "name": "New Tag"
+            }],
+        },
+    )
     assert response.status_code == 200
     data = response.json()
     assert len(data["tags"]) == 2
@@ -244,11 +231,13 @@ async def test_patch_tag_group_invalid_existing_tag(client: TestClient,
     await session.commit()
     await session.refresh(tag_group)
 
-    response = client.patch(f"/api/tags/groups/",
-                            json={
-                                "id": tag_group.id,
-                                "add_existing_tag_ids": [999, 1000]
-                            })
+    response = client.patch(
+        f"/api/tags/groups/",
+        json={
+            "id": tag_group.id,
+            "add_existing_tag_ids": [999, 1000]
+        },
+    )
     assert response.status_code == 404
     assert "Tags with IDs" in response.json()["detail"]
 

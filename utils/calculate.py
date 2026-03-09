@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""
+分数计算工具
+提供玩家分数计算相关功能
+"""
+
 
 def calculate_player_scores(
     answer_queue: list[str],
@@ -34,7 +39,7 @@ def calculate_player_scores(
             continue
 
         player_answer = player_answers[player_id]
-        selected_tags = player_answer.get('selected_tag_ids', [])
+        selected_tags = player_answer.get("selected_tag_ids", [])
 
         # Check each tag group
         for tag_group_id, group_tags in tag_group_map.items():

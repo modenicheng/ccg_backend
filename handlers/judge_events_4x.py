@@ -21,6 +21,7 @@ from db.crud import (
     fetch_room_object,
 )
 from cache.room_state_manager import RoundStateManager
+from handlers.audio_common import preload_and_broadcast_audio
 from utils import get_logger
 from utils.enumerations import GameEventType, RoundState
 from utils.calculate import calculate_player_scores
@@ -468,20 +469,9 @@ async def handle_judge_submit(
                         )
 
                         # 广播 PRELOAD_AUDIO 事件，供前端提前预加载
-                        from db.crud import get_or_create_audio_token
-
-                        preload_audio_token = await get_or_create_audio_token(
-                            session,
-                            room_id,
-                            preload_song_id,
-                        )
-                        preload_audio_url = get_audio_stream_url(preload_audio_token)
-                        preload_message = PreloadAudioMessage(
-                            data=PlayControlData(audio_url=preload_audio_url))
-                        await clients.broadcast(room_id, preload_message.model_dump())
-                        logger.info(
-                            f"Broadcast PRELOAD_AUDIO for song {preload_song_id} (index {preload_index}) in room {room_id}"
-                        )
+                        await preload_and_broadcast_audio(session, room_id,
+                                                          preload_song_id, clients,
+                                                          preload_index)
                     except Exception as e:
                         logger.warning(
                             f"Failed to trigger preload for song {preload_song_id}: {e}"

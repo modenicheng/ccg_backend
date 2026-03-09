@@ -138,8 +138,9 @@ Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `s
 1. Add class to `db/models.py` (SQLAlchemy 2.0 style)
 2. Define relationships, constraints
 3. `uv run alembic revision --autogenerate -m "add_model"`
-4. `uv run alembic upgrade head`
-5. Add CRUD helpers in `db/crud.py` if needed
+4. After autogeneration, you must double check the migration file and modify it to adopt both SQLite and PostgreSQL traits
+5. `uv run alembic upgrade head`
+6. Add CRUD helpers in `db/crud.py` if needed
 
 ### Run a Single Test
 ```bash

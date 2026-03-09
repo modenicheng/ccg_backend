@@ -5,11 +5,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import psutil
 import time
-from typing import Optional, Callable, Any, AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Optional, Callable, Any, AsyncIterator
+import psutil
 
 from .logger import get_logger
 
@@ -68,9 +67,11 @@ class MemoryMonitor:
 
     def _format_memory_report(self, memory_info: dict[str, Any]) -> str:
         """格式化内存报告"""
+        timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S",
+                                      time.localtime(memory_info["timestamp"]))
         lines = [
             "=" * 50,
-            f"内存使用报告 - {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(memory_info['timestamp']))}",
+            f"内存使用报告 - {timestamp_str}",
             "-" * 50,
         ]
 
@@ -100,7 +101,7 @@ class MemoryMonitor:
 
     async def _monitor_loop(self) -> None:
         """监控循环"""
-        logger.info(f"内存监控器已启动，报告间隔: {self.interval}秒")
+        logger.info("内存监控器已启动，报告间隔: %s秒", self.interval)
 
         while self._running:
             try:
@@ -116,22 +117,22 @@ class MemoryMonitor:
                     memory_change = abs(current_rss - self._last_memory_usage)
                     if memory_change >= self.report_threshold_mb:
                         should_report = True
-                        logger.info(f"内存变化超过阈值: {memory_change:.2f} MB")
+                        logger.info("内存变化超过阈值: %.2f MB", memory_change)
 
                 if should_report:
                     report = self._format_memory_report(memory_info)
-                    logger.info(f"\n{report}")
+                    logger.info("\n%s", report)
                     self._last_memory_usage = current_rss
                 else:
-                    logger.debug(f"当前RSS内存: {current_rss:.2f} MB (变化未达阈值)")
+                    logger.debug("当前RSS内存: %.2f MB (变化未达阈值)", current_rss)
 
                 await asyncio.sleep(self.interval)
 
             except asyncio.CancelledError:
                 logger.info("内存监控器被取消")
                 break
-            except Exception as e:
-                logger.error(f"内存监控出错: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.error("内存监控出错: %s", e)
                 await asyncio.sleep(self.interval)  # 出错后继续等待
 
     async def start(self) -> None:
@@ -209,8 +210,8 @@ async def periodic_memory_report(
         detailed: 是否输出详细报告
         callback: 可选的回调函数，接收内存信息字典
     """
-    logger = get_logger(__name__)
-    logger.info(f"开始定时内存报告，间隔: {interval}秒")
+    logger = get_logger(__name__)  # pylint: disable=redefined-outer-name
+    logger.info("开始定时内存报告，间隔: %s秒", interval)
 
     try:
         while True:
@@ -231,7 +232,10 @@ async def periodic_memory_report(
                 logger.info(report)
             else:
                 logger.info(
-                    f"内存使用: RSS={rss_mb:.2f}MB, VMS={vms_mb:.2f}MB, 系统={system_percent:.1f}%"
+                    "内存使用: RSS=%.2fMB, VMS=%.2fMB, 系统=%.1f%%",
+                    rss_mb,
+                    vms_mb,
+                    system_percent,
                 )
 
             # 调用回调函数
@@ -249,8 +253,8 @@ async def periodic_memory_report(
 
     except asyncio.CancelledError:
         logger.info("定时内存报告已停止")
-    except Exception as e:
-        logger.error(f"定时内存报告出错: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("定时内存报告出错: %s", e)
 
 
 # 导出主要功能

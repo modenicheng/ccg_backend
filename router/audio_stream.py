@@ -15,6 +15,7 @@ from db import crud
 from cache.file_cache import load_song_asset_with_cache
 from utils.audio_token import get_song_id_from_token
 from utils import get_logger
+from utils.http_utils import build_range_response
 
 logger = get_logger(__name__)
 
@@ -24,77 +25,6 @@ audio_stream_router = APIRouter(prefix="/api/songs", tags=["audio"])
 def _utc_now_naive() -> datetime.datetime:
     """返回naive UTC时间，匹配数据库DateTime(timezone=False)字段。"""
     return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
-
-
-def _build_range_response(content: bytes, media_type: str,
-                          range_header: str | None) -> Response:
-    """
-    构建支持Range请求的响应
-    从song.py复制，确保一致性
-    """
-    total = len(content)
-    common_headers = {
-        "Accept-Ranges": "bytes",
-    }
-
-    if not range_header:
-        return Response(
-            content=content,
-            media_type=media_type,
-            headers={
-                **common_headers, "Content-Length": str(total)
-            },
-        )
-
-    if not range_header.startswith("bytes="):
-        raise HTTPException(status_code=416, detail="Invalid Range header")
-
-    range_spec = range_header.replace("bytes=", "", 1).strip()
-    if "," in range_spec:
-        raise HTTPException(status_code=416, detail="Multiple ranges are not supported")
-
-    start_str, sep, end_str = range_spec.partition("-")
-    if sep != "-":
-        raise HTTPException(status_code=416, detail="Invalid Range header")
-
-    try:
-        if start_str == "":
-            # suffix-byte-range-spec: bytes=-500 (最后500字节)
-            suffix_length = int(end_str)
-            if suffix_length <= 0:
-                raise ValueError
-            start = max(total - suffix_length, 0)
-            end = total - 1
-        else:
-            start = int(start_str)
-            if end_str == "":
-                end = total - 1
-            else:
-                end = int(end_str)
-    except ValueError as e:
-        raise HTTPException(status_code=416, detail="Invalid Range header") from e
-
-    if total == 0 or start < 0 or end < start or start >= total:
-        return Response(
-            status_code=416,
-            headers={
-                "Content-Range": f"bytes */{total}",
-                **common_headers
-            },
-        )
-
-    end = min(end, total - 1)
-    partial = content[start:end + 1]
-    return Response(
-        content=partial,
-        status_code=206,
-        media_type=media_type,
-        headers={
-            **common_headers,
-            "Content-Range": f"bytes {start}-{end}/{total}",
-            "Content-Length": str(len(partial)),
-        },
-    )
 
 
 @audio_stream_router.get("/stream/{token}")
@@ -180,7 +110,7 @@ async def stream_audio(
     content, media_type = await load_song_asset_with_cache(song.cached_path)
     range_header = request.headers.get("range")
 
-    response = _build_range_response(content, media_type, range_header)
+    response = build_range_response(content, media_type, range_header)
 
     # 添加安全头和缓存头
     response.headers["Cache-Control"] = "private, max-age=3600"  # 客户端缓存1小时

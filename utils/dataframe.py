@@ -1,22 +1,27 @@
 from __future__ import annotations
+
+"""
+数据帧处理工具
+提供二进制数据帧解析和构建功能
+"""
 from abc import abstractmethod
+import datetime
+import random
 import string
+import struct
 
 from utils.errors import InvalidFrameError
 from .enumerations import EventType, AudioEncoding, HeartbeatType
 from .logger import get_logger
-import datetime
-import struct
-import random
 
 logger = get_logger(__name__)
 
 
 def get_event_type(data: bytes) -> EventType:
     """Get the event type from the binary data.
-    
+
     The event type is stored in the first byte of the data, and refer to `EventType` enum.
-    
+
     Args:
         data (bytes): The binary data of the frame.
     """
@@ -31,7 +36,7 @@ def current_timestamp_ms() -> int:
 
 class BaseFrame:
     """
-    
+
     All of the data frame must include follow fields:
     - 1 byte: event type, refer to `EventType` enum
     - 8 bytes: timestamp, uint64 (milliseconds)
@@ -39,6 +44,7 @@ class BaseFrame:
     Returns:
         _type_: _description_
     """
+
     event_type = EventType.OMIT
     timestamp: int = current_timestamp_ms()
 
@@ -142,7 +148,7 @@ class BaseFrame:
 
 class HeartbeatFrame(BaseFrame):
     """A class to abstract the heartbeat frame data.
-    
+
     The binary format of the heartbeat frame is as follows:
     - 1 byte: event type, refer to `EventType` enum
     - 1 byte: heartbeat type, refer to `HeartbeatType` enum
@@ -152,10 +158,11 @@ class HeartbeatFrame(BaseFrame):
     - 8 bytes: t2, uint64 (milliseconds), the timestamp when the server receives the heartbeat frame.
     - 8 bytes: t3, uint64 (milliseconds), the timestamp when the server sends the heartbeat response frame.
     - 8 bytes: t4, uint64 (milliseconds), the timestamp when the client receives the heartbeat response frame.
-    
+
     The heartbeat can be used to keep the connection, and measure the latency and time offset between the client and the server.
-    
+
     """
+
     event_type: EventType = EventType.HEARTBEAT
     heartbeat_type: HeartbeatType
     timestamp: int = current_timestamp_ms()
@@ -205,8 +212,9 @@ class HeartbeatFrame(BaseFrame):
     @staticmethod
     def load(data: bytes):
         try:
-            unpacked: tuple[int, int, int, bytes, int, int, int,
-                            int] = struct.unpack(HeartbeatFrame._data_format, data)
+            unpacked: tuple[int, int, int, bytes, int, int, int, int] = struct.unpack(
+                HeartbeatFrame._data_format, data
+            )
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
             raise InvalidFrameError("Invalid data for HeartbeatFrame") from e

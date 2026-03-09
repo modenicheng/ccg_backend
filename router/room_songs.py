@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from utils.enumerations import RoomStatus
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,17 +26,34 @@ logger = get_logger(__name__)
 room_songs_router = APIRouter(prefix="/api/rooms/{roomid}/songs", tags=["room_songs"])
 
 
-async def _require_room_owner(session: AsyncSession, request: Request,
-                              roomid: str) -> models.User:
+async def _require_room_owner(
+    session: AsyncSession, request: Request, roomid: str
+) -> models.User:
     """验证请求用户是当前房间房主。"""
     user = await crud.simple_authentication(session, request.cookies, roomid)
     if not user:
-        raise HTTPException(status_code=403,
-                            detail="Authentication required for this room")
+        raise HTTPException(
+            status_code=403, detail="Authentication required for this room"
+        )
     if not user.is_owner:
-        raise HTTPException(status_code=403,
-                            detail="Only room owner can perform this action")
+        raise HTTPException(
+            status_code=403, detail="Only room owner can perform this action"
+        )
     return user
+
+
+async def _require_room_waiting(session: AsyncSession, roomid: str) -> None:
+    """验证房间处于 WAITING 状态，否则拒绝操作。"""
+    room_stmt = select(models.Room).where(models.Room.id == roomid)
+    room_result = await session.execute(room_stmt)
+    room = room_result.scalar_one_or_none()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.status != RoomStatus.WAITING.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Room is not in WAITING state; song list modifications are not allowed",
+        )
 
 
 async def _trigger_preload_top_songs(session: AsyncSession, roomid: str) -> None:
@@ -47,8 +65,9 @@ async def _trigger_preload_top_songs(session: AsyncSession, roomid: str) -> None
         logger.warning(f"Failed to trigger preload for room {roomid}: {e}")
 
 
-async def _refresh_default_playback_initial_song(session: AsyncSession,
-                                                 roomid: str) -> None:
+async def _refresh_default_playback_initial_song(
+    session: AsyncSession, roomid: str
+) -> None:
     """根据最新歌曲顺序刷新默认播放初始曲目。"""
     song_queue = await crud.get_room_song_queue(session, roomid)
     if not song_queue:
@@ -71,16 +90,19 @@ async def _refresh_default_playback_initial_song(session: AsyncSession,
         audio_url=audio_url,
     )
     await room_cache.set_room_playback_state(roomid, playback_state)
-    logger.info("Refreshed default playback initial song for room %s: song_id=%s",
-                roomid, first_song_id)
+    logger.info(
+        "Refreshed default playback initial song for room %s: song_id=%s",
+        roomid,
+        first_song_id,
+    )
 
 
 @room_songs_router.get("/", response_model=RoomSongsListResponse)
 async def get_room_songs_list(
-        roomid: str,
-        offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=20, ge=1, le=1000),
-        session: AsyncSession = Depends(get_db),
+    roomid: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=1000),
+    session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Get all songs in a room."""
     # First check if room exists
@@ -91,11 +113,9 @@ async def get_room_songs_list(
         raise HTTPException(status_code=404, detail="Room not found")
 
     # Get room songs with song details
-    room_songs = await crud.get_room_songs(session,
-                                           roomid,
-                                           include_song_details=True,
-                                           offset=offset,
-                                           limit=limit)
+    room_songs = await crud.get_room_songs(
+        session, roomid, include_song_details=True, offset=offset, limit=limit
+    )
 
     total = await crud.count_room_songs(session, roomid) or 0
 
@@ -125,10 +145,10 @@ async def get_room_songs_list(
 
 @room_songs_router.post("/", response_model=RoomSongsListResponse)
 async def add_songs_to_room(
-        roomid: str,
-        request: AddRoomSongsRequest,
-        http_request: Request,
-        session: AsyncSession = Depends(get_db),
+    roomid: str,
+    request: AddRoomSongsRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Add songs to a room."""
     # Check if room exists
@@ -139,6 +159,7 @@ async def add_songs_to_room(
         raise HTTPException(status_code=404, detail="Room not found")
 
     await _require_room_owner(session, http_request, roomid)
+    await _require_room_waiting(session, roomid)
 
     # Check if songs exist
     song_stmt = select(models.Song).where(models.Song.id.in_(request.song_ids))
@@ -148,15 +169,15 @@ async def add_songs_to_room(
 
     missing_song_ids = [sid for sid in request.song_ids if sid not in existing_song_ids]
     if missing_song_ids:
-        raise HTTPException(status_code=404,
-                            detail=f"Songs with IDs {missing_song_ids} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Songs with IDs {missing_song_ids} not found"
+        )
 
     # Add songs to room
     try:
-        added = await crud.add_songs_to_room(session,
-                                             roomid,
-                                             request.song_ids,
-                                             append_to_end=request.append_to_end)
+        added = await crud.add_songs_to_room(
+            session, roomid, request.song_ids, append_to_end=request.append_to_end
+        )
         await session.commit()
         if added:
             await _trigger_preload_top_songs(session, roomid)
@@ -164,8 +185,9 @@ async def add_songs_to_room(
     except Exception as e:
         logger.error(f"Failed to add songs to room {roomid}: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to add songs to room: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to add songs to room: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -173,10 +195,10 @@ async def add_songs_to_room(
 
 @room_songs_router.delete("/", response_model=RoomSongsListResponse)
 async def remove_songs_from_room(
-        roomid: str,
-        request: RemoveRoomSongsRequest,
-        http_request: Request,
-        session: AsyncSession = Depends(get_db),
+    roomid: str,
+    request: RemoveRoomSongsRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Remove songs from a room."""
     # Check if room exists
@@ -187,11 +209,13 @@ async def remove_songs_from_room(
         raise HTTPException(status_code=404, detail="Room not found")
 
     await _require_room_owner(session, http_request, roomid)
+    await _require_room_waiting(session, roomid)
 
     # Remove songs
     try:
-        removed_count = await crud.remove_songs_from_room(session, roomid,
-                                                          request.song_ids)
+        removed_count = await crud.remove_songs_from_room(
+            session, roomid, request.song_ids
+        )
         await session.commit()
         if removed_count > 0:
             await _trigger_preload_top_songs(session, roomid)
@@ -199,8 +223,9 @@ async def remove_songs_from_room(
     except Exception as e:
         logger.error(f"Failed to remove songs from room {roomid}: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to remove songs from room: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to remove songs from room: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -208,10 +233,10 @@ async def remove_songs_from_room(
 
 @room_songs_router.put("/", response_model=RoomSongsListResponse)
 async def batch_update_room_song_order(
-        roomid: str,
-        request: BatchUpdateRoomSongOrderRequest,
-        http_request: Request,
-        session: AsyncSession = Depends(get_db),
+    roomid: str,
+    request: BatchUpdateRoomSongOrderRequest,
+    http_request: Request,
+    session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Batch update song orders in a room."""
     # Check if room exists
@@ -222,6 +247,7 @@ async def batch_update_room_song_order(
         raise HTTPException(status_code=404, detail="Room not found")
 
     await _require_room_owner(session, http_request, roomid)
+    await _require_room_waiting(session, roomid)
 
     # Validate all songs exist in room
     for order_update in request.orders:
@@ -236,18 +262,21 @@ async def batch_update_room_song_order(
     # client should send complete new ordering)
     try:
         for order_update in request.orders:
-            await crud.update_room_song_order(session, roomid, order_update.song_id,
-                                              order_update.new_order)
+            await crud.update_room_song_order(
+                session, roomid, order_update.song_id, order_update.new_order
+            )
         await session.commit()
         if request.orders:
             await _trigger_preload_top_songs(session, roomid)
         logger.info(
-            f"Updated song orders for {len(request.orders)} songs in room {roomid}")
+            f"Updated song orders for {len(request.orders)} songs in room {roomid}"
+        )
     except Exception as e:
         logger.error(f"Failed to update song orders in room {roomid}: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to update song orders: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update song orders: {str(e)}"
+        )
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -266,6 +295,7 @@ async def clear_all_room_songs(
         raise HTTPException(status_code=404, detail="Room not found")
 
     await _require_room_owner(session, http_request, roomid)
+    await _require_room_waiting(session, roomid)
 
     # Clear all songs
     try:
@@ -275,8 +305,9 @@ async def clear_all_room_songs(
     except Exception as e:
         logger.error(f"Failed to clear songs from room {roomid}: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to clear songs from room: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to clear songs from room: {str(e)}"
+        )
 
     # Return empty list
     return RoomSongsListResponse(room_id=roomid, list=[], total=0)
@@ -294,6 +325,7 @@ async def shuffle_room_songs_list(
         raise HTTPException(status_code=404, detail="Room not found")
 
     await _require_room_owner(session, http_request, roomid)
+    await _require_room_waiting(session, roomid)
 
     try:
         await crud.shuffle_room_songs(session, roomid)
@@ -304,16 +336,17 @@ async def shuffle_room_songs_list(
     except Exception as e:
         logger.error(f"Failed to shuffle songs in room {roomid}: {e}")
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to shuffle songs: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to shuffle songs: {str(e)}"
+        )
 
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
 
 
 @room_songs_router.get("/{songid}")
 async def get_room_song_detail(
-    roomid: str, songid: int,
-    session: AsyncSession = Depends(get_db)) -> RoomSongResponse:
+    roomid: str, songid: int, session: AsyncSession = Depends(get_db)
+) -> RoomSongResponse:
     """Get details of a specific song in a room."""
     # Check if room exists
     room_stmt = select(models.Room).where(models.Room.id == roomid)
@@ -325,8 +358,9 @@ async def get_room_song_detail(
     # Get room song
     room_song = await crud.get_room_song(session, roomid, songid)
     if not room_song:
-        raise HTTPException(status_code=404,
-                            detail=f"Song with ID {songid} not found in room")
+        raise HTTPException(
+            status_code=404, detail=f"Song with ID {songid} not found in room"
+        )
 
     # Get the associated song details
     song_stmt = select(models.Song).where(models.Song.id == songid)
