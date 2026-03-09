@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 """
 数据帧处理工具
 提供二进制数据帧解析和构建功能
@@ -11,7 +10,7 @@ import string
 import struct
 
 from utils.errors import InvalidFrameError
-from .enumerations import EventType, AudioEncoding, HeartbeatType
+from .enumerations import EventType, HeartbeatType
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -212,9 +211,8 @@ class HeartbeatFrame(BaseFrame):
     @staticmethod
     def load(data: bytes):
         try:
-            unpacked: tuple[int, int, int, bytes, int, int, int, int] = struct.unpack(
-                HeartbeatFrame._data_format, data
-            )
+            unpacked: tuple[int, int, int, bytes, int, int, int,
+                            int] = struct.unpack(HeartbeatFrame._data_format, data)
         except struct.error as e:
             logger.error("Failed to unpack HeartbeatFrame: %s", e)
             raise InvalidFrameError("Invalid data for HeartbeatFrame") from e

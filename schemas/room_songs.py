@@ -12,6 +12,7 @@ from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.song import SongResponse
+from .common import SONG_EXAMPLE
 
 
 class RoomSongBase(BaseModel):
@@ -21,7 +22,8 @@ class RoomSongBase(BaseModel):
     song_id: int = Field(description="Song ID")
     song_order: Optional[int] = Field(
         default=None,
-        description="Song order in room queue (null means no specific order)")
+        description="Song order in room queue (null means no specific order)",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -37,20 +39,7 @@ class RoomSongResponse(RoomSongBase):
                 "room_id": "ABCD12",
                 "song_id": 1,
                 "song_order": 1,
-                "song": {
-                    "id": 1,
-                    "platform": "qqmusic",
-                    "platform_song_id": "004R6Kl32YDHxe",
-                    "title": "Song Title",
-                    "subtitle": "Subtitle",
-                    "artist": "Artist Name",
-                    "album_name": "Album",
-                    "cover_url": "https://example.com/cover.jpg",
-                    "audio_url": "https://stream.example.com/song.mp3",
-                    "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                    "cached": True,
-                    "metadata_json": None
-                }
+                "song": SONG_EXAMPLE,
             }
         })
 
@@ -69,33 +58,36 @@ class RoomSongsListResponse(BaseModel):
                     "ABCD12",
                 "total":
                     2,
-                "list": [{
-                    "room_id": "ABCD12",
-                    "song_id": 1,
-                    "song_order": 1,
-                    "song": {
-                        "id": 1,
-                        "platform": "qqmusic",
-                        "platform_song_id": "001",
-                        "title": "Song 1",
-                        "artist": "Artist 1",
-                        "cover_url": "https://example.com/cover1.jpg",
-                        "cached": True
-                    }
-                }, {
-                    "room_id": "ABCD12",
-                    "song_id": 2,
-                    "song_order": 2,
-                    "song": {
-                        "id": 2,
-                        "platform": "qqmusic",
-                        "platform_song_id": "002",
-                        "title": "Song 2",
-                        "artist": "Artist 2",
-                        "cover_url": "https://example.com/cover2.jpg",
-                        "cached": True
-                    }
-                }]
+                "list": [
+                    {
+                        "room_id": "ABCD12",
+                        "song_id": 1,
+                        "song_order": 1,
+                        "song": {
+                            "id": 1,
+                            "platform": "qqmusic",
+                            "platform_song_id": "001",
+                            "title": "Song 1",
+                            "artist": "Artist 1",
+                            "cover_url": "https://example.com/cover1.jpg",
+                            "cached": True,
+                        },
+                    },
+                    {
+                        "room_id": "ABCD12",
+                        "song_id": 2,
+                        "song_order": 2,
+                        "song": {
+                            "id": 2,
+                            "platform": "qqmusic",
+                            "platform_song_id": "002",
+                            "title": "Song 2",
+                            "artist": "Artist 2",
+                            "cover_url": "https://example.com/cover2.jpg",
+                            "cached": True,
+                        },
+                    },
+                ],
             }
         })
 
@@ -107,7 +99,8 @@ class AddRoomSongsRequest(BaseModel):
     append_to_end: bool = Field(
         default=True,
         description=
-        "If true, append songs to the end of queue; if false, insert at beginning")
+        "If true, append songs to the end of queue; if false, insert at beginning",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={"example": {
@@ -147,12 +140,15 @@ class BatchUpdateRoomSongOrderRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "orders": [{
-                    "song_id": 1,
-                    "new_order": 3
-                }, {
-                    "song_id": 2,
-                    "new_order": 1
-                }]
+                "orders": [
+                    {
+                        "song_id": 1,
+                        "new_order": 3
+                    },
+                    {
+                        "song_id": 2,
+                        "new_order": 1
+                    },
+                ]
             }
         })

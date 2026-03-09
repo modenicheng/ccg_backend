@@ -3,7 +3,6 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from utils.enumerations import RoomStatus
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +15,7 @@ from schemas.song import SongResponse, SongCreate, SongListResponse
 from mq import tasks
 from utils import get_logger
 from utils.http_utils import build_range_response
+from utils.enumerations import RoomStatus
 
 logger = get_logger(__name__)
 
@@ -140,6 +140,24 @@ async def delete_song(song_id: int, session: AsyncSession = Depends(get_db)):
     song = result.scalar_one_or_none()
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
+
+    # Check if song belongs to any RUNNING room
+    from sqlalchemy import exists
+
+    running_room_stmt = select(
+        exists().where(
+            RoomSong.song_id == song_id,
+            RoomSong.room_id == Room.id,
+            Room.status == RoomStatus.RUNNING.value,
+        )
+    )
+    running_result = await session.execute(running_room_stmt)
+    is_in_running_room = running_result.scalar()
+    if is_in_running_room:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete song because it belongs to a RUNNING room",
+        )
 
     await session.delete(song)
     await session.commit()

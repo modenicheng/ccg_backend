@@ -1,8 +1,14 @@
 from __future__ import annotations
+"""
+枚举定义
+定义项目中使用的事件类型、游戏状态等枚举
+"""
 from enum import Enum
 
 
 class EventType(Enum):
+    """事件类型枚举"""
+
     OMIT = 0
     AUDIO_FRAME = 1
     META_DATA = 2
@@ -12,6 +18,8 @@ class EventType(Enum):
 
 
 class ErrorEventType(Enum):
+    """错误事件类型枚举"""
+
     INVALID_JSON = 200
     MISSING_EVENT_FIELD = 201
     UNSUPPORTED_EVENT = 202
@@ -19,6 +27,8 @@ class ErrorEventType(Enum):
 
 
 class GameEventType(Enum):
+    """游戏事件类型枚举"""
+
     # ROOM_CREATE = 10
     ROOM_JOIN = 11
     ROOM_STATE = 12
@@ -58,22 +68,30 @@ class GameEventType(Enum):
 
 
 class AudioEncoding(Enum):
+    """音频编码格式枚举"""
+
     UNKNOWN = 0
     OPUS = 1
     PCM = 2
 
 
 class HeartbeatType(Enum):
+    """心跳类型枚举"""
+
     PING = 0
     PONG = 1
 
 
 class MusicPlatform(Enum):
+    """音乐平台枚举"""
+
     QQ = "qq"
     NETEASE = "netease"
 
 
 class RoomStatus(Enum):
+    """房间状态枚举"""
+
     WAITING = 0
     RUNNING = 1
     ENDED = 2

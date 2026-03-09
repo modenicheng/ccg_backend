@@ -609,20 +609,26 @@ async def remove_songs_from_room(session: AsyncSession, room_id: str,
     if not song_ids:
         return 0
 
-    stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
-                                         models.RoomSong.song_id.in_(song_ids))
-    result = await session.execute(stmt)
-    room_songs = list(result.scalars().all())
+    removed = []
+    removed_ordered = []
+    for song_id in song_ids:
+        try:
+            stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
+                                                 models.RoomSong.song_id == song_id)
+            result = await session.execute(stmt)
+            room_song = result.scalar_one_or_none()
+            if not room_song:
+                continue
+            if room_song.song_order is not None:
+                removed_ordered.append(room_song)
+            await session.delete(room_song)
+            removed.append(room_song)
+        except Exception as e:
+            l.warning(f"Failed to remove song {song_id} from room {room_id}: {e}")
+            # continue to next song
 
-    if not room_songs:
+    if not removed:
         return 0
-
-    # Get ordered songs that will be removed
-    removed_ordered = [rs for rs in room_songs if rs.song_order is not None]
-
-    # Delete the associations
-    for rs in room_songs:
-        await session.delete(rs)
 
     # If we removed ordered songs, need to reorder remaining songs
     if removed_ordered:
@@ -641,7 +647,7 @@ async def remove_songs_from_room(session: AsyncSession, room_id: str,
 
     await session.flush()
     await shuffle_room_songs(session, room_id)
-    return len(room_songs)
+    return len(removed)
 
 
 async def update_room_song_order(session: AsyncSession, room_id: str, song_id: int,

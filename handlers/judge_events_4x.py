@@ -26,6 +26,7 @@ from utils import get_logger
 from utils.enumerations import GameEventType, RoundState
 from utils.calculate import calculate_player_scores
 from cache import room_cache
+import cache.schemas as cache_schemas
 from schemas.ws_messages.judge_schemas import (
     JudgingData,
     JudgingMessage,
@@ -484,6 +485,15 @@ async def handle_judge_submit(
             audio_token = await get_or_create_audio_token(session, room_id,
                                                           current_song_id)
             audio_url = get_audio_stream_url(audio_token)
+
+            # 强制新回合播放状态为 playing（避免沿用上一轮暂停状态）
+            playback_state = cache_schemas.PlaybackState(
+                play_state="playing",
+                progress_ms=0,
+                offset_ts=0,
+                audio_url=audio_url,
+            )
+            await room_cache.set_room_playback_state(room_id, playback_state)
 
             # 转换状态流：COMPLETED -> PENDING -> PLAYING_AUDIO
             reset_success = await RoundStateManager.transition_round_state(

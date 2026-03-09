@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 """
 音频令牌管理工具
 生成临时音频访问令牌，保护音频ID不被直接暴露

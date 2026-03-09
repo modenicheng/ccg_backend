@@ -11,6 +11,7 @@ Handles:
 from datetime import datetime
 from typing import Any, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
+from .common import SONG_EXAMPLE
 
 
 class SongBase(BaseModel):
@@ -31,13 +32,15 @@ class SongBase(BaseModel):
     audio_url: Optional[str] = Field(default=None, description="Audio stream URL")
     cached_path: Optional[str] = Field(
         default=None,
-        description="Local filesystem path where audio is cached (null if not cached)")
+        description="Local filesystem path where audio is cached (null if not cached)",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class SongCreate(SongBase):
     """Schema for creating a new song."""
+
     pass
 
 
@@ -45,28 +48,16 @@ class SongResponse(SongBase):
     """Response schema for song details."""
 
     id: int = Field(description="Database ID")
-    cached: bool = Field(description="Whether this song has been cached locally",
-                         default=False,
-                         alias="is_cached")
+    cached: bool = Field(
+        description="Whether this song has been cached locally",
+        default=False,
+        alias="is_cached",
+    )
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "id": 1,
-                "platform": "qqmusic",
-                "platform_song_id": "004R6Kl32YDHxe",
-                "title": "Song Title",
-                "subtitle": "Subtitle",
-                "artist": "Artist Name",
-                "album_name": "Album",
-                "cover_url": "https://example.com/cover.jpg",
-                "audio_url": "https://stream.example.com/song.mp3",
-                "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
-                "cached": True,
-                "metadata_json": None
-            }
-        })
+        json_schema_extra={"example": SONG_EXAMPLE},
+    )
 
     @property
     def is_cached(self) -> bool:
@@ -91,8 +82,8 @@ class SongListResponse(BaseModel):
                     "platform_song_id": "004R6Kl32YDHxe",
                     "title": "Song Title",
                     "artist": "Artist Name",
-                    "cached": True
-                }]
+                    "cached": True,
+                }],
             }
         })
 
@@ -114,7 +105,7 @@ class SongCacheUpdateRequest(BaseModel):
                 "song_id": 1,
                 "cached_path": "/assets/audio/004R6Kl32YDHxe.mp3",
                 "format": "mp3",
-                "file_size_bytes": 5242880
+                "file_size_bytes": 5242880,
             }
         })
 
@@ -143,7 +134,7 @@ class TaskResponse(BaseModel):
                 "result": None,
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
-                "huey_task_id": "550e8400-e29b-41d4-a716-446655440000"
+                "huey_task_id": "550e8400-e29b-41d4-a716-446655440000",
             }
         })
 
@@ -161,7 +152,7 @@ class WebSocketErrorResponse(BaseModel):
             "example": {
                 "type": "error",
                 "event": "play",
-                "reason": "Only owner can control playback"
+                "reason": "Only owner can control playback",
             }
         })
 
@@ -179,7 +170,7 @@ class HttpErrorResponse(BaseModel):
             "example": {
                 "error": "Not found",
                 "detail": "The requested resource was not found",
-                "path": "/api/nonexistent"
+                "path": "/api/nonexistent",
             }
         })
 
@@ -198,19 +189,22 @@ class SonglistFetchResult(BaseModel):
                     "platform_songlist_id": "123456789",
                     "title": "My Favorite Songs",
                     "creator_name": "John Doe",
-                    "cover_url": "https://example.com/cover.jpg"
+                    "cover_url": "https://example.com/cover.jpg",
                 },
-                "songs": [{
-                    "platform": "qqmusic",
-                    "platform_song_id": "001",
-                    "title": "Song 1",
-                    "artist": "Artist 1"
-                }, {
-                    "platform": "qqmusic",
-                    "platform_song_id": "002",
-                    "title": "Song 2",
-                    "artist": "Artist 2"
-                }]
+                "songs": [
+                    {
+                        "platform": "qqmusic",
+                        "platform_song_id": "001",
+                        "title": "Song 1",
+                        "artist": "Artist 1",
+                    },
+                    {
+                        "platform": "qqmusic",
+                        "platform_song_id": "002",
+                        "title": "Song 2",
+                        "artist": "Artist 2",
+                    },
+                ],
             }
         })
 

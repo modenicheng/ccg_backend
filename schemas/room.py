@@ -7,6 +7,7 @@ from db.models import Base, RoomStatusORM
 from schemas.tag import TagGroupResponse
 from utils.enumerations import GameEventType
 from .user import BaseUser, UserLogin
+from .common import RoomStateTagItem, RoomStateTagGroupItem, RoomStatePlayerItem
 
 from deprecated import deprecated
 
@@ -71,25 +72,6 @@ class KickUserRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class RoomStateTagItem(BaseModel):
-    id: int
-    name: str
-
-
-class RoomStateTagGroupItem(BaseModel):
-    id: int
-    name: str
-    description: str | None = None
-    tags: list[RoomStateTagItem] = Field(default_factory=list)
-
-
-class RoomStatePlayerItem(BaseModel):
-    id: int
-    username: str
-    is_owner: bool
-    online: bool = True
-
-
 class AnswerQueueItem(BaseModel):
     player_id: int
     order: int | None = None
@@ -121,7 +103,7 @@ class PlaybackState(BaseModel):
 #     tags: list[RoomStateTagItem] = Field(default_factory=list)
 
 
-#这是手写的，用这个
+# 这是手写的，用这个
 class ClientRoomState(BaseModel):
     room_id: str
     title: str | None = None

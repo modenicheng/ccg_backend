@@ -1,10 +1,12 @@
 from __future__ import annotations
-
+"""
+日志配置模块
+提供项目统一的日志配置和管理功能
+"""
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
-import os
 from rich.logging import RichHandler
 
 _CONFIGURED = False

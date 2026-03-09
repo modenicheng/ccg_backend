@@ -1,9 +1,12 @@
 from __future__ import annotations
+"""
+自定义异常类
+定义项目中使用到的自定义异常
+"""
 
 
 class ParseError(Exception):
     """Base class for parsing errors."""
-    pass
 
 
 class InvalidEventTypeError(ParseError):

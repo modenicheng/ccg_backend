@@ -5,30 +5,7 @@ from time import time
 from schemas.base_message import MessageBase
 from utils.enumerations import GameEventType
 from db.models import RoomStatusORM
-
-
-class RoomStateTagItem(BaseModel):
-    id: int
-    name: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class RoomStateTagGroupItem(BaseModel):
-    id: int
-    name: str
-    description: str | None = None
-    tags: list[RoomStateTagItem] = Field(default_factory=list)
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class RoomStatePlayerItem(BaseModel):
-    id: int
-    username: str
-    is_owner: bool
-    online: bool = False
-    model_config = ConfigDict(from_attributes=True)
+from schemas.common import RoomStateTagItem, RoomStateTagGroupItem, RoomStatePlayerItem
 
 
 class AnswerQueueItem(BaseModel):
@@ -65,9 +42,9 @@ class ClientRoomState(BaseModel):
     room_id: str = Field(alias="id")
     title: str | None = None
     status: RoomStatusORM = RoomStatusORM.WAITING
-    round_state: Literal[
-        0, 1, 2, 3,
-        4] = 0  # 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED
+    round_state: Literal[0, 1, 2, 3, 4] = (
+        0  # 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED
+    )
     song_start_range_percent: float | None = Field(default=0, ge=0, le=100)
     players: list[RoomStatePlayerItem] = Field(default_factory=list, alias="users")
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)

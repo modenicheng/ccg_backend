@@ -1,4 +1,5 @@
 """WebSocket connection lifespan event handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +15,13 @@ from cache.room_state_manager import RoomStateManager
 from client_manager import ClientManager, Client
 from db import models
 from schemas.ws_messages import room_schemas as RoomSchema
-from schemas.ws_messages.room_schemas import AnswerQueueItem, StartPosUpdateData, GameOverData, ClearAnswerQueueData
+from schemas.ws_messages.room_schemas import (
+    AnswerQueueItem,
+    StartPosUpdateData,
+    GameOverData,
+    ClearAnswerQueueData,
+)
+from starlette.websockets import WebSocketState
 from utils import get_logger
 from utils.enumerations import GameEventType
 from handlers.registe_manager import regist
@@ -99,7 +106,10 @@ async def on_connect(
     message = RoomSchema.ClientRoomState.model_validate(room)
 
     # 设置回合状态
-    message.round_state = room.round_state or 0
+    round_state = room.round_state or 0
+    if round_state not in (0, 1, 2, 3, 4):
+        round_state = 0
+    message.round_state = round_state
 
     playback_state = await room_cache.get_room_playback_state(room_id)
     if playback_state:
@@ -116,9 +126,17 @@ async def on_connect(
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             join_message = RoomSchema.PlayerJoinMessage(
                 data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
+
+            async def send_if_connected():
+                if cl.ws.client_state == WebSocketState.CONNECTED:
+                    await cl.ws.send_json(room_state_message.model_dump())
+                else:
+                    logger.warning(
+                        f"Client {cl.user.id} WebSocket not connected, skipping send")
+
             res = await asyncio.gather(
                 *[
-                    cl.ws.send_json(room_state_message.model_dump()),
+                    send_if_connected(),
                     clients.broadcast(room_id,
                                       join_message.model_dump(),
                                       excluded_clients={cl}),
@@ -128,15 +146,30 @@ async def on_connect(
         except Exception as e:
             logger.error(f"Error sending messages for non-spectator: {e}",
                          exc_info=True)
+
             # 即使出错也要发送房间状态给客户端
+            async def send_if_connected2():
+                if cl.ws.client_state == WebSocketState.CONNECTED:
+                    await cl.ws.send_json(room_state_message.model_dump())
+                else:
+                    logger.warning(
+                        f"Client {cl.user.id} WebSocket not connected, skipping send")
+
             res = await asyncio.gather(
-                cl.ws.send_json(room_state_message.model_dump()),
+                send_if_connected2(),
                 return_exceptions=True,
             )
     else:
         # 观战者用户只发送房间状态，不广播加入消息
+        async def send_if_connected3():
+            if cl.ws.client_state == WebSocketState.CONNECTED:
+                await cl.ws.send_json(room_state_message.model_dump())
+            else:
+                logger.warning(
+                    f"Client {cl.user.id} WebSocket not connected, skipping send")
+
         res = await asyncio.gather(
-            cl.ws.send_json(room_state_message.model_dump()),
+            send_if_connected3(),
             return_exceptions=True,
         )
 
@@ -209,8 +242,13 @@ async def on_disconnect(
 
 
 @regist(GameEventType.START_POS_UPDATE, data_validator=StartPosUpdateData)
-async def handle_start_pos_update(data: StartPosUpdateData, clients: ClientManager,
-                                  client: Client, room_id: str, **kwargs) -> None:
+async def handle_start_pos_update(
+    data: StartPosUpdateData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs,
+) -> None:
     """处理起始位置更新事件
 
     Args:
@@ -242,9 +280,14 @@ async def handle_start_pos_update(data: StartPosUpdateData, clients: ClientManag
 
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
-async def handle_game_over_manual(data: GameOverData, clients: ClientManager,
-                                  client: Client, room_id: str, session: AsyncSession,
-                                  **kwargs) -> None:
+async def handle_game_over_manual(
+    data: GameOverData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    session: AsyncSession,
+    **kwargs,
+) -> None:
     """处理游戏结束事件（手动触发）
 
     Args:
@@ -277,8 +320,13 @@ async def handle_game_over_manual(data: GameOverData, clients: ClientManager,
 
 
 @regist(GameEventType.CLEAR_ANSWER_QUEUE, data_validator=ClearAnswerQueueData)
-async def handle_clear_answer_queue(data: ClearAnswerQueueData, clients: ClientManager,
-                                    client: Client, room_id: str, **kwargs) -> None:
+async def handle_clear_answer_queue(
+    data: ClearAnswerQueueData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs,
+) -> None:
     """处理清空抢答队列事件
 
     Args:
