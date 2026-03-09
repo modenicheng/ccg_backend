@@ -15,11 +15,12 @@ from db.session import session_scope
 from db import models
 from db.crud import get_current_song_info
 from room_state import RoundStateMachine
+from cache import room_cache
+from cache.room_state_manager import RoomStateManager
+import cache.schemas as cache_schemas
 from utils import get_logger, generate_audio_token, get_audio_stream_url
 from utils.enumerations import GameEventType, ErrorEventType, RoundState
 from utils.ts import get_ts_ms
-from cache import room_cache
-import cache.schemas as cache_schemas
 from schemas.ws_messages.round_event_schemas import (
     AttemptAnswerMessage,
     AnswerBroadcastData,
@@ -61,80 +62,77 @@ async def handle_game_start(
             await client.send_error(GameEventType.GAME_START, "Room not found")
             return
 
-        if room.status != models.RoomStatusORM.WAITING:
-            logger.warning(
-                "Received game start event for room %s which is not in waiting state",
-                room_id,
-            )
-            await client.send_error(GameEventType.GAME_START,
-                                    "Room is not in waiting state")
-            return
-
-        if room.room_songs:
-            room.status = models.RoomStatusORM.RUNNING
-            await clients.broadcast(room_id, data.model_dump())
-
-            # 生成临时音频访问令牌
-            song = room.room_songs[0].song
-            audio_token = await generate_audio_token(song.id)
-            audio_url = get_audio_stream_url(audio_token)
-
-            # 立即发送第一个回合开始事件
-            room.current_song_index = 0
-            playback_state = cache_schemas.PlaybackState(
-                play_state="playing",
-                progress_ms=0,
-                offset_ts=0,
-                audio_url=audio_url,
-            )
-            
-            # 触发状态转换到 PLAYING_AUDIO
-            try:
-                await RoundStateMachine.transition(session, room_id, RoundState.PLAYING_AUDIO)
-                # 广播状态更新消息
-                round_state_update_data = RoundStateUpdateData(
-                    round_state=RoundState.PLAYING_AUDIO.value,
-                    round_state_name=RoundState.PLAYING_AUDIO.name
-                )
-                round_state_update_message = RoundStateUpdateMessage(
-                    data=round_state_update_data
-                )
-                await clients.broadcast(
-                    room_id,
-                    round_state_update_message.model_dump()
-                )
-                logger.info(f"Room {room_id} round state transitioned to PLAYING_AUDIO")
-            except Exception as e:
-                logger.error(f"Failed to transition to PLAYING_AUDIO: {e}")
-            
-            tasks = [
-                clients.broadcast(
-                    room_id,
-                    RoundStartMessage(data=RoundStartData(
-                        round_index=0, audio_url=audio_url,
-                        start_pertent=0.0)).model_dump(),
-                ),
-                room_cache.set_room_playback_state(room_id, playback_state),
-            ]
-            # 使用 asyncio.gather 来并行执行广播和数据库提交
-            res = await asyncio.gather(*tasks, return_exceptions=True)
-            for i, r in enumerate(res):
-                if isinstance(r, Exception):
-                    logger.error(
-                        "Exception occurred in asyncio.gather task %d for GAME_START "
-                        "event in room %s: %s",
-                        i,
-                        room_id,
-                        r,
-                        exc_info=r,
-                    )
-        else:
+        if not room.room_songs:
             logger.warning("Room %s has no songs when starting game", room_id)
             await clients.broadcast_error(
                 room_id,
                 ErrorEventType.HANDLER_EXCEPTION.value,
                 "Cannot start game: no songs in room",
             )
+            return
+
+        # 使用 RoomStateManager 处理游戏开始
+        if not await RoomStateManager.start_game(room_id, session):
+            await client.send_error(GameEventType.GAME_START, "Failed to start game")
+            return
+
+        # 广播游戏开始消息
+        await clients.broadcast(room_id, data.model_dump())
+
+        # 生成临时音频访问令牌
+        song = room.room_songs[0].song
+        audio_token = await generate_audio_token(song.id)
+        audio_url = get_audio_stream_url(audio_token)
+
+        # 立即发送第一个回合开始事件
+        room.current_song_index = 0
+        playback_state = cache_schemas.PlaybackState(
+            play_state="playing",
+            progress_ms=0,
+            offset_ts=0,
+            audio_url=audio_url,
+        )
+
+        # 触发状态转换到 PLAYING_AUDIO
+        try:
+            await RoundStateMachine.transition(session, room_id, RoundState.PLAYING_AUDIO)
+            # 广播状态更新消息
+            round_state_update_data = RoundStateUpdateData(
+                round_state=RoundState.PLAYING_AUDIO.value,
+                round_state_name=RoundState.PLAYING_AUDIO.name
+            )
+            round_state_update_message = RoundStateUpdateMessage(
+                data=round_state_update_data
+            )
+            await clients.broadcast(
+                room_id,
+                round_state_update_message.model_dump()
+            )
+            logger.info("Room %s round state transitioned to PLAYING_AUDIO", room_id)
+        except Exception as e:
+            logger.error("Failed to transition to PLAYING_AUDIO: %s", e)
+
+        tasks = [
+            clients.broadcast(
+                room_id,
+                RoundStartMessage(data=RoundStartData(
+                    round_index=0, audio_url=audio_url,
+                    start_pertent=0.0)).model_dump(),
+            ),
+            room_cache.set_room_playback_state(room_id, playback_state),
+        ]
+        # 使用 asyncio.gather 来并行执行广播和数据库提交
+        res = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, r in enumerate(res):
+            if isinstance(r, Exception):
+                logger.error(
+                    "Exception occurred in asyncio.gather task %d for GAME_START "
+                    "event in room %s: %s",
+                    i,
+                    room_id,
+                    r,
+                    exc_info=r,
+                )
 
 
 @regist(GameEventType.ROUND_END, data_validator=RoundEndMessage)

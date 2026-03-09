@@ -1,20 +1,24 @@
+"""房间状态管理类，统一管理房间状态（DB + Cache）"""
 from __future__ import annotations
 
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from db.models import Room, ScoreRecord, User
-from db.crud import get_room_by_id, update_room_status
-from .room_cache import (
-    load_room_state, save_room_state, clear_answer_queue,
-    set_room_playback_state, get_room_playback_state,
-    get_room_players, save_room_players,
-    set_room_start_position, get_room_start_position
-)
-from .schemas import RoomBaseStateCache, PlaybackState
+# 标准库导入
+
+# 第三方库导入
+
+# 本地导入
 from utils.enumerations import RoomStatus
 from utils import get_logger
+from room_state.state_machine import RoomStateMachine
+from db.models import Score, User
+from .room_cache import (
+    load_room_state, save_room_state, clear_answer_queue,
+    set_room_start_position
+)
+from .schemas import RoomBaseStateCache
 
 logger = get_logger(__name__)
 
@@ -64,10 +68,10 @@ class RoomStateManager:
                 if state:
                     state.song_start_range_percent = position
                     await save_room_state(room_id, state)
-            logger.debug(f"Set start position for room {room_id} to {position}%")
+            logger.debug("Set start position for room %s to %.2f%%", room_id, position)
             return result
         except Exception as e:
-            logger.error(f"Error setting start position for room {room_id}: {e}")
+            logger.error("Error setting start position for room %s: %s", room_id, e)
             return False
 
     @staticmethod
@@ -82,10 +86,10 @@ class RoomStateManager:
         """
         try:
             result = await clear_answer_queue(room_id)
-            logger.debug(f"Cleared answer queue for room {room_id}, result: {result}")
+            logger.debug("Cleared answer queue for room %s, result: %s", room_id, result)
             return result is not None
         except Exception as e:
-            logger.error(f"Error clearing answer queue for room {room_id}: {e}")
+            logger.error("Error clearing answer queue for room %s: %s", room_id, e)
             return False
 
     @staticmethod
@@ -100,31 +104,15 @@ class RoomStateManager:
             bool: 是否开始成功
         """
         try:
-            # 更新数据库中的房间状态
-            room = await get_room_by_id(session, room_id)
-            if not room:
-                logger.error(f"Room not found: {room_id}")
-                return False
-
-            # 验证状态转换
-            if room.status != RoomStatus.WAITING:
-                logger.error(f"Cannot start game, room {room_id} is in status {room.status}")
-                return False
-
-            # 更新数据库状态
-            room.status = RoomStatus.RUNNING
-            await session.commit()
-
-            # 更新缓存状态
-            state = await load_room_state(room_id)
-            if state:
-                state.status = RoomStatus.RUNNING.value
-                await save_room_state(room_id, state)
-
-            logger.info(f"Game started for room {room_id}")
+            # 使用 RoomStateMachine 处理状态转换
+            await RoomStateMachine.transition(session, room_id, RoomStatus.RUNNING)
+            logger.info("Game started for room %s", room_id)
             return True
+        except ValueError as e:
+            logger.error("Error starting game for room %s: %s", room_id, e)
+            return False
         except Exception as e:
-            logger.error(f"Error starting game for room {room_id}: {e}")
+            logger.error("Error starting game for room %s: %s", room_id, e)
             await session.rollback()
             return False
 
@@ -140,33 +128,15 @@ class RoomStateManager:
             Dict[str, Any]: 包含游戏结束信息的字典，包括最终得分
         """
         try:
-            # 更新数据库中的房间状态
-            room = await get_room_by_id(session, room_id)
-            if not room:
-                logger.error(f"Room not found: {room_id}")
-                return {"success": False, "error": "Room not found"}
-
-            # 验证状态转换
-            if room.status != RoomStatus.RUNNING:
-                logger.error(f"Cannot end game, room {room_id} is in status {room.status}")
-                return {"success": False, "error": "Game is not running"}
-
-            # 更新数据库状态
-            room.status = RoomStatus.ENDED
-            await session.commit()
-
-            # 更新缓存状态
-            state = await load_room_state(room_id)
-            if state:
-                state.status = RoomStatus.ENDED.value
-                await save_room_state(room_id, state)
+            # 使用 RoomStateMachine 处理状态转换
+            await RoomStateMachine.transition(session, room_id, RoomStatus.ENDED)
 
             # 获取最终得分
             score_records = await session.execute(
-                select(ScoreRecord, User.username)
-                .join(User, ScoreRecord.user_id == User.id)
-                .where(ScoreRecord.room_id == room_id)
-                .order_by(ScoreRecord.score.desc())
+                select(Score, User.username)
+                .join(User, Score.user_id == User.id)
+                .where(Score.room_id == room_id)
+                .order_by(Score.total_score.desc())
             )
 
             final_scores = []
@@ -174,16 +144,19 @@ class RoomStateManager:
                 final_scores.append({
                     "player_id": record.user_id,
                     "username": username,
-                    "score": record.score
+                    "score": record.total_score or 0
                 })
 
-            logger.info(f"Game ended for room {room_id}")
+            logger.info("Game ended for room %s", room_id)
             return {
                 "success": True,
                 "final_scores": final_scores
             }
+        except ValueError as e:
+            logger.error("Error ending game for room %s: %s", room_id, e)
+            return {"success": False, "error": str(e)}
         except Exception as e:
-            logger.error(f"Error ending game for room {room_id}: {e}")
+            logger.error("Error ending game for room %s: %s", room_id, e)
             await session.rollback()
             return {"success": False, "error": str(e)}
 
@@ -200,10 +173,10 @@ class RoomStateManager:
         try:
             # 清空抢答队列
             await clear_answer_queue(room_id)
-            
+
             # 可以在这里添加其他回合结束的逻辑
-            logger.debug(f"Round ended for room {room_id}")
+            logger.debug("Round ended for room %s", room_id)
             return True
         except Exception as e:
-            logger.error(f"Error ending round for room {room_id}: {e}")
+            logger.error("Error ending round for room %s: %s", room_id, e)
             return False
