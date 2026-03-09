@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Optional, cast, Awaitable
 
 import orjson
+from pydantic import ValidationError
 from redis.asyncio.client import Redis
+from db.models import RoomStatusORM
 
 from .connection import get_redis
 from .schemas import (
@@ -17,6 +19,33 @@ from schemas.ws_messages import room_schemas as RoomSchemas
 from utils import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalize_status_value(raw_status: str | None) -> str | None:
+    """Normalize legacy room status values to canonical numeric string."""
+    if raw_status is None:
+        return None
+
+    value = str(raw_status).strip()
+    if not value:
+        return None
+
+    if value.isdigit():
+        try:
+            return str(RoomStatusORM(int(value)).value)
+        except ValueError:
+            return str(RoomStatusORM.WAITING.value)
+
+    upper = value.upper()
+    if upper.startswith("ROOMSTATUSORM."):
+        upper = upper.split(".", 1)[1]
+    elif upper.startswith("ROOMSTATUS."):
+        upper = upper.split(".", 1)[1]
+
+    if upper in RoomStatusORM.__members__:
+        return str(RoomStatusORM[upper].value)
+
+    return str(RoomStatusORM.WAITING.value)
 
 
 # song queue 变化不会很大，所以没必要 Redis，直接扔数据库
@@ -42,6 +71,31 @@ async def load_room_state(room_id: str) -> RoomBaseStateCache | None:
         state = RoomBaseStateCache.from_redis_hash(fields)
         logger.debug(f"Loaded room state for room {room_id}")
         return state
+    except ValidationError as e:
+        # 兼容历史 status 写法（如 ROOMSTATUS.RUNNING / RUNNING 等）
+        status_value = fields.get("status") if "fields" in locals() else None
+        normalized_status = _normalize_status_value(status_value)
+        if normalized_status is not None and "fields" in locals():
+            try:
+                fields["status"] = normalized_status
+                state = RoomBaseStateCache.from_redis_hash(fields)
+                await cast(Awaitable, redis.hset(key, "status", normalized_status))
+                await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+                logger.warning(
+                    "Migrated legacy room status for room %s: %s -> %s",
+                    room_id,
+                    status_value,
+                    normalized_status,
+                )
+                return state
+            except Exception as migrate_err:  # pylint: disable=broad-exception-caught
+                logger.error(
+                    "Failed to migrate room status for room %s: %s",
+                    room_id,
+                    migrate_err,
+                )
+        logger.error(f"Error loading room state for room {room_id}: {e}")
+        return None
     except Exception as e:
         logger.error(f"Error loading room state for room {room_id}: {e}")
         return None

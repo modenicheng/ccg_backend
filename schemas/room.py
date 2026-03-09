@@ -105,27 +105,27 @@ class PlaybackState(BaseModel):
 
 # 这是 AI 生成的屎，由一百万个重复数据
 # 别用
-@deprecated(
-    reason=
-    "This schema is deprecated and will be removed in future versions. Use ClientRoomState instead.",
-)
-class RoomStateInitData(BaseModel):
-    room_id: str
-    title: str | None = None
-    status: int
-    host: str | None = None
-    owner: str | None = None
-    host_player_id: str
-    players: list[RoomStatePlayerItem] = Field(default_factory=list)
-    tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
-    tags: list[RoomStateTagItem] = Field(default_factory=list)
+# @deprecated(
+#     reason=
+#     "This schema is deprecated and will be removed in future versions. Use ClientRoomState instead.",
+# )
+# class RoomStateInitData(BaseModel):
+#     room_id: str
+#     title: str | None = None
+#     status: int
+#     host: str | None = None
+#     owner: str | None = None
+#     host_player_id: str
+#     players: list[RoomStatePlayerItem] = Field(default_factory=list)
+#     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
+#     tags: list[RoomStateTagItem] = Field(default_factory=list)
 
 
 #这是手写的，用这个
 class ClientRoomState(BaseModel):
     room_id: str
     title: str | None = None
-    status: Literal[0, 1, 2] = RoomStatusORM.WAITING.value
+    status: RoomStatusORM = RoomStatusORM.WAITING
     song_start_range_percent: float = Field(default=0, ge=0, le=100)
     players: list[RoomStatePlayerItem] = Field(default_factory=list)
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
@@ -143,12 +143,10 @@ class FullRoomState(ClientRoomState):
     reason=
     "This schema is deprecated and will be removed in future versions. Use ClientRoomState instead.",
 )
-class RoomStateInitMessage(BaseModel):
-    event: Literal[12] = GameEventType.ROOM_STATE.value
-    ts: int = Field(default_factory=lambda: int(time() * 1000))
-    data: RoomStateInitData
-
-
+# class RoomStateInitMessage(BaseModel):
+#     event: Literal[12] = GameEventType.ROOM_STATE.value
+#     ts: int = Field(default_factory=lambda: int(time() * 1000))
+#     data: RoomStateInitData
 class RoomStateMessage(BaseModel):
     event: Literal[12] = GameEventType.ROOM_STATE.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))

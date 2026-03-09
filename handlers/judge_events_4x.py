@@ -20,7 +20,7 @@ from db.crud import (
     get_current_song_info,
     fetch_room_object,
 )
-from room_state import RoundStateMachine
+from cache.room_state_manager import RoundStateManager
 from utils import get_logger
 from utils.enumerations import GameEventType, RoundState
 from utils.calculate import calculate_player_scores
@@ -39,12 +39,10 @@ from schemas.ws_messages.round_event_schemas import (
     RoundStartMessage,
     RoundStartData,
 )
-from schemas.ws_messages.round_state_schemas import (
-    RoundStateUpdateMessage,
-    RoundStateUpdateData,
-)
-from utils.audio_token import generate_audio_token, get_audio_stream_url
+from schemas.ws_messages.playback_schemas import PreloadAudioMessage, PlayControlData
+from utils.audio_token import get_audio_stream_url
 import mq.tasks
+from .round_state_events import build_round_state_update_message
 from .registe_manager import regist
 
 logger = get_logger(__name__)
@@ -168,20 +166,17 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
             )
 
             # 触发状态转换到 JUDGING
-            try:
-                await RoundStateMachine.transition(db, room_id, RoundState.JUDGING)
-                # 广播状态更新消息
-                round_state_update_data = RoundStateUpdateData(
-                    round_state=RoundState.JUDGING.value,
-                    round_state_name=RoundState.JUDGING.name,
+            success = await RoundStateManager.transition_round_state(
+                room_id=room_id,
+                target=RoundState.JUDGING,
+                session=db,
+            )
+            if success:
+                await clients.broadcast(
+                    room_id,
+                    build_round_state_update_message(RoundState.JUDGING).model_dump(),
                 )
-                round_state_update_message = RoundStateUpdateMessage(
-                    data=round_state_update_data)
-                await clients.broadcast(room_id,
-                                        round_state_update_message.model_dump())
-                logger.info(f"Room {room_id} round state transitioned to JUDGING")
-            except Exception as e:
-                logger.error(f"Failed to transition to JUDGING: {e}")
+                logger.info("Room %s round state transitioned to JUDGING", room_id)
 
             # 广播JUDGING事件给所有客户端
             judging_message = JudgingMessage(data=judging_data)
@@ -214,6 +209,21 @@ async def handle_judge_submit(
     # 如果选择跳过计分，直接结束
     if data.data.skip_scoring:
         logger.info("Skipping scoring for room %s", room_id)
+        try:
+            async with session_scope() as session:
+                success = await RoundStateManager.transition_round_state(
+                    room_id=room_id,
+                    target=RoundState.COMPLETED,
+                    session=session,
+                )
+                if success:
+                    await clients.broadcast(
+                        room_id,
+                        build_round_state_update_message(
+                            RoundState.COMPLETED).model_dump(),
+                    )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to transition to COMPLETED when skip scoring: %s", e)
         # 广播ROUND_END事件
         round_end_message = RoundEndMessage()
         await clients.broadcast(room_id, round_end_message.model_dump())
@@ -391,16 +401,17 @@ async def handle_judge_submit(
     # 触发状态转换到 COMPLETED
     try:
         async with session_scope() as session:
-            await RoundStateMachine.transition(session, room_id, RoundState.COMPLETED)
-            # 广播状态更新消息
-            round_state_update_data = RoundStateUpdateData(
-                round_state=RoundState.COMPLETED.value,
-                round_state_name=RoundState.COMPLETED.name,
+            success = await RoundStateManager.transition_round_state(
+                room_id=room_id,
+                target=RoundState.COMPLETED,
+                session=session,
             )
-            round_state_update_message = RoundStateUpdateMessage(
-                data=round_state_update_data)
-            await clients.broadcast(room_id, round_state_update_message.model_dump())
-            logger.info(f"Room {room_id} round state transitioned to COMPLETED")
+            if success:
+                await clients.broadcast(
+                    room_id,
+                    build_round_state_update_message(RoundState.COMPLETED).model_dump(),
+                )
+                logger.info("Room %s round state transitioned to COMPLETED", room_id)
     except Exception as e:
         logger.error(f"Failed to transition to COMPLETED: {e}")
 
@@ -455,6 +466,22 @@ async def handle_judge_submit(
                         logger.info(
                             f"Triggered preload for song {preload_song_id} (index {preload_index}) in room {room_id}"
                         )
+
+                        # 广播 PRELOAD_AUDIO 事件，供前端提前预加载
+                        from db.crud import get_or_create_audio_token
+
+                        preload_audio_token = await get_or_create_audio_token(
+                            session,
+                            room_id,
+                            preload_song_id,
+                        )
+                        preload_audio_url = get_audio_stream_url(preload_audio_token)
+                        preload_message = PreloadAudioMessage(
+                            data=PlayControlData(audio_url=preload_audio_url))
+                        await clients.broadcast(room_id, preload_message.model_dump())
+                        logger.info(
+                            f"Broadcast PRELOAD_AUDIO for song {preload_song_id} (index {preload_index}) in room {room_id}"
+                        )
                     except Exception as e:
                         logger.warning(
                             f"Failed to trigger preload for song {preload_song_id}: {e}"
@@ -468,18 +495,29 @@ async def handle_judge_submit(
                                                           current_song_id)
             audio_url = get_audio_stream_url(audio_token)
 
-            # 转换状态到 PLAYING_AUDIO
-            await RoundStateMachine.transition(session, room_id,
-                                               RoundState.PLAYING_AUDIO)
-
-            # 广播状态更新
-            round_state_update_data = RoundStateUpdateData(
-                round_state=RoundState.PLAYING_AUDIO.value,
-                round_state_name=RoundState.PLAYING_AUDIO.name,
+            # 转换状态流：COMPLETED -> PENDING -> PLAYING_AUDIO
+            reset_success = await RoundStateManager.transition_round_state(
+                room_id=room_id,
+                target=RoundState.PENDING,
+                session=session,
             )
-            round_state_update_message = RoundStateUpdateMessage(
-                data=round_state_update_data)
-            await clients.broadcast(room_id, round_state_update_message.model_dump())
+            if reset_success:
+                await clients.broadcast(
+                    room_id,
+                    build_round_state_update_message(RoundState.PENDING).model_dump(),
+                )
+
+            playing_success = await RoundStateManager.transition_round_state(
+                room_id=room_id,
+                target=RoundState.PLAYING_AUDIO,
+                session=session,
+            )
+            if playing_success:
+                await clients.broadcast(
+                    room_id,
+                    build_round_state_update_message(
+                        RoundState.PLAYING_AUDIO).model_dump(),
+                )
 
             # 广播新一轮开始事件
             round_start_data = RoundStartData(

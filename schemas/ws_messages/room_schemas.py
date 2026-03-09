@@ -3,7 +3,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 from time import time
 from schemas.base_message import MessageBase
-from utils.enumerations import RoomStatus, GameEventType
+from utils.enumerations import GameEventType
+from db.models import RoomStatusORM
 
 
 class RoomStateTagItem(BaseModel):
@@ -63,7 +64,7 @@ class ScoreItem(BaseModel):
 class ClientRoomState(BaseModel):
     room_id: str = Field(alias="id")
     title: str | None = None
-    status: Literal[0, 1, 2] = RoomStatus.WAITING.value
+    status: RoomStatusORM = RoomStatusORM.WAITING
     round_state: Literal[
         0, 1, 2, 3,
         4] = 0  # 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED

@@ -15,11 +15,10 @@ from client_manager import ClientManager, Client
 from db.session import session_scope
 from db import models
 from db import crud
-from room_state import RoundStateMachine
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
 import cache.schemas as cache_schemas
-from utils import get_logger, generate_audio_token, get_audio_stream_url
+from utils import get_logger, get_audio_stream_url
 from utils.enumerations import GameEventType, ErrorEventType, RoundState
 from utils.ts import get_ts_ms
 from schemas.ws_messages.round_event_schemas import (
@@ -36,13 +35,79 @@ from schemas.ws_messages.round_event_schemas import (
     YourTurnData,
     YourTurnMessage,
 )
-from schemas.ws_messages.round_state_schemas import (
-    RoundStateUpdateMessage,
-    RoundStateUpdateData,
-)
+from schemas.ws_messages.judge_schemas import SkipRoundMessage
+from schemas.ws_messages.playback_schemas import PreloadAudioMessage, PlayControlData
+import mq.tasks
+from .round_state_events import handle_round_state_transition
 from .registe_manager import regist
 
 logger = get_logger(__name__)
+
+
+async def _trigger_and_broadcast_preload_for_index(
+    clients: ClientManager,
+    session: Any,
+    room_id: str,
+    song_queue: list[int],
+    preload_index: int,
+) -> None:
+    """触发第 i+3 首预下载并广播 PRELOAD_AUDIO 事件。"""
+    if preload_index >= len(song_queue):
+        return
+
+    preload_song_id = song_queue[preload_index]
+    song_stmt = select(models.Song).where(models.Song.id == preload_song_id)
+    song_result = await session.execute(song_stmt)
+    song = song_result.scalar_one_or_none()
+    if not song:
+        logger.warning(
+            "Cannot preload song %s in room %s: song not found",
+            preload_song_id,
+            room_id,
+        )
+        return
+
+    if song.platform == "qq" and song.platform_song_id:
+        try:
+            mq.tasks.download_and_cache_song(str(song.platform_song_id))
+            logger.info(
+                "Triggered preload task for song %s (index %s) in room %s",
+                preload_song_id,
+                preload_index,
+                room_id,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to trigger preload task for song %s in room %s: %s",
+                preload_song_id,
+                room_id,
+                e,
+            )
+            return
+
+        try:
+            preload_audio_token = await crud.get_or_create_audio_token(
+                session,
+                room_id,
+                preload_song_id,
+            )
+            preload_audio_url = get_audio_stream_url(preload_audio_token)
+            preload_message = PreloadAudioMessage(
+                data=PlayControlData(audio_url=preload_audio_url))
+            await clients.broadcast(room_id, preload_message.model_dump())
+            logger.info(
+                "Broadcast PRELOAD_AUDIO for song %s (index %s) in room %s",
+                preload_song_id,
+                preload_index,
+                room_id,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to broadcast PRELOAD_AUDIO for song %s in room %s: %s",
+                preload_song_id,
+                room_id,
+                e,
+            )
 
 
 @regist(GameEventType.GAME_START, data_validator=GameStartMessage)
@@ -56,17 +121,17 @@ async def handle_game_start(
     logger.info("Handling game start event for room %s", room_id)
 
     async with session_scope() as session:
-        room = (await session.execute(
-            select(models.Room).where(models.Room.id == room_id).options(
-                selectinload(models.Room.room_songs).selectinload(models.RoomSong.song))
-        )).scalar_one_or_none()
+        room = (await
+                session.execute(select(models.Room).where(models.Room.id == room_id)
+                                )).scalar_one_or_none()
 
         if not room:
             logger.error("Room %s not found", room_id)
             await client.send_error(GameEventType.GAME_START, "Room not found")
             return
 
-        if not room.room_songs:
+        song_queue = await crud.get_room_song_queue(session, room_id)
+        if not song_queue:
             logger.warning("Room %s has no songs when starting game", room_id)
             await clients.broadcast_error(
                 room_id,
@@ -83,16 +148,23 @@ async def handle_game_start(
         # 广播游戏开始消息
         await clients.broadcast(room_id, data.model_dump())
 
-        # 生成临时音频访问令牌
-        song = room.room_songs[0].song
-        audio_token = await generate_audio_token(song.id)
+        # 生成临时音频访问令牌（与后续轮次统一走CRUD，确保DB/Redis一致）
+        first_song_id = song_queue[0]
+        audio_token = await crud.get_or_create_audio_token(session, room_id,
+                                                           first_song_id)
         audio_url = get_audio_stream_url(audio_token)
 
-        # 存储token到RoomSong
-        await crud.update_room_song_temp_token(session, room_id, song.id, audio_token)
+        # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO（i=0）
+        await _trigger_and_broadcast_preload_for_index(
+            clients=clients,
+            session=session,
+            room_id=room_id,
+            song_queue=song_queue,
+            preload_index=3,
+        )
 
         # 立即发送第一个回合开始事件
-        room.current_song_index = 0
+        await crud.update_room_current_song_index(session, room_id, 0)
         playback_state = cache_schemas.PlaybackState(
             play_state="playing",
             progress_ms=0,
@@ -100,21 +172,9 @@ async def handle_game_start(
             audio_url=audio_url,
         )
 
-        # 触发状态转换到 PLAYING_AUDIO
-        try:
-            await RoundStateMachine.transition(session, room_id,
-                                               RoundState.PLAYING_AUDIO)
-            # 广播状态更新消息
-            round_state_update_data = RoundStateUpdateData(
-                round_state=RoundState.PLAYING_AUDIO.value,
-                round_state_name=RoundState.PLAYING_AUDIO.name,
-            )
-            round_state_update_message = RoundStateUpdateMessage(
-                data=round_state_update_data)
-            await clients.broadcast(room_id, round_state_update_message.model_dump())
-            logger.info("Room %s round state transitioned to PLAYING_AUDIO", room_id)
-        except Exception as e:
-            logger.error("Failed to transition to PLAYING_AUDIO: %s", e)
+        # 触发状态转换到 PLAYING_AUDIO（并广播）
+        await handle_round_state_transition(clients, client, room_id,
+                                            RoundState.PLAYING_AUDIO)
 
         tasks = [
             clients.broadcast(
@@ -158,7 +218,113 @@ async def handle_round_end(
                                 "Only the room owner can end the round manually")
         return
 
+    await handle_round_state_transition(clients, client, room_id, RoundState.COMPLETED)
     await clients.broadcast(room_id, data.model_dump())
+
+
+@regist(GameEventType.SKIP_ROUND, data_validator=SkipRoundMessage)
+async def handle_skip_round(
+    data: SkipRoundMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs: Any,
+) -> None:
+    """Handle SKIP_ROUND event: maintain playlist index and start next round."""
+    # pylint: disable=unused-argument,too-many-return-statements
+    logger.info("Handling skip round event for room %s", room_id)
+
+    if not client.user.is_owner:
+        logger.warning(
+            "User %s attempted to skip round in room %s but is not the owner",
+            client.user.username,
+            room_id,
+        )
+        await client.send_error(GameEventType.SKIP_ROUND,
+                                "Only the room owner can skip the round")
+        return
+
+    async with session_scope() as session:
+        room = (await
+                session.execute(select(models.Room).where(models.Room.id == room_id)
+                                )).scalar_one_or_none()
+
+        if not room:
+            logger.error("Room %s not found when skipping round", room_id)
+            await client.send_error(GameEventType.SKIP_ROUND, "Room not found")
+            return
+
+        song_queue = await crud.get_room_song_queue(session, room_id)
+        if not song_queue:
+            logger.warning("Room %s has no songs when skipping round", room_id)
+            await client.send_error(GameEventType.SKIP_ROUND,
+                                    "Cannot skip round: no songs in room")
+            return
+
+        current_index = room.current_song_index or 0
+        next_index = current_index + 1
+        if next_index >= len(song_queue):
+            logger.warning(
+                "No more songs available after skip in room %s (current=%d, total=%d)",
+                room_id,
+                current_index,
+                len(song_queue),
+            )
+            await client.send_error(GameEventType.SKIP_ROUND,
+                                    "Cannot skip round: already at last song")
+            return
+
+        # 1) 优先维护播放列表：推进当前歌曲索引
+        await crud.update_room_current_song_index(session, room_id, next_index)
+
+        # 清理上一轮的作答状态
+        await room_cache.clear_answer_queue(room_id)
+        await room_cache.set_room_current_answerer(room_id, "")
+
+        # 2) 为新轮次生成可播放地址
+        next_song_id = song_queue[next_index]
+        audio_token = await crud.get_or_create_audio_token(session, room_id,
+                                                           next_song_id)
+        audio_url = get_audio_stream_url(audio_token)
+
+        # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO
+        await _trigger_and_broadcast_preload_for_index(
+            clients=clients,
+            session=session,
+            room_id=room_id,
+            song_queue=song_queue,
+            preload_index=next_index + 3,
+        )
+
+        # 3) 更新播放状态并推进回合状态
+        playback_state = cache_schemas.PlaybackState(
+            play_state="playing",
+            progress_ms=0,
+            offset_ts=0,
+            audio_url=audio_url,
+        )
+        await room_cache.set_room_playback_state(room_id, playback_state)
+        await handle_round_state_transition(clients, client, room_id,
+                                            RoundState.PLAYING_AUDIO)
+
+        # 4) 向所有客户端发送新一轮开始
+        round_start_message = RoundStartMessage(
+            data=RoundStartData(
+                round_index=next_index,
+                audio_url=audio_url,
+                start_pertent=0.0,
+            ))
+        await clients.broadcast(room_id, round_start_message.model_dump())
+
+        # 兼容保留：广播原始SKIP_ROUND事件
+        await clients.broadcast(room_id, data.model_dump())
+
+        logger.info(
+            "Skip round completed for room %s, moved from round %d to %d",
+            room_id,
+            current_index,
+            next_index,
+        )
 
 
 @regist(GameEventType.ATTEMPT_ANSWER, AttemptAnswerMessage)
@@ -233,7 +399,7 @@ async def handle_attempt_answer(
         # 更新Redis播放状态
         await room_cache.update_room_playback_state(
             room_id=room_id,
-            round_state="paused",
+            round_state=RoundState.ANSWERING.name,
             progress_ms=current_progress,
             offset_ts=offset_ts,  # 使用抢答时间戳作为offset_ts
             audio_url=None,
@@ -241,23 +407,9 @@ async def handle_attempt_answer(
             event_name="PAUSE",
         )
 
-        # 触发状态转换到 ANSWERING
-        try:
-            async with session_scope() as session:
-                await RoundStateMachine.transition(session, room_id,
-                                                   RoundState.ANSWERING)
-                # 广播状态更新消息
-                round_state_update_data = RoundStateUpdateData(
-                    round_state=RoundState.ANSWERING.value,
-                    round_state_name=RoundState.ANSWERING.name,
-                )
-                round_state_update_message = RoundStateUpdateMessage(
-                    data=round_state_update_data)
-                await clients.broadcast(room_id,
-                                        round_state_update_message.model_dump())
-                logger.info(f"Room {room_id} round state transitioned to ANSWERING")
-        except Exception as e:
-            logger.error(f"Failed to transition to ANSWERING: {e}")
+        # 触发状态转换到 ANSWERING（并广播）
+        await handle_round_state_transition(clients, client, room_id,
+                                            RoundState.ANSWERING)
 
         # 设置当前作答玩家
         await room_cache.set_room_current_answerer(room_id, player_id)

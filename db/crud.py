@@ -22,6 +22,11 @@ import asyncio
 l = get_logger(__name__)
 
 
+def _utc_now_naive() -> datetime.datetime:
+    """返回naive UTC时间，匹配PostgreSQL timestamp without time zone列。"""
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+
 def _apply_songlist_fields(
     songlist: models.Songlist,
     title: Optional[str],
@@ -1120,13 +1125,20 @@ async def get_or_create_audio_token(
         token = await generate_audio_token(song_id)
         return token
 
-    current_time = datetime.datetime.now(datetime.timezone.utc)
+    current_time = _utc_now_naive()
 
-    # 检查现有token是否有效
+    # 检查现有token是否有效（DB未过期 + Redis映射有效且song_id一致）
     if room_song.temp_url and room_song.expire_at:
         if room_song.expire_at > current_time:
-            l.debug(f"Using existing token for room {room_id}, song {song_id}")
-            return room_song.temp_url
+            existing_song_id = await get_song_id_from_token(room_song.temp_url)
+            if existing_song_id == song_id:
+                l.debug(f"Using existing token for room {room_id}, song {song_id}")
+                return room_song.temp_url
+            l.info(
+                "Existing token in DB is not resolvable in Redis or song_id mismatch for room %s, song %s; regenerating",
+                room_id,
+                song_id,
+            )
         else:
             l.debug(f"Token expired for room {room_id}, song {song_id}")
 
@@ -1178,7 +1190,7 @@ async def validate_audio_token(
         l.debug(f"RoomSong not found for room {room_id}, song {song_id}")
         return False
 
-    current_time = datetime.datetime.now(datetime.timezone.utc)
+    current_time = _utc_now_naive()
 
     # 验证token和过期时间
     if room_song.temp_url != token:
@@ -1221,7 +1233,7 @@ async def update_room_song_temp_token(
         )
         return
 
-    current_time = datetime.datetime.now(datetime.timezone.utc)
+    current_time = _utc_now_naive()
     expire_at = current_time + datetime.timedelta(seconds=app_config.audio_token_ttl)
 
     room_song.temp_url = token
@@ -1270,6 +1282,7 @@ async def trigger_preload_songs(
     import mq.tasks
 
     preload_count = 0
+    token_updated_count = 0
 
     for song in songs:
         if song.platform == "qq" and song.platform_song_id:
@@ -1279,11 +1292,18 @@ async def trigger_preload_songs(
                 l.info(
                     f"Triggered preload for room {room_id}, song {song.id} (platform_song_id={song.platform_song_id})"
                 )
+
+                # 预下载时提前生成/刷新临时token，确保RoomSong.temp_url可用
+                await get_or_create_audio_token(session, room_id, song.id)
+                token_updated_count += 1
             except Exception as e:
                 l.warning(f"Failed to trigger preload for song {song.id}: {e}")
 
+    # 显式flush，确保temp_url/expire_at更新进入当前事务
+    await session.flush()
+
     l.info(
-        f"Triggered preload for {preload_count} songs in room {room_id} (range {start_index}-{end_index - 1})"
+        f"Triggered preload for {preload_count} songs and updated tokens for {token_updated_count} songs in room {room_id} (range {start_index}-{end_index - 1})"
     )
 
 
@@ -1309,6 +1329,23 @@ async def get_room_song_by_song_id(
                                          models.RoomSong.song_id == song_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def get_room_song_and_song_by_temp_token(
+    session: AsyncSession,
+    token: str,
+) -> tuple[models.RoomSong, models.Song] | None:
+    """根据已落库的 RoomSong.temp_url 反查 RoomSong 与 Song。"""
+    stmt = (select(models.RoomSong,
+                   models.Song).join(models.Song,
+                                     models.Song.id == models.RoomSong.song_id).where(
+                                         models.RoomSong.temp_url == token))
+    result = await session.execute(stmt)
+    row = result.first()
+    if not row:
+        return None
+    room_song, song = row
+    return room_song, song
 
 
 async def update_room_current_song_index(

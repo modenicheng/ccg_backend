@@ -82,14 +82,14 @@ class RoomStateMachine:
             cache_state = await load_room_state(room_id)
             if cache_state:
                 # 更新缓存中的状态
-                cache_state.status = target.value
+                cache_state.status = models.RoomStatusORM(target.value)
                 await save_room_state(room_id, cache_state)
                 logger.debug(f"Updated Redis cache for room {room_id}")
             else:
                 # 缓存不存在，创建新的缓存
                 cache_state = RoomBaseStateCache(
                     room_id=room_id,
-                    status=target.value,
+                    status=models.RoomStatusORM(target.value),
                     title=room.title,
                     song_start_range_percent=0.0,
                     tag_groups=[],
@@ -130,7 +130,7 @@ class RoomStateMachine:
         try:
             cache_state = await load_room_state(room_id)
             if cache_state:
-                cache_state.status = target.value
+                cache_state.status = models.RoomStatusORM(target.value)
                 await save_room_state(room_id, cache_state)
         except Exception as e:
             logger.error(f"Failed to update Redis cache for room {room_id}: {e}")

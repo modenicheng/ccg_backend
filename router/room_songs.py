@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import crud, models
 from db.session import get_db
+from cache import room_cache
+import cache.schemas as cache_schemas
 from schemas.room_songs import (
     RoomSongsListResponse,
     RoomSongResponse,
@@ -16,7 +18,7 @@ from schemas.room_songs import (
 from schemas.song import SongResponse
 from mq import tasks
 
-from utils import get_logger
+from utils import get_logger, get_audio_stream_url
 
 logger = get_logger(__name__)
 
@@ -43,6 +45,34 @@ async def _trigger_preload_top_songs(session: AsyncSession, roomid: str) -> None
         logger.info(f"Triggered preload for top 3 songs in room {roomid}")
     except Exception as e:
         logger.warning(f"Failed to trigger preload for room {roomid}: {e}")
+
+
+async def _refresh_default_playback_initial_song(session: AsyncSession,
+                                                 roomid: str) -> None:
+    """根据最新歌曲顺序刷新默认播放初始曲目。"""
+    song_queue = await crud.get_room_song_queue(session, roomid)
+    if not song_queue:
+        await room_cache.delete_room_playback_state(roomid)
+        logger.info(
+            "Cleared playback state while refreshing default initial song for room %s (empty queue)",
+            roomid,
+        )
+        return
+
+    await crud.update_room_current_song_index(session, roomid, 0)
+    first_song_id = song_queue[0]
+    audio_token = await crud.get_or_create_audio_token(session, roomid, first_song_id)
+    audio_url = get_audio_stream_url(audio_token)
+    playback_state = cache_schemas.PlaybackState(
+        play_state="paused",
+        progress_ms=0,
+        offset_ts=0,
+        current_order=0,
+        audio_url=audio_url,
+    )
+    await room_cache.set_room_playback_state(roomid, playback_state)
+    logger.info("Refreshed default playback initial song for room %s: song_id=%s",
+                roomid, first_song_id)
 
 
 @room_songs_router.get("/", response_model=RoomSongsListResponse)
@@ -267,6 +297,7 @@ async def shuffle_room_songs_list(
 
     try:
         await crud.shuffle_room_songs(session, roomid)
+        await _refresh_default_playback_initial_song(session, roomid)
         await session.commit()
         await _trigger_preload_top_songs(session, roomid)
         logger.info(f"Manually shuffled songs in room {roomid}")

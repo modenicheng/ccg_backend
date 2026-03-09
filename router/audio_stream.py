@@ -9,17 +9,21 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from db.session import get_db
-from db.models import Song, RoomSong
+from db import crud
 from cache.file_cache import load_song_asset_with_cache
-from utils.audio_token import get_song_id_from_token, get_audio_stream_url
+from utils.audio_token import get_song_id_from_token
 from utils import get_logger
 
 logger = get_logger(__name__)
 
 audio_stream_router = APIRouter(prefix="/api/songs", tags=["audio"])
+
+
+def _utc_now_naive() -> datetime.datetime:
+    """返回naive UTC时间，匹配数据库DateTime(timezone=False)字段。"""
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
 
 
 def _build_range_response(content: bytes, media_type: str,
@@ -111,52 +115,68 @@ async def stream_audio(
     Returns:
         Response: 音频文件响应（支持Range请求）
     """
-    # 1. 验证令牌
+    # 1. 解析 token 中的 song_id（新token可解析，旧token可为空）
     logger.info(f"Validating audio token: {token[:8]}...")
-    song_id = await get_song_id_from_token(token)
+    token_song_id = await get_song_id_from_token(token)
 
-    if not song_id:
-        logger.warning(f"Invalid or expired audio token: {token[:8]}...")
-        raise HTTPException(status_code=403, detail="Invalid or expired audio token")
+    if token_song_id:
+        logger.info(f"Audio token parsed, song_id: {token_song_id}")
+    else:
+        logger.info(
+            f"Audio token {token[:8]}... cannot be parsed directly, fallback to temp_url lookup"
+        )
 
-    logger.info(f"Audio token valid, song_id: {song_id}")
-
-    # 2. 验证token与房间绑定
-    room_song_stmt = select(RoomSong).where(RoomSong.temp_url == token)
-    room_song_result = await session.execute(room_song_stmt)
-    room_song = room_song_result.scalar_one_or_none()
-
-    if not room_song:
+    # 2. 通过已落库 temp_url 反查 RoomSong + Song
+    room_song_with_song = await crud.get_room_song_and_song_by_temp_token(
+        session, token)
+    if not room_song_with_song:
         logger.warning(f"Audio token {token[:8]}... not bound to any room")
-        raise HTTPException(status_code=403,
-                            detail="Audio token not valid for any room")
+        # 如果token可解析，尝试通过song_id查找RoomSong作为回退
+        if token_song_id:
+            from sqlalchemy import select
+            from db import models
 
-    if room_song.song_id != song_id:
+            stmt = (select(models.RoomSong, models.Song).join(
+                models.Song, models.Song.id == models.RoomSong.song_id).where(
+                    models.RoomSong.song_id == token_song_id))
+            result = await session.execute(stmt)
+            fallback_row = result.first()
+            if fallback_row:
+                room_song, song = fallback_row
+                logger.info(
+                    f"Fallback found RoomSong for song_id {token_song_id}, room_id {room_song.room_id}"
+                )
+                # 检查token是否过期
+                if room_song.expire_at and room_song.expire_at < _utc_now_naive():
+                    logger.warning(
+                        f"Audio token {token[:8]}... expired at {room_song.expire_at}")
+                    raise HTTPException(status_code=403, detail="Audio token expired")
+                room_song_with_song = (room_song, song)
+            else:
+                logger.warning(f"No RoomSong found for song_id {token_song_id}")
+        if not room_song_with_song:
+            raise HTTPException(status_code=403,
+                                detail="Audio token not valid for any room")
+
+    room_song, song = room_song_with_song
+
+    # 3. 若token可解析，则校验解析结果与落库记录一致
+    if token_song_id and room_song.song_id != token_song_id:
         logger.warning(
-            f"Audio token {token[:8]}... song_id mismatch: token={song_id}, room_song={room_song.song_id}"
+            f"Audio token {token[:8]}... song_id mismatch: token={token_song_id}, room_song={room_song.song_id}"
         )
         raise HTTPException(status_code=403, detail="Audio token mismatch")
 
-    # 检查token是否过期
-    if room_song.expire_at and room_song.expire_at < datetime.datetime.now(
-            datetime.timezone.utc):
+    # 4. 检查token是否过期
+    if room_song.expire_at and room_song.expire_at < _utc_now_naive():
         logger.warning(f"Audio token {token[:8]}... expired at {room_song.expire_at}")
         raise HTTPException(status_code=403, detail="Audio token expired")
 
-    # 3. 获取歌曲文件
-    stmt = select(Song).where(Song.id == song_id)
-    result = await session.execute(stmt)
-    song = result.scalar_one_or_none()
-
-    if not song:
-        logger.error(f"Song not found for song_id: {song_id}")
-        raise HTTPException(status_code=404, detail="Audio not found")
-
     if not song.cached_path:
-        logger.error(f"Song {song_id} has no cached path")
+        logger.error(f"Song {room_song.song_id} has no cached path")
         raise HTTPException(status_code=404, detail="Audio file not cached")
 
-    # 3. 返回音频文件（支持Range请求）
+    # 5. 返回音频文件（支持Range请求）
     content, media_type = await load_song_asset_with_cache(song.cached_path)
     range_header = request.headers.get("range")
 
@@ -167,5 +187,5 @@ async def stream_audio(
     response.headers["Content-Disposition"] = (
         f'inline; filename="{os.path.basename(song.cached_path)}"')
 
-    logger.info(f"Successfully served audio for song_id: {song_id}")
+    logger.info(f"Successfully served audio for song_id: {room_song.song_id}")
     return response

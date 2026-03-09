@@ -2,10 +2,11 @@ from __future__ import annotations
 import orjson
 from datetime import datetime, timezone
 from typing import Any, Optional, Self, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from time import time
 from utils.enumerations import RoomStatus
 from schemas.ws_messages import room_schemas as RoomSchemas
+from db.models import RoomStatusORM
 
 # 这个文件定义了所有的 Pydantic 模型，用于 Redis 数据的序列化和反序列化
 
@@ -116,6 +117,37 @@ class PlaybackState(RedisModel, RoomSchemas.PlaybackState):
 class RoomBaseStateCache(RedisModel):
     room_id: str
     title: str | None = None
-    status: Literal[0, 1, 2] = RoomStatus.WAITING.value
+    status: RoomStatusORM = RoomStatusORM.WAITING
     song_start_range_percent: float = Field(default=0, ge=0, le=100)
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> RoomStatusORM:
+        if isinstance(value, RoomStatusORM):
+            return value
+
+        if isinstance(value, RoomStatus):
+            return RoomStatusORM(value.value)
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.isdigit():
+                value = int(raw)
+            else:
+                upper = raw.upper()
+                if upper.startswith("ROOMSTATUSORM."):
+                    upper = upper.split(".", 1)[1]
+                if upper.startswith("ROOMSTATUS."):
+                    upper = upper.split(".", 1)[1]
+                if upper in RoomStatusORM.__members__:
+                    return RoomStatusORM[upper]
+                return RoomStatusORM.WAITING
+
+        if isinstance(value, int):
+            try:
+                return RoomStatusORM(value)
+            except ValueError:
+                return RoomStatusORM.WAITING
+
+        return RoomStatusORM.WAITING

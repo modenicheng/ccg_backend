@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import AsyncIterator
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db import crud, models
+from router import room_songs as room_songs_router
 
 
 @pytest_asyncio.fixture
@@ -256,3 +258,175 @@ async def test_update_song_cached_path_only_updates_cache_field(
     assert updated.title == "cache-title"
     assert updated.artist == "cache-artist"
     assert updated.cached_path == "assets/audio/cache-mid-1.ogg"
+
+
+@pytest.mark.asyncio
+async def test_trigger_preload_songs_updates_room_song_temp_url(
+        session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    room = models.Room(id="ROOM01", title="room")
+    song = models.Song(
+        platform="qq",
+        platform_song_id="qq-mid-preload",
+        title="preload-song",
+    )
+    session.add_all([room, song])
+    await session.flush()
+
+    room_song = models.RoomSong(
+        room_id=room.id,
+        song_id=song.id,
+        song_order=1,
+    )
+    session.add(room_song)
+    await session.commit()
+
+    # 避免真正触发下载任务
+    import mq.tasks as mq_tasks
+
+    def _fake_download(_mid: str) -> None:
+        return None
+
+    async def _fake_generate_audio_token(song_id: int) -> str:
+        return f"token-{song_id}"
+
+    monkeypatch.setattr(mq_tasks, "download_and_cache_song", _fake_download)
+    monkeypatch.setattr(crud, "generate_audio_token", _fake_generate_audio_token)
+
+    await crud.trigger_preload_songs(session, room.id, start_index=0, count=3)
+    await session.commit()
+
+    refreshed = await crud.get_room_song_by_song_id(session, room.id, song.id)
+    assert refreshed is not None
+    assert refreshed.temp_url == f"token-{song.id}"
+    assert refreshed.expire_at is not None
+
+
+@pytest.mark.asyncio
+async def test_get_room_song_and_song_by_temp_token(session: AsyncSession) -> None:
+    room = models.Room(id="ROOM02", title="room")
+    song = models.Song(
+        platform="qq",
+        platform_song_id="qq-mid-token-lookup",
+        title="token-lookup-song",
+    )
+    session.add_all([room, song])
+    await session.flush()
+
+    room_song = models.RoomSong(
+        room_id=room.id,
+        song_id=song.id,
+        song_order=1,
+        temp_url="db-token-lookup",
+    )
+    session.add(room_song)
+    await session.commit()
+
+    pair = await crud.get_room_song_and_song_by_temp_token(session, "db-token-lookup")
+    assert pair is not None
+    fetched_room_song, fetched_song = pair
+    assert fetched_room_song.room_id == room.id
+    assert fetched_room_song.song_id == song.id
+    assert fetched_song.id == song.id
+
+    missing = await crud.get_room_song_and_song_by_temp_token(session, "not-exists")
+    assert missing is None
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_audio_token_regenerates_when_redis_mapping_missing(
+        session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    room = models.Room(id="ROOM03", title="room")
+    song = models.Song(
+        platform="qq",
+        platform_song_id="qq-mid-regenerate",
+        title="regenerate-song",
+    )
+    session.add_all([room, song])
+    await session.flush()
+
+    room_song = models.RoomSong(
+        room_id=room.id,
+        song_id=song.id,
+        song_order=1,
+        temp_url="stale-token",
+        expire_at=datetime.datetime.now(datetime.UTC).replace(tzinfo=None) +
+        datetime.timedelta(minutes=30),
+    )
+    session.add(room_song)
+    await session.commit()
+
+    async def _fake_get_song_id_from_token(_token: str) -> int | None:
+        return None
+
+    async def _fake_generate_audio_token(_song_id: int) -> str:
+        return "new-token"
+
+    monkeypatch.setattr(crud, "get_song_id_from_token", _fake_get_song_id_from_token)
+    monkeypatch.setattr(crud, "generate_audio_token", _fake_generate_audio_token)
+
+    token = await crud.get_or_create_audio_token(session, room.id, song.id)
+    await session.commit()
+
+    refreshed = await crud.get_room_song_by_song_id(session, room.id, song.id)
+    assert token == "new-token"
+    assert refreshed is not None
+    assert refreshed.temp_url == "new-token"
+
+
+@pytest.mark.asyncio
+async def test_refresh_default_playback_initial_song_follows_latest_song_order(
+        session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    room = models.Room(id="ROOM04", title="room")
+    song1 = models.Song(platform="qq", platform_song_id="mid-1", title="song-1")
+    song2 = models.Song(platform="qq", platform_song_id="mid-2", title="song-2")
+    song3 = models.Song(platform="qq", platform_song_id="mid-3", title="song-3")
+    session.add_all([room, song1, song2, song3])
+    await session.flush()
+
+    rs1 = models.RoomSong(room_id=room.id, song_id=song1.id, song_order=1)
+    rs2 = models.RoomSong(room_id=room.id, song_id=song2.id, song_order=2)
+    rs3 = models.RoomSong(room_id=room.id, song_id=song3.id, song_order=3)
+    session.add_all([rs1, rs2, rs3])
+    await session.commit()
+
+    captured_states = []
+
+    async def _fake_set_room_playback_state(room_id: str, playback_state) -> None:
+        captured_states.append((room_id, playback_state))
+
+    async def _fake_delete_room_playback_state(_room_id: str) -> None:
+        raise AssertionError("song queue 非空时不应删除 playback state")
+
+    async def _fake_get_or_create_audio_token(_session: AsyncSession, _room_id: str,
+                                              song_id: int) -> str:
+        return f"token-{song_id}"
+
+    monkeypatch.setattr(room_songs_router.room_cache, "set_room_playback_state",
+                        _fake_set_room_playback_state)
+    monkeypatch.setattr(room_songs_router.room_cache, "delete_room_playback_state",
+                        _fake_delete_room_playback_state)
+    monkeypatch.setattr(room_songs_router.crud, "get_or_create_audio_token",
+                        _fake_get_or_create_audio_token)
+    monkeypatch.setattr(room_songs_router, "get_audio_stream_url",
+                        lambda token: f"/audio/{token}")
+
+    # 第一次刷新：首曲应为 song1
+    await room_songs_router._refresh_default_playback_initial_song(session, room.id)
+    room_after_first_refresh = await session.get(models.Room, room.id)
+    assert room_after_first_refresh is not None
+    assert room_after_first_refresh.current_song_index == 0
+    assert captured_states
+    assert captured_states[-1][0] == room.id
+    assert captured_states[-1][1].audio_url == f"/audio/token-{song1.id}"
+
+    # 模拟再次 shuffle 后首曲变为 song2
+    rs1.song_order = 2
+    rs2.song_order = 1
+    rs3.song_order = 3
+    await session.flush()
+
+    await room_songs_router._refresh_default_playback_initial_song(session, room.id)
+    room_after_second_refresh = await session.get(models.Room, room.id)
+    assert room_after_second_refresh is not None
+    assert room_after_second_refresh.current_song_index == 0
+    assert captured_states[-1][1].audio_url == f"/audio/token-{song2.id}"

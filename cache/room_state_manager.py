@@ -10,10 +10,10 @@ from sqlalchemy import select
 # 第三方库导入
 
 # 本地导入
-from utils.enumerations import RoomStatus
+from utils.enumerations import RoomStatus, RoundState
 from utils import get_logger
-from room_state.state_machine import RoomStateMachine
-from db.models import Score, User
+from room_state.state_machine import RoomStateMachine, RoundStateMachine
+from db.models import Score, User, Room
 from .room_cache import (load_room_state, save_room_state, clear_answer_queue,
                          set_room_start_position)
 from .schemas import RoomBaseStateCache
@@ -105,6 +105,9 @@ class RoomStateManager:
         try:
             # 使用 RoomStateMachine 处理状态转换
             await RoomStateMachine.transition(session, room_id, RoomStatus.RUNNING)
+            # 游戏开始时重置回合状态为 PENDING
+            await RoundStateMachine.force_transition(session, room_id,
+                                                     RoundState.PENDING)
             logger.info("Game started for room %s", room_id)
             return True
         except ValueError as e:
@@ -129,6 +132,9 @@ class RoomStateManager:
         try:
             # 使用 RoomStateMachine 处理状态转换
             await RoomStateMachine.transition(session, room_id, RoomStatus.ENDED)
+            # 游戏结束时回合状态重置为 PENDING
+            await RoundStateMachine.force_transition(session, room_id,
+                                                     RoundState.PENDING)
 
             # 获取最终得分
             score_records = await session.execute(
@@ -173,3 +179,50 @@ class RoomStateManager:
         except Exception as e:
             logger.error("Error ending round for room %s: %s", room_id, e)
             return False
+
+
+class RoundStateManager:
+    """回合状态管理类，统一管理回合状态（DB + Cache）"""
+
+    @staticmethod
+    async def get_round_state(room_id: str,
+                              session: AsyncSession) -> Optional[RoundState]:
+        """获取回合状态"""
+        room = await session.get(Room, room_id)
+        if not room:
+            return None
+        return RoundState(room.round_state or RoundState.PENDING.value)
+
+    @staticmethod
+    async def transition_round_state(
+        room_id: str,
+        target: RoundState,
+        session: AsyncSession,
+        force: bool = False,
+    ) -> bool:
+        """切换回合状态"""
+        try:
+            if force:
+                await RoundStateMachine.force_transition(session, room_id, target)
+            else:
+                await RoundStateMachine.transition(session, room_id, target)
+            logger.info("Round state transitioned for room %s -> %s", room_id,
+                        target.name)
+            return True
+        except ValueError as e:
+            logger.error("Error transitioning round state for room %s: %s", room_id, e)
+            return False
+        except Exception as e:
+            logger.error("Error transitioning round state for room %s: %s", room_id, e)
+            await session.rollback()
+            return False
+
+    @staticmethod
+    async def reset_round_state(room_id: str, session: AsyncSession) -> bool:
+        """将回合状态重置为 PENDING"""
+        return await RoundStateManager.transition_round_state(
+            room_id=room_id,
+            target=RoundState.PENDING,
+            session=session,
+            force=True,
+        )
