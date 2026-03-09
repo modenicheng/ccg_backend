@@ -54,6 +54,7 @@ class GameEventType(Enum):
     PLAYER_ANSWER = 50
     PLAYER_SELECTION_UPDATE = 51  # 用于玩家选择的增量更新，减少网络传输
     PLAYER_DESCRIPTION_UPDATE = 52  # 用于玩家描述的增量更新，减少网络传输
+    CLEAR_ANSWER_QUEUE = 53  # 清空抢答队列
 
 
 class AudioEncoding(Enum):

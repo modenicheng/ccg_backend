@@ -2,60 +2,72 @@
 
 ## 任务概述
 
-根据最新反馈调整计划：
-
 ### 待实现功能
-1. `CLEAR_ANSWER_QUEUE` (38) - 清空抢答队列
-2. `START_POS_UPDATE` (14) - 起始位置控制
-3. `GAME_OVER` (13) - 游戏结束（支持自动触发和房主手动触发）
-4. `PRELOAD_AUDIO` (23) - 音频预加载（需与现有代码对接，避免重复）
-5. **新增**：房间状态管理类重构（核心状态机）
 
-### 已移除/暂缓
-- ~~游戏开始逻辑~~ - 已实现
-- ~~禁止新玩家加入~~ - 已实现
+1. `START_POS_UPDATE` (14) - 起始位置控制
+2. `GAME_OVER` (13) - 游戏结束（支持自动触发和房主手动触发）
+3. `PRELOAD_AUDIO` (23) - 音频预加载（需与现有代码对接，避免重复）
+4. **完成** `CLEAR_ANSWER_QUEUE` (38) - 完成前端事件处理和WebSocket事件注册
 
----
+***
 
 ## 当前状态分析
 
 ### 已存在的代码（避免重复工作）
 
 #### 1. 音频下载和缓存（mq/tasks.py）
-- `download_audio_file()` - 下载音频文件
-- `download_and_cache_song()` - 下载并缓存单曲
-- `_resolve_audio_download_path()` - 解析下载路径
-- 音频存储在 `assets/audio/` 目录
+
+* `download_audio_file()` - 下载音频文件
+
+* `download_and_cache_song()` - 下载并缓存单曲
+
+* `_resolve_audio_download_path()` - 解析下载路径
+
+* 音频存储在 `assets/audio/` 目录
 
 #### 2. Redis 房间管理（cache/utils.py）
-- `RedisRoomManager` 类已存在
-- 方法：`_load_room_state()`, `_save_room_state()`, `get_room_info()`
-- 状态模型：`RoomStateCache`（cache/schemas.py）
+
+* `RedisRoomManager` 类已存在
+
+* 方法：`_load_room_state()`, `_save_room_state()`, `get_room_info()`
+
+* 状态模型：`RoomStateCache`（cache/schemas.py）
 
 #### 3. 房间基础状态（cache/schemas.py）
-- `RoomBaseStateCache` - 包含 status, song_start_range_percent 等
-- `PlaybackState` - 播放状态
-- `AnswerQueueItem` - 抢答队列项
 
-#### 4. 抢答队列操作（cache/room_cache.py）
-- `clear_answer_queue()` - 清空队列函数已实现
-- `get_answer_queue()` - 获取队列
-- `append_attempt_answer_player()` - 添加玩家到队列
+* `RoomBaseStateCache` - 包含 status, song\_start\_range\_percent 等
+
+* `PlaybackState` - 播放状态
+
+* `AnswerQueueItem` - 抢答队列项
+
+#### 4. 抢答队列操作（cache/room\_cache.py）
+
+* `clear_answer_queue()` - 清空队列函数已实现
+
+* `get_answer_queue()` - 获取队列
+
+* `append_attempt_answer_player()` - 添加玩家到队列
 
 #### 5. 数据库模型（db/models.py）
-- `Room` 模型有 `status` 字段（WAITING, RUNNING, ENDED）
-- `ScoreRecord` 模型记录玩家分数
-- `User` 模型关联房间和玩家
 
-#### 6. Schema 定义（schemas/ws_messages/）
-- `playback_schemas.py` - `PreloadAudioMessage` 已定义
-- `room_schemas.py` - 需要添加新的 schema
+* `Room` 模型有 `status` 字段（WAITING, RUNNING, ENDED）
 
----
+* `ScoreRecord` 模型记录玩家分数
+
+* `User` 模型关联房间和玩家
+
+#### 6. Schema 定义（schemas/ws\_messages/）
+
+* `playback_schemas.py` - `PreloadAudioMessage` 已定义
+
+* `room_schemas.py` - 需要添加新的 schema
+
+***
 
 ## 后端 RoomStateMachine 统一房间状态可行性评估
 
-**Session ID:** ses_34ec6534fffeW3to4qhZ63ewfG
+**Session ID:** ses\_34ec6534fffeW3to4qhZ63ewfG
 **Created:** 2026/3/3 09:04:32
 **Updated:** 2026/3/3 09:06:03
 
@@ -67,25 +79,29 @@
 
 **当前状态管理方式：**
 
-- 数据库 `Room.status` 存储持久状态
-- Redis 缓存 `RoomBaseStateCache` 存储实时状态（播放进度、玩家列表、答题队列等）
-- 状态转换逻辑分散在各 WebSocket 处理器（如 `round_events_3x.py:139` 直接修改 `room.status`）
+* 数据库 `Room.status` 存储持久状态
+
+* Redis 缓存 `RoomBaseStateCache` 存储实时状态（播放进度、玩家列表、答题队列等）
+
+* 状态转换逻辑分散在各 WebSocket 处理器（如 `round_events_3x.py:139` 直接修改 `room.status`）
 
 **抽象 RoomStateMachine 的利弊：**
 
-| 优点                                           | 缺点                                          |
-| ---------------------------------------------- | --------------------------------------------- |
-| 集中化状态转换逻辑，避免分散在各处理器         | 增加架构复杂度                                |
+| 优点                               | 缺点                      |
+| -------------------------------- | ----------------------- |
+| 集中化状态转换逻辑，避免分散在各处理器              | 增加架构复杂度                 |
 | 统一校验状态转移合法性（如 WAITING → RUNNING） | 若状态机实例驻留内存，服务重启/扩展时状态丢失 |
-| 便于维护和测试，新增状态/转换更简单            | 每次操作需读写 Redis/DB，可能增加延迟         |
+| 便于维护和测试，新增状态/转换更简单               | 每次操作需读写 Redis/DB，可能增加延迟 |
 
 **建议方案：**
 实现**无状态**的 `RoomStateMachine`，仅封装转换逻辑，不持有实例状态。所有状态持久化在 Redis/DB，状态机负责：
+
 1. 验证当前状态是否允许转移到目标状态
 2. 原子化更新数据库 `Room.status` 和 Redis `RoomBaseStateCache`
 3. 触发相关副作用（如广播状态变更事件）
 
 **示例设计：**
+
 ```python
 class RoomStateMachine:
     async def transition(self, room_id: str, target: RoomStatus, session: AsyncSession) -> bool:
@@ -97,19 +113,22 @@ class RoomStateMachine:
 ```
 
 **结论：**
-- **推荐**实现无状态状态机，统一转换逻辑，保持可恢复性。
-- **避免**内存驻留实例，直接依赖 Redis/DB 作为状态源。
-- 现有代码中状态转换较分散，抽象后可提升可维护性，且不影响水平扩展。
 
----
+* **推荐**实现无状态状态机，统一转换逻辑，保持可恢复性。
+
+* **避免**内存驻留实例，直接依赖 Redis/DB 作为状态源。
+
+* 现有代码中状态转换较分散，抽象后可提升可维护性，且不影响水平扩展。
+
+***
 
 ## 一、核心重构：房间状态管理类
 
 ### 目标
+
 抽象一个 `RoomStateManager` 类，统一管理房间状态（DB + Cache），作为核心状态机。
 
-
----
+***
 
 ## 二、后端实施步骤
 
@@ -117,64 +136,85 @@ class RoomStateMachine:
 
 **文件**: `cache/room_state_manager.py`
 
-- 实现上述 RoomStateManager 类
-- 集成现有 `mq/tasks.py` 的下载功能
-- 集成现有 `cache/room_cache.py` 的缓存操作
-- 集成现有 `cache/utils.py` 的 RedisRoomManager
+* 实现上述 RoomStateManager 类
+
+* 集成现有 `mq/tasks.py` 的下载功能
+
+* 集成现有 `cache/room_cache.py` 的缓存操作
+
+* 集成现有 `cache/utils.py` 的 RedisRoomManager
 
 ### 阶段 2：创建 Schema 定义
 
 **文件**: `schemas/ws_messages/room_schemas.py`
 
 添加：
-- `StartPosUpdateData` / `StartPosUpdateMessage`
-- `GameOverScore` / `GameOverData` / `GameOverMessage`
-- `ClearAnswerQueueData` / `ClearAnswerQueueMessage`
+
+* `StartPosUpdateData` / `StartPosUpdateMessage`
+
+* `GameOverScore` / `GameOverData` / `GameOverMessage`
+
+* `ClearAnswerQueueData` / `ClearAnswerQueueMessage`
 
 ### 阶段 3：重构现有 Handlers
 
 使用 RoomStateManager 重构：
 
 1. **`handlers/round_events_3x.py`**
-   - `handle_game_start` - 使用 manager.start_game()
-   - `handle_round_end` - 使用 manager.end_round()
+
+   * `handle_game_start` - 使用 manager.start\_game()
+
+   * `handle_round_end` - 使用 manager.end\_round()
 
 2. **`handlers/connection_lifespan.py`**
-   - `handle_start_pos_update` - 使用 manager.set_start_position()
-   - `handle_clear_answer_queue` - 使用 manager.clear_answer_queue()
-   - 新增 `handle_game_over_manual` - 房主手动结束游戏
+
+   * `handle_start_pos_update` - 使用 manager.set\_start\_position()
+
+   * `handle_clear_answer_queue` - 使用 manager.clear\_answer\_queue()
+
+   * 新增 `handle_game_over_manual` - 房主手动结束游戏
 
 ### 阶段 4：添加缓存函数
 
 **文件**: `cache/room_cache.py`
 
 添加：
-- `set_room_start_position()`
-- `get_room_start_position()`
 
----
+* `set_room_start_position()`
+
+* `get_room_start_position()`
+
+***
 
 ## 三、前端实施步骤
 
 ### 阶段 1：更新类型定义
 
 **文件**: `types/eventTypes.ts`
-- 添加 `CLEAR_ANSWER_QUEUE: 38`
+
+* 添加 `CLEAR_ANSWER_QUEUE: 38`
 
 **文件**: `types/wsMessages.ts`
-- 添加 `StartPosUpdateData`
-- 添加 `GameOverScore` / `GameOverData`
-- 添加 `ClearAnswerQueueData`
+
+* 添加 `StartPosUpdateData`
+
+* 添加 `GameOverScore` / `GameOverData`
+
+* 添加 `ClearAnswerQueueData`
 
 ### 阶段 2：实现事件处理器
 
 **文件**: `pages/RoomPage.tsx`
 
 添加 case：
-- `START_POS_UPDATE` - 更新起始位置显示
-- `CLEAR_ANSWER_QUEUE` - 清空抢答队列
-- `GAME_OVER` - 显示游戏结束界面
-- `PRELOAD_AUDIO` - 预加载音频（调用 audioPlayer）
+
+* `START_POS_UPDATE` - 更新起始位置显示
+
+* `CLEAR_ANSWER_QUEUE` - 清空抢答队列
+
+* `GAME_OVER` - 显示游戏结束界面
+
+* `PRELOAD_AUDIO` - 预加载音频（调用 audioPlayer）
 
 ### 阶段 3：UI 实现
 
@@ -285,89 +325,215 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 **文件**: `stores/gameStore.ts`
 
 添加状态：
-- `startPosition: number`
-- `isGameOver: boolean`
-- `finalScores: GameOverScore[]`
+
+* `startPosition: number`
+
+* `isGameOver: boolean`
+
+* `finalScores: GameOverScore[]`
 
 添加 actions：
-- `setStartPosition()`
-- `setGameOver()`
-- `clearAnswerQueue()`
 
----
+* `setStartPosition()`
+
+* `setGameOver()`
+
+* `clearAnswerQueue()`
+
+***
 
 ## 四、文件修改清单
 
 ### 后端
 
-| 文件 | 修改内容 |
-|------|----------|
-| `cache/room_state_manager.py` | **新建** - 核心状态机类 |
-| `schemas/ws_messages/room_schemas.py` | 添加 3 个事件的 schema |
-| `cache/room_cache.py` | 添加起始位置读写函数 |
-| `handlers/round_events_3x.py` | 使用 RoomStateManager 重构 |
-| `handlers/connection_lifespan.py` | 添加 handlers，使用 RoomStateManager |
-| `handlers/__init__.py` | 导入新模块 |
-| `README.md` | 更新完成状态 |
+| 文件                                    | 修改内容                            |
+| ------------------------------------- | ------------------------------- |
+| `cache/room_state_manager.py`         | **新建** - 核心状态机类                 |
+| `schemas/ws_messages/room_schemas.py` | 添加 3 个事件的 schema                |
+| `cache/room_cache.py`                 | 添加起始位置读写函数                      |
+| `handlers/round_events_3x.py`         | 使用 RoomStateManager 重构          |
+| `handlers/connection_lifespan.py`     | 添加 handlers，使用 RoomStateManager |
+| `handlers/__init__.py`                | 导入新模块                           |
+| `README.md`                           | 更新完成状态                          |
 
 ### 前端
 
-| 文件 | 修改内容 |
-|------|----------|
-| `types/eventTypes.ts` | 添加 CLEAR_ANSWER_QUEUE |
-| `types/wsMessages.ts` | 添加数据类型 |
-| `pages/RoomPage.tsx` | 添加 4 个事件处理器 |
-| `pages/RoomManagePage.tsx` | 添加起始位置条、结束游戏按钮 |
-| `components/GameOverModal.tsx` | **新建** - 游戏结束弹窗 |
-| `components/ConfirmDialog.tsx` | **新建** 或复用 - 二次确认弹窗 |
-| `stores/gameStore.ts` | 添加状态和 actions |
-| `README.md` | 更新完成状态 |
+| 文件                             | 修改内容                    |
+| ------------------------------ | ----------------------- |
+| `types/eventTypes.ts`          | 添加 CLEAR\_ANSWER\_QUEUE |
+| `types/wsMessages.ts`          | 添加数据类型                  |
+| `pages/RoomPage.tsx`           | 添加 4 个事件处理器             |
+| `pages/RoomManagePage.tsx`     | 添加起始位置条、结束游戏按钮          |
+| `components/GameOverModal.tsx` | **新建** - 游戏结束弹窗         |
+| `components/ConfirmDialog.tsx` | **新建** 或复用 - 二次确认弹窗     |
+| `stores/gameStore.ts`          | 添加状态和 actions           |
+| `README.md`                    | 更新完成状态                  |
 
----
+***
 
 ## 五、实施顺序建议
 
-### 第一阶段：核心重构（高优先级）
-1. **RoomStateManager 类** - 先实现核心状态机
-2. **Schema 定义** - 前后端同时进行
-3. **测试 RoomStateManager** - 确保重构不破坏现有功能
+### 第一阶段：完成基础事件（高优先级）
 
-### 第二阶段：基础事件（高优先级）
-4. **CLEAR_ANSWER_QUEUE** - 最简单，先实现
-5. **START_POS_UPDATE** - 基础功能
-6. **前端对应 UI** - 控制条
+1. **START\_POS\_UPDATE** - 实现后端和前端的起始位置控制
+2. **GAME\_OVER** - 实现游戏结束逻辑和UI
+3. **CLEAR\_ANSWER\_QUEUE** - 完成前端事件处理和WebSocket事件注册
 
-### 第三阶段：游戏流程（中优先级）
-7. **GAME_OVER** - 自动触发逻辑
-8. **房主手动结束** - 二次确认
-9. **前端游戏结束弹窗**
+### 第二阶段：完成音频预加载（低优先级）
 
-### 第四阶段：音频预加载（低优先级）
-10. **PRELOAD_AUDIO** - 与现有下载逻辑对接
-11. **前端预加载处理**
+1. **PRELOAD\_AUDIO** - 与现有下载逻辑对接，实现前端预加载处理
 
-### 第五阶段：文档更新
-12. **README.md** - 前后端都更新
+### 第三阶段：文档更新
 
----
+1. **README.md** - 前后端都更新
+
+## 六、未完成任务的详细实现
+
+### 1. START\_POS\_UPDATE (14) - 起始位置控制
+
+#### 后端实现
+
+* **文件**: `cache/room_cache.py`
+
+  * 添加 `set_room_start_position(room_id: str, position: float)` 函数
+
+  * 添加 `get_room_start_position(room_id: str) -> float` 函数
+
+* **文件**: `schemas/ws_messages/room_schemas.py`
+
+  * 添加 `StartPosUpdateData` / `StartPosUpdateMessage`
+
+* **文件**: `handlers/connection_lifespan.py`
+
+  * 添加 `handle_start_pos_update` 处理器
+
+  * 使用 `RoomStateMachine` 更新起始位置
+
+#### 前端实现
+
+* **文件**: `types/eventTypes.ts`
+
+  * 添加 `START_POS_UPDATE: 14`
+
+* **文件**: `types/wsMessages.ts`
+
+  * 添加 `StartPosUpdateData` 接口
+
+* **文件**: `pages/RoomPage.tsx`
+
+  * 添加 `START_POS_UPDATE` 事件处理器
+
+* **文件**: `pages/RoomManagePage.tsx`
+
+  * 添加起始位置控制条UI
+
+### 2. GAME\_OVER (13) - 游戏结束
+
+#### 后端实现
+
+* **文件**: `schemas/ws_messages/room_schemas.py`
+
+  * 添加 `GameOverScore` / `GameOverData` / `GameOverMessage`
+
+* **文件**: `handlers/connection_lifespan.py`
+
+  * 添加 `handle_game_over_manual` 处理器
+
+  * 实现自动触发游戏结束的逻辑（当所有歌曲都已播放完毕）
+
+#### 前端实现
+
+* **文件**: `types/wsMessages.ts`
+
+  * 添加 `GameOverScore` / `GameOverData` 接口
+
+* **文件**: `pages/RoomPage.tsx`
+
+  * 添加 `GAME_OVER` 事件处理器
+
+* **文件**: `components/GameOverModal.tsx`
+
+  * 新建游戏结束弹窗组件
+
+* **文件**: `pages/RoomManagePage.tsx`
+
+  * 添加结束游戏按钮和二次确认弹窗
+
+* **文件**: `stores/gameStore.ts`
+
+  * 添加 `isGameOver`、`finalScores` 等状态和相应的actions
+
+### 3. PRELOAD\_AUDIO (23) - 音频预加载
+
+#### 后端实现
+
+* 确保 `PreloadAudioMessage` 已正确实现
+
+* 与现有 `mq/tasks.py` 中的下载功能对接
+
+#### 前端实现
+
+* **文件**: `pages/RoomPage.tsx`
+
+  * 添加 `PRELOAD_AUDIO` 事件处理器
+
+  * 与现有的 `audioPlayer` 集成
+
+### 4. CLEAR\_ANSWER\_QUEUE (38) - 完成
+
+#### 后端实现
+
+* **文件**: `schemas/ws_messages/room_schemas.py`
+
+  * 添加 `ClearAnswerQueueData` / `ClearAnswerQueueMessage`
+
+* **文件**: `handlers/connection_lifespan.py`
+
+  * 添加 `handle_clear_answer_queue` 处理器
+
+#### 前端实现
+
+* **文件**: `types/eventTypes.ts`
+
+  * 添加 `CLEAR_ANSWER_QUEUE: 38`
+
+* **文件**: `types/wsMessages.ts`
+
+  * 添加 `ClearAnswerQueueData` 接口
+
+* **文件**: `pages/RoomPage.tsx`
+
+  * 添加 `CLEAR_ANSWER_QUEUE` 事件处理器
 
 ## 六、注意事项
 
 ### 避免重复工作
-- ✅ 使用 `mq/tasks.py` 的下载功能
-- ✅ 使用 `cache/room_cache.py` 的队列操作
-- ✅ 使用 `cache/utils.py` 的 Redis 管理
-- ✅ 使用 `schemas/ws_messages/playback_schemas.py` 的 `PreloadAudioMessage`
+
+* ✅ 使用 `mq/tasks.py` 的下载功能
+
+* ✅ 使用 `cache/room_cache.py` 的队列操作
+
+* ✅ 使用 `cache/utils.py` 的 Redis 管理
+
+* ✅ 使用 `schemas/ws_messages/playback_schemas.py` 的 `PreloadAudioMessage`
 
 ### 状态一致性
-- RoomStateManager 同时操作 DB 和 Cache
-- 使用事务确保一致性
-- 广播事件通知所有客户端
+
+* RoomStateMachine 同时操作 DB 和 Cache
+
+* 使用事务确保一致性
+
+* 广播事件通知所有客户端
 
 ### 房主权限检查
-- 所有管理操作检查 `client.user.is_owner`
-- 非房主返回错误
+
+* 所有管理操作检查 `client.user.is_owner`
+
+* 非房主返回错误
 
 ### 二次确认
-- 结束游戏按钮需要二次确认
-- 防止误操作
+
+* 结束游戏按钮需要二次确认
+
+* 防止误操作
+

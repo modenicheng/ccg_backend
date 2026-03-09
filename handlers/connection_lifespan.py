@@ -10,11 +10,14 @@ from sqlalchemy.orm import selectinload
 import cache
 import cache.schemas
 from cache import room_cache
+from cache.room_state_manager import RoomStateManager
 from client_manager import ClientManager, Client
 from db import models
 from schemas.ws_messages import room_schemas as RoomSchema
-from schemas.ws_messages.room_schemas import AnswerQueueItem
+from schemas.ws_messages.room_schemas import AnswerQueueItem, StartPosUpdateData, GameOverData, ClearAnswerQueueData
 from utils import get_logger
+from utils.enumerations import GameEventType
+from handlers.registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -197,3 +200,114 @@ async def on_disconnect(
 
     # 无论是否是观战者，都从客户端管理器中移除
     clients.pop(room_id, cl)
+
+
+@regist(GameEventType.START_POS_UPDATE, data_validator=StartPosUpdateData)
+async def handle_start_pos_update(
+    data: StartPosUpdateData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs
+) -> None:
+    """处理起始位置更新事件
+
+    Args:
+        data (StartPosUpdateData): 起始位置数据
+        clients (ClientManager): 客户端管理器
+        client (Client): 当前客户端
+        room_id (str): 房间 ID
+    """
+    # 检查是否是房主
+    if not client.user.is_owner:
+        logger.warning(f"Non-owner {client.user.id} tried to update start position")
+        return
+
+    try:
+        # 设置起始位置
+        success = await RoomStateManager.set_start_position(room_id, data.start_position_percent)
+        if success:
+            # 广播更新消息给所有客户端
+            message = RoomSchema.StartPosUpdateMessage(data=data)
+            await clients.broadcast(room_id, message.model_dump())
+            logger.debug(f"Start position updated to {data.start_position_percent}% for room {room_id}")
+        else:
+            logger.error(f"Failed to update start position for room {room_id}")
+    except Exception as e:
+        logger.error(f"Error handling start position update: {e}")
+
+
+@regist(GameEventType.GAME_OVER, data_validator=GameOverData)
+async def handle_game_over_manual(
+    data: GameOverData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    session: AsyncSession,
+    **kwargs
+) -> None:
+    """处理游戏结束事件（手动触发）
+
+    Args:
+        data (GameOverData): 游戏结束数据
+        clients (ClientManager): 客户端管理器
+        client (Client): 当前客户端
+        room_id (str): 房间 ID
+        session (AsyncSession): 数据库会话
+    """
+    # 检查是否是房主
+    if not client.user.is_owner:
+        logger.warning(f"Non-owner {client.user.id} tried to end game")
+        return
+
+    try:
+        # 结束游戏
+        result = await RoomStateManager.end_game(room_id, session)
+        if result["success"]:
+            # 广播游戏结束消息给所有客户端
+            game_over_data = RoomSchema.GameOverData(
+                manual=data.manual,
+                final_scores=result["final_scores"]
+            )
+            message = RoomSchema.GameOverMessage(data=game_over_data)
+            await clients.broadcast(room_id, message.model_dump())
+            logger.info(f"Game ended manually for room {room_id}")
+        else:
+            logger.error(f"Failed to end game for room {room_id}: {result.get('error')}")
+    except Exception as e:
+        logger.error(f"Error handling game over: {e}")
+
+
+@regist(GameEventType.CLEAR_ANSWER_QUEUE, data_validator=ClearAnswerQueueData)
+async def handle_clear_answer_queue(
+    data: ClearAnswerQueueData,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs
+) -> None:
+    """处理清空抢答队列事件
+
+    Args:
+        data (ClearAnswerQueueData): 清空队列数据
+        clients (ClientManager): 客户端管理器
+        client (Client): 当前客户端
+        room_id (str): 房间 ID
+    """
+    # 检查是否是房主
+    if not client.user.is_owner:
+        logger.warning(f"Non-owner {client.user.id} tried to clear answer queue")
+        return
+
+    try:
+        # 清空抢答队列
+        success = await RoomStateManager.clear_answer_queue(room_id)
+        if success:
+            # 广播清空队列消息给所有客户端
+            message = RoomSchema.ClearAnswerQueueMessage(data=data)
+            await clients.broadcast(room_id, message.model_dump())
+            logger.debug(f"Answer queue cleared for room {room_id}")
+        else:
+            logger.error(f"Failed to clear answer queue for room {room_id}")
+    except Exception as e:
+        logger.error(f"Error handling clear answer queue: {e}")

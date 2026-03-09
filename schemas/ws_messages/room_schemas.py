@@ -108,3 +108,40 @@ class KickUserMessage(BaseModel):
     event: Literal[15] = GameEventType.KICK_USER.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: dict
+
+
+class StartPosUpdateData(BaseModel):
+    start_position_percent: float = Field(..., ge=0, le=80, description="起始位置百分比")
+
+
+class StartPosUpdateMessage(BaseModel):
+    event: Literal[14] = GameEventType.START_POS_UPDATE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: StartPosUpdateData
+
+
+class GameOverScore(BaseModel):
+    player_id: int
+    username: str
+    score: int
+
+
+class GameOverData(BaseModel):
+    manual: bool = Field(default=False, description="是否手动结束游戏")
+    final_scores: list[GameOverScore] = Field(default_factory=list, description="最终得分")
+
+
+class GameOverMessage(BaseModel):
+    event: Literal[13] = GameEventType.GAME_OVER.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: GameOverData
+
+
+class ClearAnswerQueueData(BaseModel):
+    pass
+
+
+class ClearAnswerQueueMessage(BaseModel):
+    event: Literal[53] = GameEventType.CLEAR_ANSWER_QUEUE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: ClearAnswerQueueData

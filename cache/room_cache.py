@@ -540,3 +540,44 @@ async def update_room_playback_state(
     except Exception as e:
         logger.error(f"Error updating playback state for room {room_id}: {e}")
         return False
+
+
+async def set_room_start_position(room_id: str, position: float) -> bool:
+    """设置房间起始位置
+
+    Args:
+        room_id (str): 房间 ID
+        position (float): 起始位置百分比（0-80）
+
+    Returns:
+        bool: 是否设置成功
+    """
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        await cast(Awaitable, redis.hset(key, "song_start_range_percent", str(position)))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        logger.debug(f"Set start position for room {room_id} to {position}%")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting start position for room {room_id}: {e}")
+        return False
+
+
+async def get_room_start_position(room_id: str) -> float:
+    """获取房间起始位置
+
+    Args:
+        room_id (str): 房间 ID
+
+    Returns:
+        float: 起始位置百分比
+    """
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        position = await cast(Awaitable[Optional[bytes]], redis.hget(key, "song_start_range_percent"))
+        return float(position) if position else 0.0
+    except Exception as e:
+        logger.error(f"Error getting start position for room {room_id}: {e}")
+        return 0.0
