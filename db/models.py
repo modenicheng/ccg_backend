@@ -4,13 +4,26 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Any
 
-from sqlalchemy import Float, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, CheckConstraint, Index
+from sqlalchemy import (
+    Float,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    CheckConstraint,
+    Index,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base."""
+
     pass
 
 
@@ -165,9 +178,8 @@ class Room(Base):
                                                            nullable=True,
                                                            default=None)
 
-    round_state: Mapped[int | None] = mapped_column(Integer,
-                                                   nullable=True,
-                                                   default=0)  # 0 for PENDING
+    round_state: Mapped[int | None] = mapped_column(Integer, nullable=True,
+                                                    default=0)  # 0 for PENDING
 
     __table_args__ = (
         CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
@@ -198,6 +210,12 @@ class RoomSong(Base):
 
     # 这里用于记录歌曲在房间内的顺序，数值越小表示越靠前。可以为 null，表示没有特定顺序要求。
     song_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # 临时播放 URL 及其过期时间，用于预下载和 URL 轮换管理
+    temp_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime,
+                                                       nullable=True,
+                                                       index=True)
 
     room: Mapped[Room] = relationship(back_populates="room_songs")
     song: Mapped[Song] = relationship(back_populates="rooms")
@@ -364,4 +382,5 @@ class Tasks(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp())
+        onupdate=func.current_timestamp(),
+    )

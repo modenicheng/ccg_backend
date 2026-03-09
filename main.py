@@ -192,13 +192,11 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
             logger.info(f"WebSocket connection for room {roomid} as spectator")
             # 创建一个临时的观战者用户对象
             from db.models import User
-            spectator_user = User(
-                id=0,
-                username="Spectator",
-                token="",
-                room_id=roomid,
-                is_owner=False
-            )
+            spectator_user = User(id=0,
+                                  username="Spectator",
+                                  token="",
+                                  room_id=roomid,
+                                  is_owner=False)
             client = Client(websocket, spectator_user, room)
         else:
             client = Client(websocket, user, room)
@@ -306,15 +304,14 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
             return
 
         # 直接创建一个观战者客户端
-        logger.info(f"WebSocket connection for room {roomid} as spectator (watch endpoint)")
+        logger.info(
+            f"WebSocket connection for room {roomid} as spectator (watch endpoint)")
         from db.models import User
-        spectator_user = User(
-            id=0,
-            username="Spectator",
-            token="",
-            room_id=roomid,
-            is_owner=False
-        )
+        spectator_user = User(id=0,
+                              username="Spectator",
+                              token="",
+                              room_id=roomid,
+                              is_owner=False)
         client = Client(websocket, spectator_user, room)
 
         await client.ws.accept()

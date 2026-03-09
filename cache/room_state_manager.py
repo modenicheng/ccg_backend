@@ -14,10 +14,8 @@ from utils.enumerations import RoomStatus
 from utils import get_logger
 from room_state.state_machine import RoomStateMachine
 from db.models import Score, User
-from .room_cache import (
-    load_room_state, save_room_state, clear_answer_queue,
-    set_room_start_position
-)
+from .room_cache import (load_room_state, save_room_state, clear_answer_queue,
+                         set_room_start_position)
 from .schemas import RoomBaseStateCache
 
 logger = get_logger(__name__)
@@ -86,7 +84,8 @@ class RoomStateManager:
         """
         try:
             result = await clear_answer_queue(room_id)
-            logger.debug("Cleared answer queue for room %s, result: %s", room_id, result)
+            logger.debug("Cleared answer queue for room %s, result: %s", room_id,
+                         result)
             return result is not None
         except Exception as e:
             logger.error("Error clearing answer queue for room %s: %s", room_id, e)
@@ -133,11 +132,8 @@ class RoomStateManager:
 
             # 获取最终得分
             score_records = await session.execute(
-                select(Score, User.username)
-                .join(User, Score.user_id == User.id)
-                .where(Score.room_id == room_id)
-                .order_by(Score.total_score.desc())
-            )
+                select(Score, User.username).join(User, Score.user_id == User.id).where(
+                    Score.room_id == room_id).order_by(Score.total_score.desc()))
 
             final_scores = []
             for record, username in score_records:
@@ -148,10 +144,7 @@ class RoomStateManager:
                 })
 
             logger.info("Game ended for room %s", room_id)
-            return {
-                "success": True,
-                "final_scores": final_scores
-            }
+            return {"success": True, "final_scores": final_scores}
         except ValueError as e:
             logger.error("Error ending game for room %s: %s", room_id, e)
             return {"success": False, "error": str(e)}

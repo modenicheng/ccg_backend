@@ -59,10 +59,10 @@ async def on_connect(
         - Excludes the connecting client from the broadcast join message
     """
     # pylint: disable=too-many-locals
-    
+
     # 检查是否是观战者用户（id为0）
     is_spectator = cl.user.id == 0
-    
+
     # 只有非观战者用户才更新缓存和数据库状态
     if not is_spectator:
         try:
@@ -81,7 +81,8 @@ async def on_connect(
 
             await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
         except Exception as e:
-            logger.error(f"Error updating player status for non-spectator: {e}", exc_info=True)
+            logger.error(f"Error updating player status for non-spectator: {e}",
+                         exc_info=True)
 
     stmt = (select(models.Room).where(models.Room.id == room_id).options(
         selectinload(models.Room.users),
@@ -108,7 +109,7 @@ async def on_connect(
     message.answer_queue = queue
 
     room_state_message = RoomSchema.RoomStateMessage(data=message)
-    
+
     # 只有非观战者用户才广播加入消息
     if not is_spectator:
         try:
@@ -118,13 +119,15 @@ async def on_connect(
             res = await asyncio.gather(
                 *[
                     cl.ws.send_json(room_state_message.model_dump()),
-                    clients.broadcast(room_id, join_message.model_dump(),
+                    clients.broadcast(room_id,
+                                      join_message.model_dump(),
                                       excluded_clients={cl}),
                 ],
                 return_exceptions=True,
             )
         except Exception as e:
-            logger.error(f"Error sending messages for non-spectator: {e}", exc_info=True)
+            logger.error(f"Error sending messages for non-spectator: {e}",
+                         exc_info=True)
             # 即使出错也要发送房间状态给客户端
             res = await asyncio.gather(
                 cl.ws.send_json(room_state_message.model_dump()),
@@ -178,7 +181,7 @@ async def on_disconnect(
 
     # 检查是否是观战者用户（id为0）
     is_spectator = cl.user.id == 0
-    
+
     # 只有非观战者用户才更新状态和广播离开消息
     if not is_spectator:
         try:
@@ -187,7 +190,9 @@ async def on_disconnect(
 
             leave_message = RoomSchema.PlayerLeaveMessage(
                 data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-            await clients.broadcast(room_id, leave_message.model_dump(), excluded_clients={cl})
+            await clients.broadcast(room_id,
+                                    leave_message.model_dump(),
+                                    excluded_clients={cl})
 
             user = select(models.User).where(models.User.id == cl.user.id)
             result = await session.execute(user)
@@ -196,20 +201,16 @@ async def on_disconnect(
                 user_obj.online = False
             await room_cache.set_room_player(room_id, player_item)
         except Exception as e:
-            logger.error(f"Error updating player status on disconnect: {e}", exc_info=True)
+            logger.error(f"Error updating player status on disconnect: {e}",
+                         exc_info=True)
 
     # 无论是否是观战者，都从客户端管理器中移除
     clients.pop(room_id, cl)
 
 
 @regist(GameEventType.START_POS_UPDATE, data_validator=StartPosUpdateData)
-async def handle_start_pos_update(
-    data: StartPosUpdateData,
-    clients: ClientManager,
-    client: Client,
-    room_id: str,
-    **kwargs
-) -> None:
+async def handle_start_pos_update(data: StartPosUpdateData, clients: ClientManager,
+                                  client: Client, room_id: str, **kwargs) -> None:
     """处理起始位置更新事件
 
     Args:
@@ -225,12 +226,15 @@ async def handle_start_pos_update(
 
     try:
         # 设置起始位置
-        success = await RoomStateManager.set_start_position(room_id, data.start_position_percent)
+        success = await RoomStateManager.set_start_position(room_id,
+                                                            data.start_position_percent)
         if success:
             # 广播更新消息给所有客户端
             message = RoomSchema.StartPosUpdateMessage(data=data)
             await clients.broadcast(room_id, message.model_dump())
-            logger.debug(f"Start position updated to {data.start_position_percent}% for room {room_id}")
+            logger.debug(
+                f"Start position updated to {data.start_position_percent}% for room {room_id}"
+            )
         else:
             logger.error(f"Failed to update start position for room {room_id}")
     except Exception as e:
@@ -238,14 +242,9 @@ async def handle_start_pos_update(
 
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
-async def handle_game_over_manual(
-    data: GameOverData,
-    clients: ClientManager,
-    client: Client,
-    room_id: str,
-    session: AsyncSession,
-    **kwargs
-) -> None:
+async def handle_game_over_manual(data: GameOverData, clients: ClientManager,
+                                  client: Client, room_id: str, session: AsyncSession,
+                                  **kwargs) -> None:
     """处理游戏结束事件（手动触发）
 
     Args:
@@ -266,26 +265,20 @@ async def handle_game_over_manual(
         if result["success"]:
             # 广播游戏结束消息给所有客户端
             game_over_data = RoomSchema.GameOverData(
-                manual=data.manual,
-                final_scores=result["final_scores"]
-            )
+                manual=data.manual, final_scores=result["final_scores"])
             message = RoomSchema.GameOverMessage(data=game_over_data)
             await clients.broadcast(room_id, message.model_dump())
             logger.info(f"Game ended manually for room {room_id}")
         else:
-            logger.error(f"Failed to end game for room {room_id}: {result.get('error')}")
+            logger.error(
+                f"Failed to end game for room {room_id}: {result.get('error')}")
     except Exception as e:
         logger.error(f"Error handling game over: {e}")
 
 
 @regist(GameEventType.CLEAR_ANSWER_QUEUE, data_validator=ClearAnswerQueueData)
-async def handle_clear_answer_queue(
-    data: ClearAnswerQueueData,
-    clients: ClientManager,
-    client: Client,
-    room_id: str,
-    **kwargs
-) -> None:
+async def handle_clear_answer_queue(data: ClearAnswerQueueData, clients: ClientManager,
+                                    client: Client, room_id: str, **kwargs) -> None:
     """处理清空抢答队列事件
 
     Args:

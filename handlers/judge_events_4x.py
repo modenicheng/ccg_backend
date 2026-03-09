@@ -1,4 +1,5 @@
 """WebSocket judge event handlers."""
+
 from __future__ import annotations
 
 # Standard library imports
@@ -33,8 +34,17 @@ from schemas.ws_messages.judge_schemas import (
     ScoreUpdateMessage,
     SongInfo,
 )
-from schemas.ws_messages.round_event_schemas import RoundEndMessage
-from schemas.ws_messages.round_state_schemas import RoundStateUpdateMessage, RoundStateUpdateData
+from schemas.ws_messages.round_event_schemas import (
+    RoundEndMessage,
+    RoundStartMessage,
+    RoundStartData,
+)
+from schemas.ws_messages.round_state_schemas import (
+    RoundStateUpdateMessage,
+    RoundStateUpdateData,
+)
+from utils.audio_token import generate_audio_token, get_audio_stream_url
+import mq.tasks
 from .registe_manager import regist
 
 logger = get_logger(__name__)
@@ -163,19 +173,16 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
                 # 广播状态更新消息
                 round_state_update_data = RoundStateUpdateData(
                     round_state=RoundState.JUDGING.value,
-                    round_state_name=RoundState.JUDGING.name
+                    round_state_name=RoundState.JUDGING.name,
                 )
                 round_state_update_message = RoundStateUpdateMessage(
-                    data=round_state_update_data
-                )
-                await clients.broadcast(
-                    room_id,
-                    round_state_update_message.model_dump()
-                )
+                    data=round_state_update_data)
+                await clients.broadcast(room_id,
+                                        round_state_update_message.model_dump())
                 logger.info(f"Room {room_id} round state transitioned to JUDGING")
             except Exception as e:
                 logger.error(f"Failed to transition to JUDGING: {e}")
-            
+
             # 广播JUDGING事件给所有客户端
             judging_message = JudgingMessage(data=judging_data)
             await clients.broadcast(room_id, judging_message.model_dump())
@@ -388,21 +395,103 @@ async def handle_judge_submit(
             # 广播状态更新消息
             round_state_update_data = RoundStateUpdateData(
                 round_state=RoundState.COMPLETED.value,
-                round_state_name=RoundState.COMPLETED.name
+                round_state_name=RoundState.COMPLETED.name,
             )
             round_state_update_message = RoundStateUpdateMessage(
-                data=round_state_update_data
-            )
-            await clients.broadcast(
-                room_id,
-                round_state_update_message.model_dump()
-            )
+                data=round_state_update_data)
+            await clients.broadcast(room_id, round_state_update_message.model_dump())
             logger.info(f"Room {room_id} round state transitioned to COMPLETED")
     except Exception as e:
         logger.error(f"Failed to transition to COMPLETED: {e}")
-    
+
     # 广播回合结束事件
     round_end_message = RoundEndMessage()
     await clients.broadcast(room_id, round_end_message.model_dump())
+
+    # 检查并开始下一轮
+    try:
+        async with session_scope() as session:
+            # 获取房间和歌曲队列
+            room_stmt = select(models.Room).where(models.Room.id == room_id)
+            room_result = await session.execute(room_stmt)
+            room = room_result.scalar_one_or_none()
+
+            if not room:
+                logger.warning(f"Cannot start next round: room {room_id} not found")
+                return
+
+            # 获取歌曲队列
+            from db.crud import get_room_song_queue
+
+            song_queue = await get_room_song_queue(session, room_id)
+            if not song_queue:
+                logger.info(f"No songs in room {room_id}, game ended")
+                return
+
+            current_index = room.current_song_index or 0
+            next_index = current_index + 1
+
+            # 检查是否还有更多歌曲
+            if next_index >= len(song_queue):
+                logger.info(f"No more songs in room {room_id}, game completed")
+                return
+
+            # 更新当前歌曲索引
+            from db.crud import update_room_current_song_index
+
+            await update_room_current_song_index(session, room_id, next_index)
+
+            # 预下载第i+3首歌曲（如果存在）
+            preload_index = next_index + 3
+            if preload_index < len(song_queue):
+                preload_song_id = song_queue[preload_index]
+                # 获取歌曲信息以获取platform_song_id
+                song_stmt = select(models.Song).where(models.Song.id == preload_song_id)
+                song_result = await session.execute(song_stmt)
+                song = song_result.scalar_one_or_none()
+                if song and song.platform == "qq" and song.platform_song_id:
+                    try:
+                        mq.tasks.download_and_cache_song(str(song.platform_song_id))
+                        logger.info(
+                            f"Triggered preload for song {preload_song_id} (index {preload_index}) in room {room_id}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to trigger preload for song {preload_song_id}: {e}"
+                        )
+
+            # 为当前轮次歌曲获取或创建token
+            current_song_id = song_queue[next_index]
+            from db.crud import get_or_create_audio_token
+
+            audio_token = await get_or_create_audio_token(session, room_id,
+                                                          current_song_id)
+            audio_url = get_audio_stream_url(audio_token)
+
+            # 转换状态到 PLAYING_AUDIO
+            await RoundStateMachine.transition(session, room_id,
+                                               RoundState.PLAYING_AUDIO)
+
+            # 广播状态更新
+            round_state_update_data = RoundStateUpdateData(
+                round_state=RoundState.PLAYING_AUDIO.value,
+                round_state_name=RoundState.PLAYING_AUDIO.name,
+            )
+            round_state_update_message = RoundStateUpdateMessage(
+                data=round_state_update_data)
+            await clients.broadcast(room_id, round_state_update_message.model_dump())
+
+            # 广播新一轮开始事件
+            round_start_data = RoundStartData(
+                round_index=next_index,
+                audio_url=audio_url,
+                start_pertent=0.0,
+            )
+            round_start_message = RoundStartMessage(data=round_start_data)
+            await clients.broadcast(room_id, round_start_message.model_dump())
+
+            logger.info(f"Started next round {next_index} in room {room_id}")
+    except Exception as e:
+        logger.error(f"Failed to start next round for room {room_id}: {e}")
 
     logger.info("Scoring completed for room %s", room_id)

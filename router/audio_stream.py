@@ -3,6 +3,7 @@ from __future__ import annotations
 安全音频流端点
 通过临时令牌访问音频，保护音频ID不被直接暴露
 """
+import datetime
 
 import os
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from db.session import get_db
-from db.models import Song
+from db.models import Song, RoomSong
 from cache.file_cache import load_song_asset_with_cache
 from utils.audio_token import get_song_id_from_token, get_audio_stream_url
 from utils import get_logger
@@ -33,11 +34,13 @@ def _build_range_response(content: bytes, media_type: str,
     }
 
     if not range_header:
-        return Response(content=content,
-                        media_type=media_type,
-                        headers={
-                            **common_headers, "Content-Length": str(total)
-                        })
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                **common_headers, "Content-Length": str(total)
+            },
+        )
 
     if not range_header.startswith("bytes="):
         raise HTTPException(status_code=416, detail="Invalid Range header")
@@ -68,11 +71,13 @@ def _build_range_response(content: bytes, media_type: str,
         raise HTTPException(status_code=416, detail="Invalid Range header") from e
 
     if total == 0 or start < 0 or end < start or start >= total:
-        return Response(status_code=416,
-                        headers={
-                            "Content-Range": f"bytes */{total}",
-                            **common_headers
-                        })
+        return Response(
+            status_code=416,
+            headers={
+                "Content-Range": f"bytes */{total}",
+                **common_headers
+            },
+        )
 
     end = min(end, total - 1)
     partial = content[start:end + 1]
@@ -81,9 +86,11 @@ def _build_range_response(content: bytes, media_type: str,
         status_code=206,
         media_type=media_type,
         headers={
-            **common_headers, "Content-Range": f"bytes {start}-{end}/{total}",
-            "Content-Length": str(len(partial))
-        })
+            **common_headers,
+            "Content-Range": f"bytes {start}-{end}/{total}",
+            "Content-Length": str(len(partial)),
+        },
+    )
 
 
 @audio_stream_router.get("/stream/{token}")
@@ -95,12 +102,12 @@ async def stream_audio(
     """
     安全音频流端点
     验证令牌并返回音频文件
-    
+
     Args:
         token: 音频访问令牌
         request: FastAPI请求对象
         session: 数据库会话
-        
+
     Returns:
         Response: 音频文件响应（支持Range请求）
     """
@@ -114,7 +121,29 @@ async def stream_audio(
 
     logger.info(f"Audio token valid, song_id: {song_id}")
 
-    # 2. 获取歌曲文件
+    # 2. 验证token与房间绑定
+    room_song_stmt = select(RoomSong).where(RoomSong.temp_url == token)
+    room_song_result = await session.execute(room_song_stmt)
+    room_song = room_song_result.scalar_one_or_none()
+
+    if not room_song:
+        logger.warning(f"Audio token {token[:8]}... not bound to any room")
+        raise HTTPException(status_code=403,
+                            detail="Audio token not valid for any room")
+
+    if room_song.song_id != song_id:
+        logger.warning(
+            f"Audio token {token[:8]}... song_id mismatch: token={song_id}, room_song={room_song.song_id}"
+        )
+        raise HTTPException(status_code=403, detail="Audio token mismatch")
+
+    # 检查token是否过期
+    if room_song.expire_at and room_song.expire_at < datetime.datetime.now(
+            datetime.timezone.utc):
+        logger.warning(f"Audio token {token[:8]}... expired at {room_song.expire_at}")
+        raise HTTPException(status_code=403, detail="Audio token expired")
+
+    # 3. 获取歌曲文件
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
     song = result.scalar_one_or_none()

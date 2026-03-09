@@ -180,8 +180,10 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
    Use yapf.
 
    ```bash
-   uv run yapf -i -r .
+   uv run yapf -i -r $(git ls-files '*.py')
    ```
+
+   **DO NOT** use `.` for the full format. the venv directory will be included unexceptedly.
 
 2. Linting the code
 

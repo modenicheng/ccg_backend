@@ -113,8 +113,8 @@ def _normalize_database_url(raw_url: str | None) -> str:
     return url
 
 
-def _flatten_yaml_paths(values: dict[str, Any],
-                        parent: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
+def _flatten_yaml_paths(
+    values: dict[str, Any], parent: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
     result: dict[tuple[str, ...], Any] = {}
     for key, value in values.items():
         path_part = str(key).strip().lower()

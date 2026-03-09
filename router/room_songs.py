@@ -36,43 +36,21 @@ async def _require_room_owner(session: AsyncSession, request: Request,
     return user
 
 
-async def _trigger_download_for_first_shuffled_song(session: AsyncSession,
-                                                    roomid: str) -> None:
-    """在 shuffle 后为房间第一首歌触发缓存下载任务（仅支持 QQ 平台）。"""
-    room_songs = await crud.get_room_songs(session,
-                                           roomid,
-                                           offset=0,
-                                           limit=1,
-                                           include_song_details=True,
-                                           order="+song_order")
-    if not room_songs:
-        return
-
-    first_room_song = room_songs[0]
-    song = getattr(first_room_song, "song", None)
-    if not song:
-        return
-
-    if song.platform != "qq" or not song.platform_song_id:
-        logger.info(
-            f"Skip pre-cache for room {roomid}: first song {song.id} is not a QQ song")
-        return
-
+async def _trigger_preload_top_songs(session: AsyncSession, roomid: str) -> None:
+    """在歌曲列表变更后触发前3首歌曲的预下载（仅支持 QQ 平台）。"""
     try:
-        tasks.download_and_cache_song(str(song.platform_song_id))
-        logger.info(
-            f"Triggered pre-cache task for room {roomid}, first song platform_song_id={song.platform_song_id}"
-        )
+        await crud.trigger_preload_songs(session, roomid, start_index=0, count=3)
+        logger.info(f"Triggered preload for top 3 songs in room {roomid}")
     except Exception as e:
-        logger.warning(f"Failed to enqueue pre-cache task for room {roomid}: {e}")
+        logger.warning(f"Failed to trigger preload for room {roomid}: {e}")
 
 
 @room_songs_router.get("/", response_model=RoomSongsListResponse)
 async def get_room_songs_list(
-    roomid: str,
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=1000),
-    session: AsyncSession = Depends(get_db)
+        roomid: str,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=20, ge=1, le=1000),
+        session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Get all songs in a room."""
     # First check if room exists
@@ -95,7 +73,7 @@ async def get_room_songs_list(
     song_responses = []
     for rs in room_songs:
         # Convert SQLAlchemy Song object to dictionary for SongResponse
-        if hasattr(rs, 'song') and rs.song:
+        if hasattr(rs, "song") and rs.song:
             song_dict = {
                 c.name: getattr(rs.song, c.name) for c in rs.song.__table__.columns
             }
@@ -104,10 +82,12 @@ async def get_room_songs_list(
             # If song is not loaded, create a minimal SongResponse
             song_response = SongResponse(id=rs.song_id)
 
-        room_song_response = RoomSongResponse(room_id=rs.room_id,
-                                              song_id=rs.song_id,
-                                              song_order=rs.song_order,
-                                              song=song_response)
+        room_song_response = RoomSongResponse(
+            room_id=rs.room_id,
+            song_id=rs.song_id,
+            song_order=rs.song_order,
+            song=song_response,
+        )
         song_responses.append(room_song_response)
 
     return RoomSongsListResponse(room_id=roomid, list=song_responses, total=total)
@@ -115,10 +95,10 @@ async def get_room_songs_list(
 
 @room_songs_router.post("/", response_model=RoomSongsListResponse)
 async def add_songs_to_room(
-    roomid: str,
-    request: AddRoomSongsRequest,
-    http_request: Request,
-    session: AsyncSession = Depends(get_db)
+        roomid: str,
+        request: AddRoomSongsRequest,
+        http_request: Request,
+        session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Add songs to a room."""
     # Check if room exists
@@ -149,7 +129,7 @@ async def add_songs_to_room(
                                              append_to_end=request.append_to_end)
         await session.commit()
         if added:
-            await _trigger_download_for_first_shuffled_song(session, roomid)
+            await _trigger_preload_top_songs(session, roomid)
         logger.info(f"Added {len(added)} songs to room {roomid}")
     except Exception as e:
         logger.error(f"Failed to add songs to room {roomid}: {e}")
@@ -163,10 +143,10 @@ async def add_songs_to_room(
 
 @room_songs_router.delete("/", response_model=RoomSongsListResponse)
 async def remove_songs_from_room(
-    roomid: str,
-    request: RemoveRoomSongsRequest,
-    http_request: Request,
-    session: AsyncSession = Depends(get_db)
+        roomid: str,
+        request: RemoveRoomSongsRequest,
+        http_request: Request,
+        session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Remove songs from a room."""
     # Check if room exists
@@ -184,7 +164,7 @@ async def remove_songs_from_room(
                                                           request.song_ids)
         await session.commit()
         if removed_count > 0:
-            await _trigger_download_for_first_shuffled_song(session, roomid)
+            await _trigger_preload_top_songs(session, roomid)
         logger.info(f"Removed {removed_count} songs from room {roomid}")
     except Exception as e:
         logger.error(f"Failed to remove songs from room {roomid}: {e}")
@@ -198,10 +178,10 @@ async def remove_songs_from_room(
 
 @room_songs_router.put("/", response_model=RoomSongsListResponse)
 async def batch_update_room_song_order(
-    roomid: str,
-    request: BatchUpdateRoomSongOrderRequest,
-    http_request: Request,
-    session: AsyncSession = Depends(get_db)
+        roomid: str,
+        request: BatchUpdateRoomSongOrderRequest,
+        http_request: Request,
+        session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Batch update song orders in a room."""
     # Check if room exists
@@ -219,7 +199,8 @@ async def batch_update_room_song_order(
         if not room_song:
             raise HTTPException(
                 status_code=404,
-                detail=f"Song with ID {order_update.song_id} not found in room")
+                detail=f"Song with ID {order_update.song_id} not found in room",
+            )
 
     # Apply updates (simple sequential update - for complex reordering,
     # client should send complete new ordering)
@@ -229,7 +210,7 @@ async def batch_update_room_song_order(
                                               order_update.new_order)
         await session.commit()
         if request.orders:
-            await _trigger_download_for_first_shuffled_song(session, roomid)
+            await _trigger_preload_top_songs(session, roomid)
         logger.info(
             f"Updated song orders for {len(request.orders)} songs in room {roomid}")
     except Exception as e:
@@ -287,7 +268,7 @@ async def shuffle_room_songs_list(
     try:
         await crud.shuffle_room_songs(session, roomid)
         await session.commit()
-        await _trigger_download_for_first_shuffled_song(session, roomid)
+        await _trigger_preload_top_songs(session, roomid)
         logger.info(f"Manually shuffled songs in room {roomid}")
     except Exception as e:
         logger.error(f"Failed to shuffle songs in room {roomid}: {e}")
@@ -327,7 +308,9 @@ async def get_room_song_detail(
     # Convert SQLAlchemy Song object to dictionary for SongResponse
     song_response = SongResponse.model_validate(song)
 
-    return RoomSongResponse(room_id=room_song.room_id,
-                            song_id=room_song.song_id,
-                            song_order=room_song.song_order,
-                            song=song_response)
+    return RoomSongResponse(
+        room_id=room_song.room_id,
+        song_id=room_song.song_id,
+        song_order=room_song.song_order,
+        song=song_response,
+    )

@@ -1,4 +1,5 @@
 """WebSocket round event handlers."""
+
 from __future__ import annotations
 
 # Standard library imports
@@ -13,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from client_manager import ClientManager, Client
 from db.session import session_scope
 from db import models
-from db.crud import get_current_song_info
+from db import crud
 from room_state import RoundStateMachine
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
@@ -35,7 +36,10 @@ from schemas.ws_messages.round_event_schemas import (
     YourTurnData,
     YourTurnMessage,
 )
-from schemas.ws_messages.round_state_schemas import RoundStateUpdateMessage, RoundStateUpdateData
+from schemas.ws_messages.round_state_schemas import (
+    RoundStateUpdateMessage,
+    RoundStateUpdateData,
+)
 from .registe_manager import regist
 
 logger = get_logger(__name__)
@@ -84,6 +88,9 @@ async def handle_game_start(
         audio_token = await generate_audio_token(song.id)
         audio_url = get_audio_stream_url(audio_token)
 
+        # 存储token到RoomSong
+        await crud.update_room_song_temp_token(session, room_id, song.id, audio_token)
+
         # 立即发送第一个回合开始事件
         room.current_song_index = 0
         playback_state = cache_schemas.PlaybackState(
@@ -95,19 +102,16 @@ async def handle_game_start(
 
         # 触发状态转换到 PLAYING_AUDIO
         try:
-            await RoundStateMachine.transition(session, room_id, RoundState.PLAYING_AUDIO)
+            await RoundStateMachine.transition(session, room_id,
+                                               RoundState.PLAYING_AUDIO)
             # 广播状态更新消息
             round_state_update_data = RoundStateUpdateData(
                 round_state=RoundState.PLAYING_AUDIO.value,
-                round_state_name=RoundState.PLAYING_AUDIO.name
+                round_state_name=RoundState.PLAYING_AUDIO.name,
             )
             round_state_update_message = RoundStateUpdateMessage(
-                data=round_state_update_data
-            )
-            await clients.broadcast(
-                room_id,
-                round_state_update_message.model_dump()
-            )
+                data=round_state_update_data)
+            await clients.broadcast(room_id, round_state_update_message.model_dump())
             logger.info("Room %s round state transitioned to PLAYING_AUDIO", room_id)
         except Exception as e:
             logger.error("Failed to transition to PLAYING_AUDIO: %s", e)
@@ -115,9 +119,9 @@ async def handle_game_start(
         tasks = [
             clients.broadcast(
                 room_id,
-                RoundStartMessage(data=RoundStartData(
-                    round_index=0, audio_url=audio_url,
-                    start_pertent=0.0)).model_dump(),
+                RoundStartMessage(data=RoundStartData(round_index=0,
+                                                      audio_url=audio_url,
+                                                      start_pertent=0.0)).model_dump(),
             ),
             room_cache.set_room_playback_state(room_id, playback_state),
         ]
@@ -240,19 +244,17 @@ async def handle_attempt_answer(
         # 触发状态转换到 ANSWERING
         try:
             async with session_scope() as session:
-                await RoundStateMachine.transition(session, room_id, RoundState.ANSWERING)
+                await RoundStateMachine.transition(session, room_id,
+                                                   RoundState.ANSWERING)
                 # 广播状态更新消息
                 round_state_update_data = RoundStateUpdateData(
                     round_state=RoundState.ANSWERING.value,
-                    round_state_name=RoundState.ANSWERING.name
+                    round_state_name=RoundState.ANSWERING.name,
                 )
                 round_state_update_message = RoundStateUpdateMessage(
-                    data=round_state_update_data
-                )
-                await clients.broadcast(
-                    room_id,
-                    round_state_update_message.model_dump()
-                )
+                    data=round_state_update_data)
+                await clients.broadcast(room_id,
+                                        round_state_update_message.model_dump())
                 logger.info(f"Room {room_id} round state transitioned to ANSWERING")
         except Exception as e:
             logger.error(f"Failed to transition to ANSWERING: {e}")
@@ -308,7 +310,7 @@ async def handle_submit_answer(
     try:
         async with session_scope() as db:
             # 获取当前歌曲信息
-            song_id, song_index = await get_current_song_info(db, room_id)
+            song_id, song_index = await crud.get_current_song_info(db, room_id)
             if song_id is None or song_index is None:
                 logger.warning(
                     "Cannot determine current song for room %s, skipping answer save",

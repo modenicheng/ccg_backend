@@ -148,7 +148,9 @@ class RoundStateMachine:
     TRANSITION_RULES: dict[RoundState, list[RoundState]] = {
         RoundState.PENDING: [RoundState.PLAYING_AUDIO],
         RoundState.PLAYING_AUDIO: [RoundState.ANSWERING, RoundState.COMPLETED],
-        RoundState.ANSWERING: [RoundState.PLAYING_AUDIO, RoundState.JUDGING, RoundState.COMPLETED],
+        RoundState.ANSWERING: [
+            RoundState.PLAYING_AUDIO, RoundState.JUDGING, RoundState.COMPLETED
+        ],
         RoundState.JUDGING: [RoundState.COMPLETED],
         RoundState.COMPLETED: [RoundState.PENDING],
     }
@@ -195,7 +197,8 @@ class RoundStateMachine:
             logger.error(f"Invalid round state transition for room {room_id}: "
                          f"{current_round_state.name} -> {target.name}")
             raise ValueError(
-                f"Invalid round state transition: {current_round_state.name} -> {target.name}")
+                f"Invalid round state transition: {current_round_state.name} -> {target.name}"
+            )
 
         # 3. 更新数据库状态
         old_round_state = room.round_state
@@ -219,7 +222,8 @@ class RoundStateMachine:
             logger.debug(f"Updated Redis cache for room {room_id} round state")
         except Exception as e:
             # Redis 更新失败不应影响整体状态转移，但需要记录日志
-            logger.error(f"Failed to update Redis cache for room {room_id} round state: {e}")
+            logger.error(
+                f"Failed to update Redis cache for room {room_id} round state: {e}")
             # 继续执行，因为数据库状态已更新
 
         return True
@@ -259,7 +263,8 @@ class RoundStateMachine:
                 event_name="force_round_state_update",
             )
         except Exception as e:
-            logger.error(f"Failed to update Redis cache for room {room_id} round state: {e}")
+            logger.error(
+                f"Failed to update Redis cache for room {room_id} round state: {e}")
 
         return True
 
