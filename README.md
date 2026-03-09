@@ -213,6 +213,7 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 #### 有关 WebSocket 事件处理器（handlers）
 
 基本依据 `DESIGN.md` 里表格和事件id的划分方式分文件，避免单文件过长难以维护。当前实际组织方式：
+
 - **按事件ID范围分文件**：`audio_events_2x.py`（事件20-29）、`round_events_3x.py`（事件30-39）
 - **生命周期管理**：`game_events.py` 包含 `on_connect`、`on_disconnect` 函数
 - **心跳处理**：`heartbeats.py` 处理 `HEARTBEAT` 事件
@@ -258,7 +259,6 @@ CCG Backend 是一个基于 FastAPI 的实时多人游戏后端系统，采用�
 ## qqmusic
 
 `9561851623` 是可用于测试的 QQ 音乐的歌单 ID
-
 
 ## 运行方式
 

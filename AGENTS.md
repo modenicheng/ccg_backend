@@ -190,7 +190,7 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
    Use pylint.
 
    ```bash
-   pylint $(git ls-files '*.py') # All python files
+   uv run pylint $(git ls-files '*.py') # All python files
    ```
 
    May be you can ignore the `tests/` and `alembic` directories.
