@@ -192,6 +192,16 @@ class RoundStateMachine:
         # 获取当前回合状态，默认为 PENDING
         current_round_state = RoundState(room.round_state or 0)
 
+        # 允许幂等转换：目标状态与当前状态一致时直接返回成功
+        # 这里不更新数据库和缓存，避免对播放状态产生不必要副作用
+        if current_round_state == target:
+            logger.info(
+                "Round state transition is idempotent for room %s: remains %s",
+                room_id,
+                target.name,
+            )
+            return True
+
         # 2. 验证转移是否允许
         if not cls.is_transition_allowed(current_round_state, target):
             logger.error(f"Invalid round state transition for room {room_id}: "

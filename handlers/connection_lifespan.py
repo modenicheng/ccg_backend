@@ -4,32 +4,33 @@ from __future__ import annotations
 
 import asyncio
 
+from fastapi import WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.websockets import WebSocketState
 
 import cache
 import cache.schemas
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
 from client_manager import ClientManager, Client
-from db import models
+from db import crud, models
+from handlers.registe_manager import regist
 from schemas.ws_messages import room_schemas as RoomSchema
 from schemas.ws_messages.room_schemas import (
     AnswerQueueItem,
-    StartPosUpdateData,
-    GameOverData,
     ClearAnswerQueueData,
+    GameOverData,
+    StartPosUpdateData,
 )
-from starlette.websockets import WebSocketState
 from utils import get_logger
 from utils.enumerations import GameEventType
-from handlers.registe_manager import regist
 
 logger = get_logger(__name__)
 
 
-async def on_connect(
+async def on_connect(  # pylint: disable=too-many-statements
     session: AsyncSession,
     cl: Client,
     clients: ClientManager,
@@ -72,6 +73,15 @@ async def on_connect(
 
     # 只有非观战者用户才更新缓存和数据库状态
     if not is_spectator:
+        # 这是验证部分
+        try:
+            user_obj = await crud.simple_authentication(session, cl.ws.cookies, room_id)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Authentication failed for client %s: %s",
+                         cl.user.id,
+                         e,
+                         exc_info=True)
+            return
         try:
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             player_item.online = True
@@ -87,8 +97,9 @@ async def on_connect(
                 user_obj.online = True
 
             await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
-        except Exception as e:
-            logger.error(f"Error updating player status for non-spectator: {e}",
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Error updating player status for non-spectator: %s",
+                         e,
                          exc_info=True)
 
     stmt = (select(models.Room).where(models.Room.id == room_id).options(
@@ -131,8 +142,8 @@ async def on_connect(
                 if cl.ws.client_state == WebSocketState.CONNECTED:
                     await cl.ws.send_json(room_state_message.model_dump())
                 else:
-                    logger.warning(
-                        f"Client {cl.user.id} WebSocket not connected, skipping send")
+                    logger.warning("Client %s WebSocket not connected, skipping send",
+                                   cl.user.id)
 
             res = await asyncio.gather(
                 *[
@@ -143,8 +154,9 @@ async def on_connect(
                 ],
                 return_exceptions=True,
             )
-        except Exception as e:
-            logger.error(f"Error sending messages for non-spectator: {e}",
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Error sending messages for non-spectator: %s",
+                         e,
                          exc_info=True)
 
             # 即使出错也要发送房间状态给客户端
@@ -152,8 +164,8 @@ async def on_connect(
                 if cl.ws.client_state == WebSocketState.CONNECTED:
                     await cl.ws.send_json(room_state_message.model_dump())
                 else:
-                    logger.warning(
-                        f"Client {cl.user.id} WebSocket not connected, skipping send")
+                    logger.warning("Client %s WebSocket not connected, skipping send",
+                                   cl.user.id)
 
             res = await asyncio.gather(
                 send_if_connected2(),
@@ -165,8 +177,8 @@ async def on_connect(
             if cl.ws.client_state == WebSocketState.CONNECTED:
                 await cl.ws.send_json(room_state_message.model_dump())
             else:
-                logger.warning(
-                    f"Client {cl.user.id} WebSocket not connected, skipping send")
+                logger.warning("Client %s WebSocket not connected, skipping send",
+                               cl.user.id)
 
         res = await asyncio.gather(
             send_if_connected3(),
@@ -233,8 +245,9 @@ async def on_disconnect(
             if user_obj:
                 user_obj.online = False
             await room_cache.set_room_player(room_id, player_item)
-        except Exception as e:
-            logger.error(f"Error updating player status on disconnect: {e}",
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Error updating player status on disconnect: %s",
+                         e,
                          exc_info=True)
 
     # 无论是否是观战者，都从客户端管理器中移除
@@ -247,7 +260,7 @@ async def handle_start_pos_update(
     clients: ClientManager,
     client: Client,
     room_id: str,
-    **kwargs,
+    **_kwargs,
 ) -> None:
     """处理起始位置更新事件
 
@@ -259,24 +272,24 @@ async def handle_start_pos_update(
     """
     # 检查是否是房主
     if not client.user.is_owner:
-        logger.warning(f"Non-owner {client.user.id} tried to update start position")
+        logger.warning("Non-owner %s tried to update start position", client.user.id)
         return
 
     try:
-        # 设置起始位置
         success = await RoomStateManager.set_start_position(room_id,
                                                             data.start_position_percent)
         if success:
-            # 广播更新消息给所有客户端
             message = RoomSchema.StartPosUpdateMessage(data=data)
             await clients.broadcast(room_id, message.model_dump())
             logger.debug(
-                f"Start position updated to {data.start_position_percent}% for room {room_id}"
+                "Start position updated to %s%% for room %s",
+                data.start_position_percent,
+                room_id,
             )
         else:
-            logger.error(f"Failed to update start position for room {room_id}")
-    except Exception as e:
-        logger.error(f"Error handling start position update: {e}")
+            logger.error("Failed to update start position for room %s", room_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error handling start position update: %s", e)
 
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
@@ -286,7 +299,7 @@ async def handle_game_over_manual(
     client: Client,
     room_id: str,
     session: AsyncSession,
-    **kwargs,
+    **_kwargs,
 ) -> None:
     """处理游戏结束事件（手动触发）
 
@@ -299,24 +312,24 @@ async def handle_game_over_manual(
     """
     # 检查是否是房主
     if not client.user.is_owner:
-        logger.warning(f"Non-owner {client.user.id} tried to end game")
+        logger.warning("Non-owner %s tried to end game", client.user.id)
         return
 
     try:
-        # 结束游戏
         result = await RoomStateManager.end_game(room_id, session)
         if result["success"]:
-            # 广播游戏结束消息给所有客户端
             game_over_data = RoomSchema.GameOverData(
                 manual=data.manual, final_scores=result["final_scores"])
             message = RoomSchema.GameOverMessage(data=game_over_data)
             await clients.broadcast(room_id, message.model_dump())
-            logger.info(f"Game ended manually for room {room_id}")
+            logger.info("Game ended manually for room %s", room_id)
         else:
-            logger.error(
-                f"Failed to end game for room {room_id}: {result.get('error')}")
-    except Exception as e:
-        logger.error(f"Error handling game over: {e}")
+            logger.error("Failed to end game for room %s: %s", room_id,
+                         result.get("error"))
+    except WebSocketDisconnect as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error handling game over: %s", e)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Unexpected error handling game over: %s", e)
 
 
 @regist(GameEventType.CLEAR_ANSWER_QUEUE, data_validator=ClearAnswerQueueData)
@@ -325,7 +338,7 @@ async def handle_clear_answer_queue(
     clients: ClientManager,
     client: Client,
     room_id: str,
-    **kwargs,
+    **_kwargs,
 ) -> None:
     """处理清空抢答队列事件
 
@@ -337,7 +350,7 @@ async def handle_clear_answer_queue(
     """
     # 检查是否是房主
     if not client.user.is_owner:
-        logger.warning(f"Non-owner {client.user.id} tried to clear answer queue")
+        logger.warning("Non-owner %s tried to clear answer queue", client.user.id)
         return
 
     try:
@@ -347,8 +360,8 @@ async def handle_clear_answer_queue(
             # 广播清空队列消息给所有客户端
             message = RoomSchema.ClearAnswerQueueMessage(data=data)
             await clients.broadcast(room_id, message.model_dump())
-            logger.debug(f"Answer queue cleared for room {room_id}")
+            logger.debug("Answer queue cleared for room %s", room_id)
         else:
-            logger.error(f"Failed to clear answer queue for room {room_id}")
-    except Exception as e:
-        logger.error(f"Error handling clear answer queue: {e}")
+            logger.error("Failed to clear answer queue for room %s", room_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error handling clear answer queue: %s", e)
