@@ -27,8 +27,7 @@ uv run alembic downgrade -1
 
 ### Formatting and Linting
 ```bash
-uv run yapf -i -r .               # format all Python files
-uv run yapf -i --recursive .      # alternative
+uv run yapf -i $(git ls-files '*.py')     # format all Python files
 pylint $(git ls-files '*.py')     # lint all tracked Python files (excludes tests, alembic)
 pylint --ignore=tests,alembic .   # alternative
 # CI: GitHub Actions workflow (.github/workflows/pylint.yml) runs pylint on push
@@ -181,7 +180,7 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
    Use yapf.
 
    ```bash
-   uv run yapf -i -r $(git ls-files '*.py')
+   uv run yapf -i $(git ls-files '*.py')
    ```
 
    **DO NOT** use `.` for the full format. the venv directory will be included unexceptedly.

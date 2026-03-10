@@ -14,10 +14,9 @@ from client_manager import ClientManager, Client
 from db import crud
 from db import models
 from db.session import session_scope
-from handlers.audio_common import trigger_and_broadcast_preload_for_index
+from handlers.audio_common import preload_songs_for_round_start
 from handlers.registe_manager import regist
 from handlers.round_state_events import handle_round_state_transition
-from schemas.ws_messages.judge_schemas import SkipRoundMessage
 from schemas.ws_messages.round_event_schemas import (
     AnswerBroadcastData,
     AnswerBroadcastMessage,
@@ -37,13 +36,12 @@ from schemas.ws_messages.playback_schemas import (
     PlayMessage,
 )
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
-from schemas.ws_messages.playback_schemas import PreloadAudioMessage
-import mq.tasks
-from .round_state_events import handle_round_state_transition
-from .registe_manager import regist
+
 from utils import get_audio_stream_url, get_logger
 from utils.enumerations import ErrorEventType, GameEventType, RoundState
 from utils.ts import get_ts_ms
+from .round_state_events import handle_round_state_transition
+from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -92,13 +90,15 @@ async def handle_game_start(
                                                            first_song_id)
         audio_url = get_audio_stream_url(audio_token)
 
-        # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO（i=0）
-        await trigger_and_broadcast_preload_for_index(
+        # 触发预下载和预加载逻辑（i=0）
+        # 预下载：下载 i+3 歌曲
+        # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
+        await preload_songs_for_round_start(
             clients=clients,
             session=session,
             room_id=room_id,
             song_queue=song_queue,
-            preload_index=3,
+            current_index=0,
         )
 
         # 立即发送第一个回合开始事件
@@ -225,13 +225,15 @@ async def handle_skip_round(
                                                            next_song_id)
         audio_url = get_audio_stream_url(audio_token)
 
-        # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO
-        await trigger_and_broadcast_preload_for_index(
+        # 触发预下载和预加载逻辑
+        # 预下载：下载 i+3 歌曲（i = next_index）
+        # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
+        await preload_songs_for_round_start(
             clients=clients,
             session=session,
             room_id=room_id,
             song_queue=song_queue,
-            preload_index=next_index + 3,
+            current_index=next_index,
         )
 
         # 3) 更新播放状态并推进回合状态
@@ -495,7 +497,7 @@ async def handle_submit_answer(
         # 获取当前播放状态
         current_progress = await room_cache.get_room_play_progress(room_id)
         server_ts = get_ts_ms()
-        
+
         # 更新Redis播放状态
         await room_cache.update_room_playback_state(
             room_id=room_id,
@@ -506,20 +508,18 @@ async def handle_submit_answer(
             event_ts=server_ts,
             event_name="PLAY",
         )
-        
+
         # 触发状态转换到 PLAYING_AUDIO（并广播）
         await handle_round_state_transition(clients, client, room_id,
                                             RoundState.PLAYING_AUDIO)
-        
+
         # 广播PLAY事件
-        play_control_data = PlayControlData(
-            progress_ms=current_progress,
-            offset_ts=server_ts,
-            audio_url=None
-        )
+        play_control_data = PlayControlData(progress_ms=current_progress,
+                                            offset_ts=server_ts,
+                                            audio_url=None)
         play_message = PlayMessage(data=play_control_data)
         await clients.broadcast(room_id, play_message.model_dump())
-        
+
         logger.info("Answer queue empty, resumed playback in room %s", room_id)
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）

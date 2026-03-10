@@ -23,7 +23,7 @@ from db.crud import (
     update_room_current_song_index,
 )
 from db.session import session_scope
-from handlers.audio_common import trigger_and_broadcast_preload_for_index
+from handlers.audio_common import preload_songs_for_round_start
 from handlers.registe_manager import regist
 from handlers.round_state_events import build_round_state_update_message
 from schemas.ws_messages.judge_schemas import (
@@ -448,14 +448,15 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
             # 更新当前歌曲索引
             await update_room_current_song_index(session, room_id, next_index)
 
-            # 预下载第i+3首歌曲（如果存在）
-            preload_index = next_index + 3
-            await trigger_and_broadcast_preload_for_index(
+            # 触发预下载和预加载逻辑
+            # 预下载：下载 i+3 歌曲（i = next_index）
+            # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
+            await preload_songs_for_round_start(
                 clients=clients,
                 session=session,
                 room_id=room_id,
                 song_queue=song_queue,
-                preload_index=preload_index,
+                current_index=next_index,
             )
 
             # 为当前轮次歌曲获取或创建token
