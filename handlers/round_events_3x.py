@@ -2,32 +2,28 @@
 
 from __future__ import annotations
 
-# Standard library imports
 import asyncio
 from typing import Any
 
-# Third-party imports
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-# Local imports
-from client_manager import ClientManager, Client
-from db.session import session_scope
-from db import models
-from db import crud
+import cache.schemas as cache_schemas
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
-import cache.schemas as cache_schemas
-from utils import get_logger, get_audio_stream_url
-from handlers.audio_common import preload_and_broadcast_audio
-from utils.enumerations import GameEventType, ErrorEventType, RoundState
-from utils.ts import get_ts_ms
+from client_manager import ClientManager, Client
+from db import crud
+from db import models
+from db.session import session_scope
+from handlers.audio_common import trigger_and_broadcast_preload_for_index
+from handlers.registe_manager import regist
+from handlers.round_state_events import handle_round_state_transition
+from schemas.ws_messages.judge_schemas import SkipRoundMessage
 from schemas.ws_messages.round_event_schemas import (
-    AttemptAnswerMessage,
     AnswerBroadcastData,
     AnswerBroadcastMessage,
     AnswerQueueData,
     AnswerQueueMessage,
+    AttemptAnswerMessage,
     GameStartMessage,
     RoundEndMessage,
     RoundStartData,
@@ -45,61 +41,11 @@ from schemas.ws_messages.playback_schemas import PreloadAudioMessage
 import mq.tasks
 from .round_state_events import handle_round_state_transition
 from .registe_manager import regist
+from utils import get_audio_stream_url, get_logger
+from utils.enumerations import ErrorEventType, GameEventType, RoundState
+from utils.ts import get_ts_ms
 
 logger = get_logger(__name__)
-
-
-async def _trigger_and_broadcast_preload_for_index(
-    clients: ClientManager,
-    session: Any,
-    room_id: str,
-    song_queue: list[int],
-    preload_index: int,
-) -> None:
-    """触发第 i+3 首预下载并广播 PRELOAD_AUDIO 事件。"""
-    if preload_index >= len(song_queue):
-        return
-
-    preload_song_id = song_queue[preload_index]
-    song_stmt = select(models.Song).where(models.Song.id == preload_song_id)
-    song_result = await session.execute(song_stmt)
-    song = song_result.scalar_one_or_none()
-    if not song:
-        logger.warning(
-            "Cannot preload song %s in room %s: song not found",
-            preload_song_id,
-            room_id,
-        )
-        return
-
-    if song.platform == "qq" and song.platform_song_id:
-        try:
-            mq.tasks.download_and_cache_song(str(song.platform_song_id))
-            logger.info(
-                "Triggered preload task for song %s (index %s) in room %s",
-                preload_song_id,
-                preload_index,
-                room_id,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "Failed to trigger preload task for song %s in room %s: %s",
-                preload_song_id,
-                room_id,
-                e,
-            )
-            return
-
-        try:
-            await preload_and_broadcast_audio(session, room_id, preload_song_id,
-                                              clients, preload_index)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "Failed to broadcast PRELOAD_AUDIO for song %s in room %s: %s",
-                preload_song_id,
-                room_id,
-                e,
-            )
 
 
 @regist(GameEventType.GAME_START, data_validator=GameStartMessage)
@@ -147,7 +93,7 @@ async def handle_game_start(
         audio_url = get_audio_stream_url(audio_token)
 
         # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO（i=0）
-        await _trigger_and_broadcast_preload_for_index(
+        await trigger_and_broadcast_preload_for_index(
             clients=clients,
             session=session,
             room_id=room_id,
@@ -280,7 +226,7 @@ async def handle_skip_round(
         audio_url = get_audio_stream_url(audio_token)
 
         # 触发第 i+3 首预加载并广播 PRELOAD_AUDIO
-        await _trigger_and_broadcast_preload_for_index(
+        await trigger_and_broadcast_preload_for_index(
             clients=clients,
             session=session,
             room_id=room_id,

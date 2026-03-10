@@ -51,15 +51,19 @@ async def handle_round_state_transition(
                 await clients.broadcast(room_id,
                                         round_state_update_message.model_dump())
 
-                logger.info("Room %s round state transitioned to %s", room_id,
-                            target_round_state.name)
+                logger.info(
+                    "Room %s round state transitioned to %s",
+                    room_id,
+                    target_round_state.name,
+                )
             else:
                 logger.error("Failed to transition round state for room %s", room_id)
                 # 发送错误消息给客户端
                 await client.send_error(
                     GameEventType.ROUND_STATE_UPDATE,
-                    f"Failed to transition to {target_round_state.name}")
-    except Exception as e:
+                    f"Failed to transition to {target_round_state.name}",
+                )
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling round state transition: %s", e, exc_info=True)
         # 发送错误消息给客户端
         await client.send_error(GameEventType.ROUND_STATE_UPDATE,
@@ -85,8 +89,10 @@ async def handle_round_state_update(
         if not client.user.is_owner:
             logger.warning("Non-owner client %s tried to update round state",
                            client.user.username)
-            await client.send_error(GameEventType.ROUND_STATE_UPDATE,
-                                    "Only room owner can update round state")
+            await client.send_error(
+                GameEventType.ROUND_STATE_UPDATE,
+                "Only room owner can update round state",
+            )
             return
 
         # 解析目标状态
@@ -99,14 +105,18 @@ async def handle_round_state_update(
         try:
             target_round_state = RoundState(target_state_value)
         except ValueError:
-            await client.send_error(GameEventType.ROUND_STATE_UPDATE,
-                                    f"Invalid round state: {target_state_value}")
+            await client.send_error(
+                GameEventType.ROUND_STATE_UPDATE,
+                f"Invalid round state: {target_state_value}",
+            )
             return
 
         # 处理状态转换
         await handle_round_state_transition(clients, client, room_id,
                                             target_round_state)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling round state update: %s", e, exc_info=True)
-        await client.send_error(GameEventType.ROUND_STATE_UPDATE,
-                                f"Error handling round state update: {str(e)}")
+        await client.send_error(
+            GameEventType.ROUND_STATE_UPDATE,
+            f"Error handling round state update: {str(e)}",
+        )

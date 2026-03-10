@@ -2,35 +2,34 @@
 
 from __future__ import annotations
 
-# Standard library imports
 import random
 
-# Third-party imports
 from sqlalchemy import select
 
-# Local imports
+import cache.schemas as cache_schemas
+from cache import room_cache
+from cache.room_state_manager import RoundStateManager
 from client_manager import ClientManager, Client
-from db.session import session_scope
 from db import models
 from db.crud import (
-    get_player_answers_for_judging,
-    get_tag_group_map,
-    update_player_answer_order,
-    save_score_record,
-    get_current_song_info,
     fetch_room_object,
+    get_current_song_info,
+    get_or_create_audio_token,
+    get_player_answers_for_judging,
+    get_room_song_queue,
+    get_tag_group_map,
+    save_score_record,
+    update_player_answer_order,
+    update_room_current_song_index,
 )
-from cache.room_state_manager import RoundStateManager
-from handlers.audio_common import preload_and_broadcast_audio
-from utils import get_logger
-from utils.enumerations import GameEventType, RoundState
-from utils.calculate import calculate_player_scores
-from cache import room_cache
-import cache.schemas as cache_schemas
+from db.session import session_scope
+from handlers.audio_common import trigger_and_broadcast_preload_for_index
+from handlers.registe_manager import regist
+from handlers.round_state_events import build_round_state_update_message
 from schemas.ws_messages.judge_schemas import (
+    JudgeSubmitMessage,
     JudgingData,
     JudgingMessage,
-    JudgeSubmitMessage,
     ScoreEntry,
     ScoreUpdateData,
     ScoreUpdateMessage,
@@ -38,14 +37,13 @@ from schemas.ws_messages.judge_schemas import (
 )
 from schemas.ws_messages.round_event_schemas import (
     RoundEndMessage,
-    RoundStartMessage,
     RoundStartData,
+    RoundStartMessage,
 )
-from schemas.ws_messages.playback_schemas import PreloadAudioMessage, PlayControlData
+from utils import get_logger
 from utils.audio_token import get_audio_stream_url
-import mq.tasks
-from .round_state_events import build_round_state_update_message
-from .registe_manager import regist
+from utils.calculate import calculate_player_scores
+from utils.enumerations import GameEventType, RoundState
 
 logger = get_logger(__name__)
 
@@ -193,7 +191,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
 
 
 @regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessage)
-async def handle_judge_submit(
+async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     data: JudgeSubmitMessage,
     clients: ClientManager,
     client: Client,
@@ -414,8 +412,8 @@ async def handle_judge_submit(
                     build_round_state_update_message(RoundState.COMPLETED).model_dump(),
                 )
                 logger.info("Room %s round state transitioned to COMPLETED", room_id)
-    except Exception as e:
-        logger.error(f"Failed to transition to COMPLETED: {e}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to transition to COMPLETED: %s", e)
 
     # 广播回合结束事件
     round_end_message = RoundEndMessage()
@@ -430,15 +428,13 @@ async def handle_judge_submit(
             room = room_result.scalar_one_or_none()
 
             if not room:
-                logger.warning(f"Cannot start next round: room {room_id} not found")
+                logger.warning("Cannot start next round: room %s not found", room_id)
                 return
 
             # 获取歌曲队列
-            from db.crud import get_room_song_queue
-
             song_queue = await get_room_song_queue(session, room_id)
             if not song_queue:
-                logger.info(f"No songs in room {room_id}, game ended")
+                logger.info("No songs in room %s, game ended", room_id)
                 return
 
             current_index = room.current_song_index or 0
@@ -446,42 +442,24 @@ async def handle_judge_submit(
 
             # 检查是否还有更多歌曲
             if next_index >= len(song_queue):
-                logger.info(f"No more songs in room {room_id}, game completed")
+                logger.info("No more songs in room %s, game completed", room_id)
                 return
 
             # 更新当前歌曲索引
-            from db.crud import update_room_current_song_index
-
             await update_room_current_song_index(session, room_id, next_index)
 
             # 预下载第i+3首歌曲（如果存在）
             preload_index = next_index + 3
-            if preload_index < len(song_queue):
-                preload_song_id = song_queue[preload_index]
-                # 获取歌曲信息以获取platform_song_id
-                song_stmt = select(models.Song).where(models.Song.id == preload_song_id)
-                song_result = await session.execute(song_stmt)
-                song = song_result.scalar_one_or_none()
-                if song and song.platform == "qq" and song.platform_song_id:
-                    try:
-                        mq.tasks.download_and_cache_song(str(song.platform_song_id))
-                        logger.info(
-                            f"Triggered preload for song {preload_song_id} (index {preload_index}) in room {room_id}"
-                        )
-
-                        # 广播 PRELOAD_AUDIO 事件，供前端提前预加载
-                        await preload_and_broadcast_audio(session, room_id,
-                                                          preload_song_id, clients,
-                                                          preload_index)
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to trigger preload for song {preload_song_id}: {e}"
-                        )
+            await trigger_and_broadcast_preload_for_index(
+                clients=clients,
+                session=session,
+                room_id=room_id,
+                song_queue=song_queue,
+                preload_index=preload_index,
+            )
 
             # 为当前轮次歌曲获取或创建token
             current_song_id = song_queue[next_index]
-            from db.crud import get_or_create_audio_token
-
             audio_token = await get_or_create_audio_token(session, room_id,
                                                           current_song_id)
             audio_url = get_audio_stream_url(audio_token)
@@ -528,8 +506,8 @@ async def handle_judge_submit(
             round_start_message = RoundStartMessage(data=round_start_data)
             await clients.broadcast(room_id, round_start_message.model_dump())
 
-            logger.info(f"Started next round {next_index} in room {room_id}")
-    except Exception as e:
-        logger.error(f"Failed to start next round for room {room_id}: {e}")
+            logger.info("Started next round %s in room %s", next_index, room_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to start next round for room %s: %s", room_id, e)
 
     logger.info("Scoring completed for room %s", room_id)
