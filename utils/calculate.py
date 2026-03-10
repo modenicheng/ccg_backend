@@ -32,7 +32,7 @@ def calculate_player_scores(
     # Create a copy of correct_tags to modify as we award points
     remaining_correct_tags = correct_tags.copy()
 
-    # Tag group scoring: for each player in answer order
+    # Tag scoring: for each player in answer order
     for player_id in answer_queue:
         if player_id not in player_answers:
             continue
@@ -40,26 +40,13 @@ def calculate_player_scores(
         player_answer = player_answers[player_id]
         selected_tags = player_answer.get("selected_tag_ids", [])
 
-        # Check each tag group
-        for tag_group_id, group_tags in tag_group_map.items():
-            # Find correct tags in this group
-            group_correct_tags = [
-                tag for tag in remaining_correct_tags if tag in group_tags
-            ]
-            if not group_correct_tags:
-                continue
-
-            # Check if player selected exactly the correct tags for this group
-            player_group_tags = [tag for tag in selected_tags if tag in group_tags]
-            if player_group_tags == group_correct_tags:
-                # Award 1 point
+        # Check each correct tag
+        for tag in list(remaining_correct_tags):
+            if tag in selected_tags:
+                # Award 1 point for each correct tag
                 player_scores[player_id] += 1
-                # Remove these tags from consideration
-                for tag in group_correct_tags:
-                    if tag in remaining_correct_tags:
-                        remaining_correct_tags.remove(tag)
-                # Move to next player (only one point per player from tag groups)
-                break
+                # Remove this tag from consideration
+                remaining_correct_tags.remove(tag)
 
     # Description scoring: for each player in answer order
     if correct_description_ids:

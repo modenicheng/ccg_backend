@@ -36,8 +36,12 @@ from schemas.ws_messages.round_event_schemas import (
     YourTurnData,
     YourTurnMessage,
 )
+from schemas.ws_messages.playback_schemas import (
+    PlayControlData,
+    PlayMessage,
+)
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
-from schemas.ws_messages.playback_schemas import PreloadAudioMessage, PlayControlData
+from schemas.ws_messages.playback_schemas import PreloadAudioMessage
 import mq.tasks
 from .round_state_events import handle_round_state_transition
 from .registe_manager import regist
@@ -541,9 +545,36 @@ async def handle_submit_answer(
                 room_id,
             )
     else:
-        # 队列为空，恢复播放？
-        # 暂时不处理，由房主控制
-        logger.info("Answer queue empty after submission in room %s", room_id)
+        # 队列为空，恢复播放
+        # 获取当前播放状态
+        current_progress = await room_cache.get_room_play_progress(room_id)
+        server_ts = get_ts_ms()
+        
+        # 更新Redis播放状态
+        await room_cache.update_room_playback_state(
+            room_id=room_id,
+            round_state=RoundState.PLAYING_AUDIO.name,
+            progress_ms=current_progress,
+            offset_ts=server_ts,
+            audio_url=None,
+            event_ts=server_ts,
+            event_name="PLAY",
+        )
+        
+        # 触发状态转换到 PLAYING_AUDIO（并广播）
+        await handle_round_state_transition(clients, client, room_id,
+                                            RoundState.PLAYING_AUDIO)
+        
+        # 广播PLAY事件
+        play_control_data = PlayControlData(
+            progress_ms=current_progress,
+            offset_ts=server_ts,
+            audio_url=None
+        )
+        play_message = PlayMessage(data=play_control_data)
+        await clients.broadcast(room_id, play_message.model_dump())
+        
+        logger.info("Answer queue empty, resumed playback in room %s", room_id)
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
     answer_queue_data = AnswerQueueData(queue=current_queue)
