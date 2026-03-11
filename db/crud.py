@@ -1,23 +1,32 @@
+"""
+CRUD (Create, Read, Update, Delete) operations for the CCG backend.
+
+This module contains database operations for managing users, rooms, songs,
+songlists, and game-related data.
+"""
+
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
+
+import datetime
+import random
 from typing import Any, Literal, Optional
 
 from sqlalchemy import and_, select, tuple_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from . import models
-from utils.enumerations import MusicPlatform
-from utils import get_logger
-from utils.audio_token import (
-    generate_audio_token,
-    get_song_id_from_token,
-    get_audio_stream_url,
-)
 from config.settings import app_config
-import datetime
-import asyncio
+from utils import get_logger
+from utils.audio_token import generate_audio_token, get_song_id_from_token
+from utils.enumerations import MusicPlatform
+
+import mq.tasks
+
+from . import models
 
 l = get_logger(__name__)
 
@@ -40,13 +49,12 @@ def _apply_songlist_fields(
     songlist.metadata_json = metadata_json
 
 
-def _apply_song_fields(
+def _apply_song_fields(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     song: models.Song,
     title: Optional[str],
     subtitle: Optional[str],
     artist: Optional[str],
     cover_url: Optional[str],
-    audio_url: Optional[str],
     cached_path: Optional[str],
     album_name: Optional[str],
     metadata_json: Optional[dict[str, Any]],
@@ -120,7 +128,7 @@ def _normalize_song_input(song_data: dict[str, Any]) -> Optional[dict[str, Any]]
     }
 
 
-async def create_or_update_songlist(
+async def create_or_update_songlist(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     session: AsyncSession,
     platform: Optional[Literal["qq", "netease"]],
     platform_songlist_id: Optional[int | str],
@@ -166,7 +174,7 @@ async def create_or_update_songlist(
     return songlist
 
 
-async def create_or_update_song(
+async def create_or_update_song(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     session: AsyncSession,
     songlist_id: Optional[int],
     platform: Optional[Literal["qq", "netease"]],
@@ -175,7 +183,6 @@ async def create_or_update_song(
     subtitle: Optional[str] = None,
     artist: Optional[str] = None,
     cover_url: Optional[str] = None,
-    audio_url: Optional[str] = None,
     cached_path: Optional[str] = None,
     album_name: Optional[str] = None,
     metadata_json: Optional[dict[str, Any]] = None,
@@ -211,7 +218,6 @@ async def create_or_update_song(
             subtitle=subtitle,
             artist=artist,
             cover_url=cover_url,
-            audio_url=audio_url,
             cached_path=cached_path,
             album_name=album_name,
             metadata_json=metadata_json,
@@ -227,7 +233,6 @@ async def create_or_update_song(
         subtitle=subtitle,
         artist=artist,
         cover_url=cover_url,
-        audio_url=audio_url,
         cached_path=cached_path,
         album_name=album_name,
         metadata_json=metadata_json,
@@ -240,8 +245,9 @@ async def create_or_update_song(
     return song
 
 
-async def create_or_update_songs(session: AsyncSession, songlist_id: Optional[int],
-                                 songs: list[dict[str, Any]]) -> list[models.Song]:
+async def create_or_update_songs(  # pylint: disable=too-many-locals
+        session: AsyncSession, songlist_id: Optional[int],
+        songs: list[dict[str, Any]]) -> list[models.Song]:
     """批量创建或更新歌曲记录"""
     if not songs:
         return []
@@ -288,7 +294,6 @@ async def create_or_update_songs(session: AsyncSession, songlist_id: Optional[in
                 subtitle=payload["subtitle"],
                 artist=payload["artist"],
                 cover_url=payload["cover_url"],
-                audio_url=payload["audio_url"],
                 cached_path=payload["cached_path"],
                 album_name=payload["album_name"],
                 metadata_json=payload["metadata_json"],
@@ -304,7 +309,6 @@ async def create_or_update_songs(session: AsyncSession, songlist_id: Optional[in
             subtitle=payload["subtitle"],
             artist=payload["artist"],
             cover_url=payload["cover_url"],
-            audio_url=payload["audio_url"],
             cached_path=payload["cached_path"],
             album_name=payload["album_name"],
             metadata_json=payload["metadata_json"],
@@ -350,7 +354,9 @@ async def update_song_cached_path(
     """仅更新歌曲缓存路径，不覆盖其它业务字段。"""
     if not platform or not platform_song_id:
         l.warning(
-            f"Missing platform or platform_song_id for cache path update: {platform}, {platform_song_id}, skip updating"
+            "Missing platform or platform_song_id for cache path update: %s, %s, skip updating",
+            platform,
+            platform_song_id,
         )
         return None
 
@@ -463,7 +469,7 @@ async def update_task_record(
 # ============================================================================
 
 
-async def get_room_songs(
+async def get_room_songs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     session: AsyncSession,
     room_id: str,
     offset: int = 0,
@@ -494,7 +500,7 @@ async def get_room_songs(
         else:
             stmt = stmt.order_by(models.RoomSong.song_id)
     else:
-        l.warning(f"Invalid order parameter: {order}, defaulting to +song_id")
+        l.warning("Invalid order parameter: %s, defaulting to +song_id", order)
 
     # Apply offset and limit
     stmt = stmt.offset(offset)
@@ -514,8 +520,6 @@ async def shuffle_room_songs(session: AsyncSession, room_id: str) -> None:
     if not room_songs:
         return
 
-    import random
-
     random.shuffle(room_songs)
 
     # Update song_order based on new shuffled order
@@ -525,10 +529,11 @@ async def shuffle_room_songs(session: AsyncSession, room_id: str) -> None:
     await session.flush()
 
 
-async def add_songs_to_room(session: AsyncSession,
-                            room_id: str,
-                            song_ids: list[int],
-                            append_to_end: bool = True) -> list[models.RoomSong]:
+async def add_songs_to_room(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+        session: AsyncSession,
+        room_id: str,
+        song_ids: list[int],
+        append_to_end: bool = True) -> list[models.RoomSong]:
     """Add songs to a room.
 
     Args:
@@ -557,7 +562,7 @@ async def add_songs_to_room(session: AsyncSession,
     # Determine order for new songs
     existing_ordered = [rs for rs in existing_songs if rs.song_order is not None]
     max_order: int = max(
-        [rs.song_order for rs in existing_ordered if rs.song_order is not None],
+        (rs.song_order for rs in existing_ordered if rs.song_order is not None),
         default=0,
     )
 
@@ -623,8 +628,8 @@ async def remove_songs_from_room(session: AsyncSession, room_id: str,
                 removed_ordered.append(room_song)
             await session.delete(room_song)
             removed.append(room_song)
-        except Exception as e:
-            l.warning(f"Failed to remove song {song_id} from room {room_id}: {e}")
+        except (SQLAlchemyError, ValueError) as e:  # pylint: disable=broad-exception-caught
+            l.warning("Failed to remove song %s from room %s: %s", song_id, room_id, e)
             # continue to next song
 
     if not removed:
@@ -715,7 +720,6 @@ async def update_room_song_order(session: AsyncSession, room_id: str, song_id: i
         other_ordered = [rs for rs in all_ordered if rs.song_id != song_id]
 
         # Reorder all songs
-        updated = []
         current_order = 1
 
         for rs in other_ordered:
@@ -774,20 +778,21 @@ async def get_room_song(session: AsyncSession, room_id: str,
 
 async def count_room_songs(session: AsyncSession, room_id: str) -> int | None:
     """Count total number of songs in a room."""
-    stmt = select(func.count()).where(models.RoomSong.room_id == room_id)
+    stmt = select(func.count(1)).where(models.RoomSong.room_id == room_id)  # pylint: disable=not-callable
     result = await session.execute(stmt)
     return result.scalar()
 
 
 async def count_songlist_songs(session: AsyncSession, songlist_id: int) -> int | None:
     """Count total number of songs in a songlist."""
-    stmt = select(func.count()).where(models.SonglistSong.songlist_id == songlist_id)
+    stmt = select(func.count(1)).where(models.SonglistSong.songlist_id == songlist_id)  # pylint: disable=not-callable
     result = await session.execute(stmt)
     return result.scalar()
 
 
 async def simple_authentication(session: AsyncSession, ws_cookie: dict,
                                 roomid: str) -> None | models.User:
+    """简单WebSocket认证，基于cookie中的房间令牌和用户ID。"""
     l.debug(ws_cookie)
 
     user_token = ws_cookie.get(f"ccg-room-token:{roomid}")
@@ -796,7 +801,12 @@ async def simple_authentication(session: AsyncSession, ws_cookie: dict,
 
     if not user_token or not user_id or not username:
         l.warning(
-            f"WebSocket connection missing authentication cookies for room {roomid}. user_token: {user_token}, user_id: {user_id}, username: {username}"
+            "WebSocket connection missing authentication cookies for room %s. "
+            "user_token: %s, user_id: %s, username: %s",
+            roomid,
+            user_token,
+            user_id,
+            username,
         )
         return
 
@@ -805,17 +815,28 @@ async def simple_authentication(session: AsyncSession, ws_cookie: dict,
     user = result.scalar_one_or_none()
     if not user or user.token != user_token or user.room_id != roomid:
         l.warning(
-            f"WebSocket authentication failed for room {roomid}. user_id: {user_id}, token valid: {user.token == user_token if user else 'N/A'}, room_id valid: {user.room_id == roomid if user else 'N/A'}"
+            "WebSocket authentication failed for room %s. user_id: %s, "
+            "token valid: %s, room_id valid: %s",
+            roomid,
+            user_id,
+            user.token == user_token if user else "N/A",
+            user.room_id == roomid if user else "N/A",
         )
         return
 
     l.info(
-        f"WebSocket connection attempt for room {roomid} with token: {user_token}, user_id: {user_id}, username: {username}"
+        "WebSocket connection attempt for room %s with token: %s, "
+        "user_id: %s, username: %s",
+        roomid,
+        user_token,
+        user_id,
+        username,
     )
     return user
 
 
 async def fetch_room_object(session: AsyncSession, room_id: str) -> models.Room | None:
+    """获取房间对象，包含用户和标签组信息。"""
     stmt = (select(models.Room).where(models.Room.id == room_id).options(
         selectinload(models.Room.users),
         selectinload(models.Room.tag_groups).selectinload(models.TagGroup.tags),
@@ -972,7 +993,7 @@ async def update_player_answer_order(
     return updated_count
 
 
-async def save_score_record(
+async def save_score_record(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     session: AsyncSession,
     room_id: str,
     user_id: int,
@@ -1014,88 +1035,6 @@ async def save_score_record(
     return score
 
 
-# # 辅助函数：获取玩家答案
-# async def get_player_answers_for_judging(db: AsyncSession, room_id: str,
-#                                          song_id: int, round_index: int):
-#     stmt = select(models.PlayerAnswer).where(
-#         models.PlayerAnswer.room_id == room_id,
-#         models.PlayerAnswer.song_id == song_id,
-#         models.PlayerAnswer.round_index == round_index).options(
-#             selectinload(models.PlayerAnswer.user))
-#     result = await db.execute(stmt)
-#     player_answers = result.scalars().all()
-
-#     # 构建答案映射
-#     answer_map = {}
-#     for answer in player_answers:
-#         answer_map[answer.user_id] = {
-#             'selected_tag_ids': answer.selected_tag_ids or [],
-#             'description_text': answer.description_text,
-#             'answer_order': answer.answer_order
-#         }
-
-#     return answer_map
-
-# # 辅助函数：获取标签组映射
-# async def get_tag_group_map(db: AsyncSession, room_id: str):
-#     room = await fetch_room_object(db, room_id)
-#     if not room:
-#         return {}
-
-#     # 构建标签组到标签的映射
-#     tag_group_map = {}
-#     for tag_group in room.tag_groups:
-#         tag_ids = [tag.id for tag in tag_group.tags]
-#         tag_group_map[tag_group.id] = tag_ids
-
-#     return tag_group_map
-
-# # 辅助函数：更新玩家答案顺序
-# async def update_player_answer_order(db: AsyncSession, room_id: str,
-#                                      song_id: int, round_index: int,
-#                                      answer_queue: list[str]):
-#     updated_count = 0
-#     for order, player_id_str in enumerate(answer_queue, 1):
-#         try:
-#             player_id = int(player_id_str)
-#             stmt = select(models.PlayerAnswer).where(
-#                 models.PlayerAnswer.room_id == room_id,
-#                 models.PlayerAnswer.song_id == song_id,
-#                 models.PlayerAnswer.round_index == round_index,
-#                 models.PlayerAnswer.user_id == player_id)
-#             result = await db.execute(stmt)
-#             answer = result.scalar_one_or_none()
-#             if answer:
-#                 answer.answer_order = order
-#                 updated_count += 1
-#         except ValueError:
-#             continue
-#     return updated_count
-
-# # 辅助函数：保存得分记录
-# async def save_score_record(db: AsyncSession, room_id: str, user_id: int,
-#                             round_index: int, score_delta: int):
-#     # 获取用户当前总分
-#     stmt = select(
-#         models.Score).where(models.Score.room_id == room_id,
-#                             models.Score.user_id == user_id).order_by(
-#                                 models.Score.created_at.desc())
-#     result = await db.execute(stmt)
-#     last_score = result.scalar_one_or_none()
-
-#     if last_score is None or last_score.total_score is None:
-#         total_score = score_delta
-#     else:
-#         total_score = last_score.total_score + score_delta
-
-#     # 创建新的得分记录
-#     score = models.Score(room_id=room_id,
-#                          user_id=user_id,
-#                          round_index=round_index,
-#                          score_delta=score_delta,
-#                          total_score=total_score)
-#     db.add(score)
-
 # ============================================================================
 # 音频token管理和预下载功能
 # ============================================================================
@@ -1118,7 +1057,6 @@ async def get_or_create_audio_token(
         str: 音频访问token
     """
     # 查询RoomSong记录
-    from sqlalchemy import select
 
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
                                          models.RoomSong.song_id == song_id)
@@ -1126,7 +1064,7 @@ async def get_or_create_audio_token(
     room_song = result.scalar_one_or_none()
 
     if not room_song:
-        l.warning(f"RoomSong not found for room {room_id}, song {song_id}")
+        l.warning("RoomSong not found for room %s, song %s", room_id, song_id)
         # 如果RoomSong不存在，创建新的token但不存储（理论上不应该发生）
         token = await generate_audio_token(song_id)
         return token
@@ -1138,15 +1076,16 @@ async def get_or_create_audio_token(
         if room_song.expire_at > current_time:
             existing_song_id = await get_song_id_from_token(room_song.temp_url)
             if existing_song_id == song_id:
-                l.debug(f"Using existing token for room {room_id}, song {song_id}")
+                l.debug("Using existing token for room %s, song %s", room_id, song_id)
                 return room_song.temp_url
             l.info(
-                "Existing token in DB is not resolvable in Redis or song_id mismatch for room %s, song %s; regenerating",
+                "Existing token in DB is not resolvable in Redis or song_id mismatch "
+                "for room %s, song %s; regenerating",
                 room_id,
                 song_id,
             )
         else:
-            l.debug(f"Token expired for room {room_id}, song {song_id}")
+            l.debug("Token expired for room %s, song %s", room_id, song_id)
 
     # 生成新token
     token = await generate_audio_token(song_id)
@@ -1157,7 +1096,10 @@ async def get_or_create_audio_token(
     room_song.expire_at = expire_at
 
     l.info(
-        f"Created new audio token for room {room_id}, song {song_id}, expires at {expire_at}"
+        "Created new audio token for room %s, song %s, expires at %s",
+        room_id,
+        song_id,
+        expire_at,
     )
     return token
 
@@ -1181,11 +1123,10 @@ async def validate_audio_token(
     # 从token获取song_id
     song_id = await get_song_id_from_token(token)
     if not song_id:
-        l.debug(f"Invalid token or token expired: {token[:8]}...")
+        l.debug("Invalid token or token expired: %s...", token[:8])
         return False
 
     # 查询RoomSong记录
-    from sqlalchemy import select
 
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
                                          models.RoomSong.song_id == song_id)
@@ -1193,21 +1134,21 @@ async def validate_audio_token(
     room_song = result.scalar_one_or_none()
 
     if not room_song:
-        l.debug(f"RoomSong not found for room {room_id}, song {song_id}")
+        l.debug("RoomSong not found for room %s, song %s", room_id, song_id)
         return False
 
     current_time = _utc_now_naive()
 
     # 验证token和过期时间
     if room_song.temp_url != token:
-        l.debug(f"Token mismatch for room {room_id}, song {song_id}")
+        l.debug("Token mismatch for room %s, song %s", room_id, song_id)
         return False
 
     if not room_song.expire_at or room_song.expire_at <= current_time:
-        l.debug(f"Token expired for room {room_id}, song {song_id}")
+        l.debug("Token expired for room %s, song %s", room_id, song_id)
         return False
 
-    l.debug(f"Token valid for room {room_id}, song {song_id}")
+    l.debug("Token valid for room %s, song %s", room_id, song_id)
     return True
 
 
@@ -1226,7 +1167,6 @@ async def update_room_song_temp_token(
         song_id: 歌曲ID
         token: 音频访问token
     """
-    from sqlalchemy import select
 
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
                                          models.RoomSong.song_id == song_id)
@@ -1235,7 +1175,9 @@ async def update_room_song_temp_token(
 
     if not room_song:
         l.warning(
-            f"Cannot update token: RoomSong not found for room {room_id}, song {song_id}"
+            "Cannot update token: RoomSong not found for room %s, song %s",
+            room_id,
+            song_id,
         )
         return
 
@@ -1245,7 +1187,8 @@ async def update_room_song_temp_token(
     room_song.temp_url = token
     room_song.expire_at = expire_at
 
-    l.debug(f"Updated token for room {room_id}, song {song_id}, expires at {expire_at}")
+    l.debug("Updated token for room %s, song %s, expires at %s", room_id, song_id,
+            expire_at)
 
 
 async def trigger_preload_songs(
@@ -1266,18 +1209,20 @@ async def trigger_preload_songs(
     # 获取歌曲队列
     song_queue = await get_room_song_queue(session, room_id)
     if not song_queue:
-        l.debug(f"No songs in room {room_id} to preload")
+        l.debug("No songs in room %s to preload", room_id)
         return
 
     # 计算要下载的歌曲索引范围
     end_index = min(start_index + count, len(song_queue))
     if start_index >= end_index:
         l.debug(
-            f"Invalid preload range: start_index={start_index}, end_index={end_index}")
+            "Invalid preload range: start_index=%s, end_index=%s",
+            start_index,
+            end_index,
+        )
         return
 
     # 获取歌曲详细信息
-    from sqlalchemy import select
 
     stmt = select(models.Song).where(
         models.Song.id.in_(song_queue[start_index:end_index]))
@@ -1285,8 +1230,6 @@ async def trigger_preload_songs(
     songs = result.scalars().all()
 
     # 筛选QQ平台歌曲并触发下载
-    import mq.tasks
-
     preload_count = 0
     token_updated_count = 0
 
@@ -1296,20 +1239,29 @@ async def trigger_preload_songs(
                 mq.tasks.download_and_cache_song(str(song.platform_song_id))
                 preload_count += 1
                 l.info(
-                    f"Triggered preload for room {room_id}, song {song.id} (platform_song_id={song.platform_song_id})"
+                    "Triggered preload for room %s, song %s (platform_song_id=%s)",
+                    room_id,
+                    song.id,
+                    song.platform_song_id,
                 )
 
                 # 预下载时提前生成/刷新临时token，确保RoomSong.temp_url可用
                 await get_or_create_audio_token(session, room_id, song.id)
                 token_updated_count += 1
-            except Exception as e:
-                l.warning(f"Failed to trigger preload for song {song.id}: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                l.warning("Failed to trigger preload for song %s: %s", song.id, e)
 
     # 显式flush，确保temp_url/expire_at更新进入当前事务
     await session.flush()
 
     l.info(
-        f"Triggered preload for {preload_count} songs and updated tokens for {token_updated_count} songs in room {room_id} (range {start_index}-{end_index - 1})"
+        "Triggered preload for %s songs and updated tokens for %s songs "
+        "in room %s (range %s-%s)",
+        preload_count,
+        token_updated_count,
+        room_id,
+        start_index,
+        end_index - 1,
     )
 
 
@@ -1329,7 +1281,6 @@ async def get_room_song_by_song_id(
     Returns:
         RoomSong记录或None
     """
-    from sqlalchemy import select
 
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id,
                                          models.RoomSong.song_id == song_id)
@@ -1367,15 +1318,14 @@ async def update_room_current_song_index(
         room_id: 房间ID
         song_index: 新的歌曲索引
     """
-    from sqlalchemy import select
 
     stmt = select(models.Room).where(models.Room.id == room_id)
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
 
     if not room:
-        l.warning(f"Room {room_id} not found")
+        l.warning("Room %s not found", room_id)
         return
 
     room.current_song_index = song_index
-    l.debug(f"Updated room {room_id} current_song_index to {song_index}")
+    l.debug("Updated room %s current_song_index to %s", room_id, song_index)
