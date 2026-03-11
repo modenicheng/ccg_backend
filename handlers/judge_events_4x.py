@@ -47,31 +47,6 @@ from utils.enumerations import GameEventType, RoundState
 
 logger = get_logger(__name__)
 
-# @regist(GameEventType.SKIP_ROUND, SkipRoundMessage)
-# async def handle_skip_round(
-#     data: SkipRoundMessage,
-#     clients: ClientManager,
-#     client: Client,
-#     room_id: str,
-#     **kwargs
-# ):
-#     """处理跳过回合事件，直接结束当前回合"""
-#     logger.info(
-#         "Handling skip round event for room %s", room_id)
-#     if not client.user.is_owner:
-#         logger.warning(
-#             "User %s attempted to skip round in room %s but is not the owner",
-#             client.user.username, room_id
-#         )
-#         await client.send_error(
-#             GameEventType.SKIP_ROUND,
-#             "Only the room owner can skip the round")
-#         return
-
-#     # 广播ROUND_END事件
-#     round_end_message = RoundEndMessage()
-#     await clients.broadcast(room_id, round_end_message.model_dump())
-
 
 @regist(GameEventType.JUDGING, JudgingMessage)
 async def handle_judging(data: JudgingMessage, clients: ClientManager, client: Client,
