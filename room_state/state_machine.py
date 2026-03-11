@@ -2,11 +2,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from cache.room_cache import load_room_state, save_room_state, update_room_playback_state
+from cache.room_cache import load_room_state, save_room_state, update_room_round_state
 from cache.schemas import RoomBaseStateCache
 from db import models
 from utils.enumerations import RoomStatus, RoundState
 from utils import get_logger
+from utils.ts import get_ts_ms
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -220,13 +221,10 @@ class RoundStateMachine:
         # 4. 更新 Redis 缓存
         try:
             # 更新房间播放状态中的回合状态
-            await update_room_playback_state(
+            await update_room_round_state(
                 room_id=room_id,
                 round_state=target.name,
-                progress_ms=0,
-                offset_ts=0,
-                audio_url=None,
-                event_ts=0,
+                event_ts=get_ts_ms(),
                 event_name="round_state_update",
             )
             logger.debug(f"Updated Redis cache for room {room_id} round state")
@@ -263,13 +261,10 @@ class RoundStateMachine:
 
         # 更新 Redis 缓存
         try:
-            await update_room_playback_state(
+            await update_room_round_state(
                 room_id=room_id,
                 round_state=target.name,
-                progress_ms=0,
-                offset_ts=0,
-                audio_url=None,
-                event_ts=0,
+                event_ts=get_ts_ms(),
                 event_name="force_round_state_update",
             )
         except Exception as e:

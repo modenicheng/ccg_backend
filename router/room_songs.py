@@ -12,7 +12,6 @@ from schemas.room_songs import (
     RoomSongResponse,
     AddRoomSongsRequest,
     RemoveRoomSongsRequest,
-    UpdateRoomSongOrderRequest,
     BatchUpdateRoomSongOrderRequest,
 )
 from schemas.song import SongResponse
@@ -59,8 +58,29 @@ async def _require_room_waiting(session: AsyncSession, roomid: str) -> None:
 async def _trigger_preload_top_songs(session: AsyncSession, roomid: str) -> None:
     """在歌曲列表变更后触发前3首歌曲的预下载（仅支持 QQ 平台）。"""
     try:
-        await crud.trigger_preload_songs(session, roomid, start_index=0, count=3)
-        logger.info(f"Triggered preload for top 3 songs in room {roomid}")
+        platform_song_ids = await crud.prepare_preload_songs(
+            session,
+            roomid,
+            start_index=0,
+            count=3,
+        )
+        triggered_count = 0
+        for platform_song_id in platform_song_ids:
+            try:
+                tasks.download_and_cache_song(platform_song_id)
+                triggered_count += 1
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Failed to enqueue preload task for room %s, platform_song_id=%s: %s",
+                    roomid,
+                    platform_song_id,
+                    e,
+                )
+        logger.info(
+            "Triggered preload tasks for %s songs in room %s",
+            triggered_count,
+            roomid,
+        )
     except Exception as e:
         logger.warning(f"Failed to trigger preload for room {roomid}: {e}")
 

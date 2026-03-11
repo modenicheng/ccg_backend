@@ -350,9 +350,10 @@ async def append_attempt_answer_player(room_id: str,
     """
     Asynchronously appends a player's answer attempt to the answer queue for a given room in Redis.
 
-    Each player's attempt is serialized as a JSON string and added to a sorted set, where the score is calculated as
-    `server_ts * 0.001 + offset_ts`. This scoring ensures unique ordering and high time precision, preventing conflicts
-    when multiple players submit answers within the same millisecond.
+    Each player's attempt is serialized as a JSON string and added to a sorted set,
+    where the score is calculated as `server_ts * 0.001 + offset_ts`. This scoring ensures unique
+    ordering and high time precision, preventing conflicts when multiple players submit answers within
+    the same millisecond.
 
     Args:
         room_id (str): The unique identifier of the room.
@@ -593,6 +594,30 @@ async def update_room_playback_state(
         return True
     except Exception as e:
         logger.error(f"Error updating playback state for room {room_id}: {e}")
+        return False
+
+
+async def update_room_round_state(
+    room_id: str,
+    round_state: str,
+    event_ts: int,
+    event_name: str,
+) -> bool:
+    """仅更新回合状态相关字段，不覆盖播放进度。"""
+    redis = await get_redis()
+    try:
+        key = RedisKeys.room(room_id)
+        mapping = {
+            "current_round_state": round_state,
+            "last_control_ts": str(event_ts),
+            "last_control_event": event_name,
+        }
+        await cast(Awaitable, redis.hset(key, mapping=mapping))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        logger.debug(f"Updated round state for room {room_id}: {mapping}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating round state for room {room_id}: {e}")
         return False
 
 

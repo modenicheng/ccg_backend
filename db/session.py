@@ -21,7 +21,7 @@ engine = create_async_engine(
 if DATABASE_URL.startswith("sqlite+"):
 
     @event.listens_for(engine.sync_engine, "connect")
-    def _sqlite_pragma_on_connect(dbapi_connection, connection_record):
+    def _sqlite_pragma_on_connect(dbapi_connection, _connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
         cursor.execute("PRAGMA journal_mode = WAL;")

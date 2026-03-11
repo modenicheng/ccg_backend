@@ -33,6 +33,7 @@ from schemas.ws_messages.round_event_schemas import (
 )
 from schemas.ws_messages.playback_schemas import (
     PlayControlData,
+    PauseMessage,
     PlayMessage,
 )
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
@@ -279,21 +280,19 @@ async def handle_attempt_answer(
     if client is None or room_id is None:
         return
 
-    # 获取玩家ID和offset_ts
-    player_id = str(data.data.user_id)
+    # 获取玩家ID和抢答时的时间/进度信息
+    # 使用当前连接的认证用户ID，避免客户端伪造user_id
+    player_id = client.user.id
     offset_ts = data.data.offset_ts
+    progress_ms = data.data.progress_ms
 
     # 生成服务器时间戳
     server_ts = get_ts_ms()
 
-    # 获取当前队列（检查是否为空）
-    current_queue = await room_cache.get_answer_queue(room_id)
-    was_empty = len(current_queue) == 0
-
     # 添加到抢答队列 - 使用 room_cache.append_attempt_answer_player
     # 创建 AnswerQueueItem 对象
     answer_item = cache_schemas.AnswerQueueItem(
-        player_id=int(player_id),
+        player_id=player_id,
         offset_ts=offset_ts,
         server_ts=server_ts,
         order=None,
@@ -330,54 +329,99 @@ async def handle_attempt_answer(
         server_ts,
     )
 
-    # 如果此前队列为空，暂停播放并设置当前作答玩家
-    if was_empty:
-        # 获取当前播放进度（从Redis房间状态）
-        current_progress = await room_cache.get_room_play_progress(room_id)
-
-        # 更新Redis播放状态
-        await room_cache.update_room_playback_state(
-            room_id=room_id,
-            round_state=RoundState.ANSWERING.name,
-            progress_ms=current_progress,
-            offset_ts=offset_ts,  # 使用抢答时间戳作为offset_ts
-            audio_url=None,
-            event_ts=server_ts,
-            event_name="PAUSE",
+    if playback_state := await room_cache.get_room_playback_state(room_id):
+        logger.debug(
+            "Current playback state for room %s: %s",
+            room_id,
+            playback_state,
+        )
+        if playback_state.play_state == "playing":
+            new_playback_state = playback_state.model_copy(
+                update={"play_state": "paused"})
+            await room_cache.set_room_playback_state(room_id, new_playback_state)
+            await handle_round_state_transition(clients, client, room_id,
+                                                RoundState.ANSWERING)
+            await clients.broadcast(room_id, new_playback_state.model_dump())
+        else:
+            logger.info(
+                "Playback already paused in room %s when player %s attempted to answer",
+                room_id,
+                player_id,
+            )
+        new_queue = await room_cache.get_answer_queue(room_id)
+        await clients.broadcast(
+            room_id,
+            AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
+    else:
+        logger.warning(
+            "No playback state found for room %s when player %s attempted to answer",
+            room_id,
+            player_id,
         )
 
-        # 触发状态转换到 ANSWERING（并广播）
-        await handle_round_state_transition(clients, client, room_id,
-                                            RoundState.ANSWERING)
+    # if was_empty:
+    #     # 使用首抢玩家上报的当前播放进度，避免后端旧缓存导致进度归零
+    #     pause_progress = max(0, progress_ms)
 
-        # 设置当前作答玩家
-        await room_cache.set_room_current_answerer(room_id, player_id)
+    #     # 更新Redis播放状态
+    #     await room_cache.update_room_playback_state(
+    #         room_id=room_id,
+    #         round_state=RoundState.ANSWERING.name,
+    #         progress_ms=pause_progress,
+    #         offset_ts=offset_ts,  # 使用抢答时间戳作为offset_ts
+    #         audio_url=None,
+    #         event_ts=server_ts,
+    #         event_name="PAUSE",
+    #     )
 
-        # 发送YOUR_TURN事件给当前作答玩家
-        your_turn_data = YourTurnData()
-        your_turn_message = YourTurnMessage(data=your_turn_data)
-        await client.send(your_turn_message.model_dump())
-        logger.info("Sent YOUR_TURN to player %s in room %s", player_id, room_id)
+    #     # 触发状态转换到 ANSWERING（并广播）
+    #     await handle_round_state_transition(clients, client, room_id,
+    #                                         RoundState.ANSWERING)
 
-    # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
-    sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
+    #     # 首次抢答时广播PAUSE信令，带当前播放进度以同步所有客户端
+    #     pause_control_data = PlayControlData(
+    #         progress_ms=pause_progress,
+    #         offset_ts=offset_ts,
+    #         audio_url=None,
+    #     )
+    #     pause_message = PauseMessage(data=pause_control_data)
+    #     await clients.broadcast(room_id, pause_message.model_dump())
 
-    # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
-    await clients.broadcast(
-        room_id,
-        data.model_dump(),
-        excluded_clients={client},
-    )
+    #     # 设置当前作答玩家
+    #     await room_cache.set_room_current_answerer(room_id, player_id)
 
-    answer_queue_data = AnswerQueueData(queue=sorted_queue)
-    answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
+    #     # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
+    #     your_turn_data = YourTurnData(user_id=int(player_id))
+    #     your_turn_message = YourTurnMessage(data=your_turn_data)
+    #     await clients.broadcast(room_id, your_turn_message.model_dump())
+    #     logger.info("Broadcast YOUR_TURN for player %s in room %s", player_id,
+    #             room_id)
 
-    await clients.broadcast(
-        room_id,
-        answer_queue_message.model_dump(),
-    )
+    # # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
+    # sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
 
-    logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
+    # # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
+    # normalized_attempt_message = AttemptAnswerMessage(
+    #     data={
+    #         "offset_ts": offset_ts,
+    #         "progress_ms": progress_ms,
+    #         "user_id": int(player_id),
+    #     })
+    # await clients.broadcast(
+    #     room_id,
+    #     normalized_attempt_message.model_dump(),
+    #     excluded_clients={client},
+    # )
+
+    # answer_queue_data = AnswerQueueData(queue=sorted_queue)
+    # answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
+
+    # await clients.broadcast(
+    #     room_id,
+    #     answer_queue_message.model_dump(),
+    # )
+
+    # logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
 
 
 @regist(GameEventType.SUBMIT_ANSWER, SubmitAnswerMessage)
@@ -472,11 +516,14 @@ async def handle_submit_answer(
                     break
 
             if next_client_found:
-                your_turn_data = YourTurnData()
+                your_turn_data = YourTurnData(user_id=int(next_player))
                 your_turn_message = YourTurnMessage(data=your_turn_data)
-                await next_client_found.send(your_turn_message.model_dump())
-                logger.info("Sent YOUR_TURN to next player %s in room %s", next_player,
-                            room_id)
+                await clients.broadcast(room_id, your_turn_message.model_dump())
+                logger.info(
+                    "Broadcast YOUR_TURN to room %s for next player %s",
+                    room_id,
+                    next_player,
+                )
             else:
                 logger.warning(
                     "Could not find WebSocket for next player %s in room %s",

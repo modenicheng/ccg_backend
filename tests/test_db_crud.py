@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db import crud, models
+from db.crud import audio_preload_and_token as audio_preload_token_crud
 from router import room_songs as room_songs_router
 
 
@@ -243,7 +244,7 @@ async def test_update_song_cached_path_only_updates_cache_field(
 
 
 @pytest.mark.asyncio
-async def test_trigger_preload_songs_updates_room_song_temp_url(
+async def test_prepare_preload_songs_updates_room_song_temp_url(
         session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
     room = models.Room(id="ROOM01", title="room")
     song = models.Song(
@@ -262,20 +263,21 @@ async def test_trigger_preload_songs_updates_room_song_temp_url(
     session.add(room_song)
     await session.commit()
 
-    # 避免真正触发下载任务
-    import mq.tasks as mq_tasks
-
-    def _fake_download(_mid: str) -> None:
-        return None
-
     async def _fake_generate_audio_token(song_id: int) -> str:
         return f"token-{song_id}"
 
-    monkeypatch.setattr(mq_tasks, "download_and_cache_song", _fake_download)
-    monkeypatch.setattr(crud, "generate_audio_token", _fake_generate_audio_token)
+    monkeypatch.setattr(audio_preload_token_crud, "generate_audio_token",
+                        _fake_generate_audio_token)
 
-    await crud.trigger_preload_songs(session, room.id, start_index=0, count=3)
+    preload_song_ids = await crud.prepare_preload_songs(
+        session,
+        room.id,
+        start_index=0,
+        count=3,
+    )
     await session.commit()
+
+    assert preload_song_ids == [song.platform_song_id]
 
     refreshed = await crud.get_room_song_by_song_id(session, room.id, song.id)
     assert refreshed is not None

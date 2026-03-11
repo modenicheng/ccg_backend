@@ -19,7 +19,6 @@ from db.crud import (
     create_task_record,
 )
 from db.session import AsyncSessionLocal, engine
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
 from utils import parse_cookie_string
 import asyncio

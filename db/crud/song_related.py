@@ -1,3 +1,5 @@
+"""Song and songlist related CRUD operations."""
+
 from __future__ import annotations
 
 from typing import Any, Literal, Optional

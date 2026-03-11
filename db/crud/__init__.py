@@ -4,7 +4,7 @@ CRUD (Create, Read, Update, Delete) operations for the CCG backend.
 This module contains database operations for managing users, rooms, songs,
 songlists, and game-related data.
 """
-from .audio_preload_and_token import (get_or_create_audio_token, trigger_preload_songs,
+from .audio_preload_and_token import (get_or_create_audio_token, prepare_preload_songs,
                                       validate_audio_token, update_room_song_temp_token,
                                       get_room_song_by_song_id,
                                       get_room_song_and_song_by_temp_token,
@@ -24,7 +24,7 @@ from .song_related import (create_or_update_songlist, create_or_update_song,
 
 __all__ = [
     "get_or_create_audio_token",
-    "trigger_preload_songs",
+    "prepare_preload_songs",
     "validate_audio_token",
     "update_room_song_temp_token",
     "get_room_song_by_song_id",

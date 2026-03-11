@@ -1,3 +1,5 @@
+"""Model definitions for SQLAlchemy ORM."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -23,8 +25,6 @@ from sqlalchemy.types import JSON
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base."""
-
-    pass
 
 
 class RoomStatusORM(IntEnum):

@@ -51,6 +51,7 @@ class RoundEndMessage(MessageBase):
 
 class AttemptAnswerData(BaseModel):
     offset_ts: int = Field(..., ge=0)
+    progress_ms: int = Field(..., ge=0)
     user_id: int = Field(..., ge=0)
 
 
@@ -61,7 +62,7 @@ class AttemptAnswerMessage(MessageBase):
 
 class YourTurnData(BaseModel):
     """你的回合数据"""
-    pass  # 可能不需要额外数据，但保留结构
+    user_id: int = Field(..., ge=0, description="当前轮到作答的玩家ID")
 
 
 class YourTurnMessage(MessageBase):

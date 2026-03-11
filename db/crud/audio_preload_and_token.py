@@ -11,8 +11,6 @@ from config.settings import app_config
 from utils import get_logger
 from utils.audio_token import generate_audio_token, get_song_id_from_token
 
-import mq.tasks
-
 from .. import models
 from .judge_related import get_room_song_queue
 
@@ -175,28 +173,24 @@ async def update_room_song_temp_token(
             expire_at)
 
 
-async def trigger_preload_songs(
+async def prepare_preload_songs(
     session: AsyncSession,
     room_id: str,
     start_index: int = 0,
     count: int = 3,
-) -> None:
-    """
-    触发歌曲预下载
+) -> list[str]:
+    """准备歌曲预下载所需信息并刷新临时 token。
 
-    Args:
-        session: 数据库会话
-        room_id: 房间ID
-        start_index: 起始索引
-        count: 下载数量
+    该函数只负责数据读取与 token 刷新，不触发任何异步任务。
+
+    Returns:
+        list[str]: 需要预下载的 QQ 歌曲 platform_song_id 列表（按队列顺序）
     """
-    # 获取歌曲队列
     song_queue = await get_room_song_queue(session, room_id)
     if not song_queue:
-        l.debug("No songs in room %s to preload", room_id)
-        return
+        l.debug("No songs in room %s to prepare preload", room_id)
+        return []
 
-    # 计算要下载的歌曲索引范围
     end_index = min(start_index + count, len(song_queue))
     if start_index >= end_index:
         l.debug(
@@ -204,49 +198,51 @@ async def trigger_preload_songs(
             start_index,
             end_index,
         )
-        return
+        return []
 
-    # 获取歌曲详细信息
-
-    stmt = select(models.Song).where(
-        models.Song.id.in_(song_queue[start_index:end_index]))
+    target_song_ids = song_queue[start_index:end_index]
+    stmt = select(models.Song).where(models.Song.id.in_(target_song_ids))
     result = await session.execute(stmt)
     songs = result.scalars().all()
+    songs_by_id = {song.id: song for song in songs}
 
-    # 筛选QQ平台歌曲并触发下载
-    preload_count = 0
+    platform_song_ids: list[str] = []
     token_updated_count = 0
 
-    for song in songs:
-        if song.platform == "qq" and song.platform_song_id:
-            try:
-                mq.tasks.download_and_cache_song(str(song.platform_song_id))
-                preload_count += 1
-                l.info(
-                    "Triggered preload for room %s, song %s (platform_song_id=%s)",
-                    room_id,
-                    song.id,
-                    song.platform_song_id,
-                )
+    for song_id in target_song_ids:
+        song = songs_by_id.get(song_id)
+        if not song:
+            l.warning("Song %s not found while preparing preload for room %s", song_id,
+                      room_id)
+            continue
 
-                # 预下载时提前生成/刷新临时token，确保RoomSong.temp_url可用
-                await get_or_create_audio_token(session, room_id, song.id)
-                token_updated_count += 1
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                l.warning("Failed to trigger preload for song %s: %s", song.id, e)
+        if song.platform != "qq" or not song.platform_song_id:
+            continue
 
-    # 显式flush，确保temp_url/expire_at更新进入当前事务
+        try:
+            await get_or_create_audio_token(session, room_id, song.id)
+            token_updated_count += 1
+            platform_song_ids.append(str(song.platform_song_id))
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            l.warning(
+                "Failed to refresh preload token for room %s, song %s: %s",
+                room_id,
+                song.id,
+                e,
+            )
+
     await session.flush()
 
     l.info(
-        "Triggered preload for %s songs and updated tokens for %s songs "
+        "Prepared preload for %s songs and updated tokens for %s songs "
         "in room %s (range %s-%s)",
-        preload_count,
+        len(platform_song_ids),
         token_updated_count,
         room_id,
         start_index,
         end_index - 1,
     )
+    return platform_song_ids
 
 
 async def get_room_song_by_song_id(
