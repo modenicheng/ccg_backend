@@ -5,12 +5,14 @@
 ## Build, Test, and Run Commands
 
 ### Environment Setup
-- Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependencies
-- Copy `.env.template` → `.env` (all env vars prefixed `CCG_`)
+- Python 3.12+, [uv](https://github.com/astral-sh/uv) for dependency management
+- `uv.lock` pins exact versions; run `uv sync` to install dependencies
+- Copy `.env.template` → `.env` (all environment variables prefixed `CCG_`)
 - Optional: copy `config.template.yaml` → `config.yaml`
-- `config.yaml` should use semantic module‑based hierarchy (e.g. `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys
-- Runtime config merge order: `os.environ > .env > config.yaml`
+- `config.yaml` should use semantic module‑based hierarchy (e.g., `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys
+- Runtime config merge order: `os.environ > .env > config.yaml` (env overrides YAML)
 - Optional YAML path override: `CCG_CONFIG_YAML_PATH`
+- Configuration is validated at startup via `config/settings.py`; invalid config blocks startup
 
 ### Running the Application
 ```bash
@@ -32,6 +34,9 @@ pylint $(git ls-files '*.py')     # lint all tracked Python files (excludes test
 pylint --ignore=tests,alembic .   # alternative
 # CI: GitHub Actions workflow (.github/workflows/pylint.yml) runs pylint on push
 ```
+- YAPF configuration in `pyproject.toml`: based on Google style, 4‑space indent, 88‑column limit
+- Linting excludes `tests/` and `alembic/` directories by default
+- Run `uv run yapf -i path/to/file.py` to format a single file
 
 ### Testing
 ```bash
@@ -45,6 +50,12 @@ uv run pytest tests/test_playback_message_ws.py  # WebSocket tests (needs Redis)
 - `tests/ws_conn.py` helper for real WebSocket connections (see `tests/test_playback_message_ws.py`)
 - Use `@pytest.mark.asyncio` for async tests (some with `loop_scope="session"` or `"module"`)
 - Redis required for some tests; ensure `CCG_REDIS_URL` points to a running instance
+- `pytest.ini` configuration in `pyproject.toml` sets `testpaths = ["tests"]` and `pythonpath = ["."]`
+- Database fixtures in `tests/conftest.py` provide `db_session` for SQLite in‑memory testing
+- WebSocket tests require Redis; use `tests/ws_conn.py` factory for real connections
+- Run a single test with `uv run pytest tests/path/to/test.py::test_function -v`
+- Filter tests with `uv run pytest -k "pattern" -v`
+- Debug logs with `uv run pytest -v --log-level=DEBUG`
 
 ### Task Queue (Huey)
 ```bash
@@ -115,6 +126,11 @@ uv run huey_consumer.py mq.tasks.huey
 - `MemoryMonitor` (from `utils.memory_monitor`) reports memory usage changes ≥20 MB
 - Started automatically in FastAPI lifespan; configurable with `interval` and `report_threshold_mb`
 
+### Comments
+- Use docstrings for public modules, classes, and functions (Google style or one‑line)
+- Inline comments should explain “why” rather than “what”
+- Avoid unnecessary comments when code is self‑explanatory
+
 ## Project Structure
 Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `schemas/` Pydantic; `handlers/` WebSocket events; `router/` HTTP endpoints; `utils/` utilities; `mq/` task queue; `client_manager/` WebSocket clients; `tests/` pytest.
 
@@ -141,6 +157,12 @@ Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `s
 5. `uv run alembic upgrade head`
 6. Add CRUD helpers in `db/crud.py` if needed
 
+### Add New Task Queue Task
+1. Define a function in `mq/tasks.py` (or appropriate module)
+2. Decorate with `@huey.task()` (or `@huey.periodic_task()` for scheduled tasks)
+3. Ensure the function handles its own database session via `session_scope` if needed
+4. The consumer picks up tasks automatically when running `uv run huey_consumer.py mq.tasks.huey`
+
 ### Run a Single Test
 ```bash
 uv run pytest tests/path/to/test.py::test_function -v
@@ -157,6 +179,7 @@ uv run pytest -v --log-level=DEBUG
 - **WebSocket event registration**: Import handler modules in `handlers/__init__.py` to trigger decorator registration; otherwise handlers won't be discovered.
 - **MemoryMonitor**: Started automatically in FastAPI lifespan; logs memory usage changes ≥20 MB. Configurable with `interval` and `report_threshold_mb`. May be noisy in logs.
 - **Repeat function bugs**: Watch for repeat function bugs in `connection_lifespan.py` (known issue).
+- **Configuration loading order**: Config values are merged as `os.environ > .env > config.yaml`. Environment variables override YAML. Invalid config blocks startup; validation occurs in `config/settings.py`.
 
 ## Environment Variables (CCG_*)
 Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`, `CCG_QQ_MUSIC_COOKIE`, `CCG_AUDIO_DOWNLOAD_DIR`, `CCG_AUDIO_TOKEN_TTL`, `CCG_LOG_LEVEL`, `CCG_ASSET_CACHE_MAX_ITEMS`, `CCG_CONFIG_YAML_PATH`.
