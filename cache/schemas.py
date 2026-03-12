@@ -1,9 +1,12 @@
+"""Redis 缓存 schema 与序列化工具。"""
+
 from __future__ import annotations
+
+from typing import Any, Optional, Self
+
 import orjson
-from datetime import datetime, timezone
-from typing import Any, Optional, Self, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from time import time
+
 from utils.enumerations import RoomStatus
 from schemas.ws_messages import room_schemas as RoomSchemas
 from db.models import RoomStatusORM
@@ -33,9 +36,10 @@ class RedisModel(BaseModel):
                 result[key] = value
             else:
                 # 复杂类型：列表、字典、嵌套模型等统一转为 JSON 字符串
-                result[key] = orjson.dumps(value,
-                                           option=orjson.OPT_NON_STR_KEYS,
-                                           default=str).decode("utf-8")
+                result[key] = orjson.dumps(
+                    value,  # type: ignore[attr-defined]
+                    option=orjson.OPT_NON_STR_KEYS,  # type: ignore[attr-defined]
+                    default=str).decode("utf-8")
         return result
 
     @classmethod
@@ -106,12 +110,10 @@ class RoomStatePlayerItem(RedisModel):
 # 保持 cache 和 ws_messages 中的模型结构一致，方便数据转换和维护
 class AnswerQueueItem(RedisModel, RoomSchemas.AnswerQueueItem):
     model_config = ConfigDict(from_attributes=True)
-    pass
 
 
 class PlaybackState(RedisModel, RoomSchemas.PlaybackState):
     model_config = ConfigDict(from_attributes=True)
-    pass
 
 
 class RoomBaseStateCache(RedisModel):

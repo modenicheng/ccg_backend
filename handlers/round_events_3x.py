@@ -33,7 +33,6 @@ from schemas.ws_messages.round_event_schemas import (
 )
 from schemas.ws_messages.playback_schemas import (
     PlayControlData,
-    PauseMessage,
     PlayMessage,
 )
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
@@ -120,7 +119,7 @@ async def handle_game_start(
                 room_id,
                 RoundStartMessage(data=RoundStartData(round_index=0,
                                                       audio_url=audio_url,
-                                                      start_pertent=0.0)).model_dump(),
+                                                      start_percent=0.0)).model_dump(),
             ),
             room_cache.set_room_playback_state(room_id, playback_state),
         ]
@@ -252,7 +251,7 @@ async def handle_skip_round(
         round_start_message = RoundStartMessage(data=RoundStartData(
             round_index=next_index,
             audio_url=audio_url,
-            start_pertent=0.0,
+            start_percent=0.0,
         ))
         await clients.broadcast(room_id, round_start_message.model_dump())
 
@@ -284,7 +283,6 @@ async def handle_attempt_answer(
     # 使用当前连接的认证用户ID，避免客户端伪造user_id
     player_id = client.user.id
     offset_ts = data.data.offset_ts
-    progress_ms = data.data.progress_ms
 
     # 生成服务器时间戳
     server_ts = get_ts_ms()

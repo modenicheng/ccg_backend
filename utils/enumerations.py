@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 枚举定义
 定义项目中使用的事件类型、游戏状态等枚举
 """
+from __future__ import annotations
 from enum import Enum
 
 

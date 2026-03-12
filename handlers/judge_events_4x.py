@@ -477,7 +477,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
             round_start_data = RoundStartData(
                 round_index=next_index,
                 audio_url=audio_url,
-                start_pertent=0.0,
+                start_percent=0.0,
             )
             round_start_message = RoundStartMessage(data=round_start_data)
             await clients.broadcast(room_id, round_start_message.model_dump())

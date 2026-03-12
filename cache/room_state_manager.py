@@ -14,8 +14,11 @@ from utils.enumerations import RoomStatus, RoundState
 from utils import get_logger
 from room_state.state_machine import RoomStateMachine, RoundStateMachine
 from db.models import Score, User, Room
-from .room_cache import (load_room_state, save_room_state, clear_answer_queue,
-                         set_room_start_position)
+from .room_cache import (
+    load_room_state,
+    save_room_state,
+    clear_answer_queue,
+)
 from .schemas import RoomBaseStateCache
 
 logger = get_logger(__name__)
@@ -59,15 +62,17 @@ class RoomStateManager:
         """
         try:
             # 使用新添加的函数设置起始位置
-            result = await set_room_start_position(room_id, position)
-            if result:
-                # 同时更新缓存对象
-                state = await load_room_state(room_id)
-                if state:
-                    state.song_start_range_percent = position
-                    await save_room_state(room_id, state)
-            logger.debug("Set start position for room %s to %.2f%%", room_id, position)
-            return result
+            # result = await set_room_start_position(room_id, position)
+            # if result:
+            #     # 同时更新缓存对象
+            #     state = await load_room_state(room_id)
+            #     if state:
+            #         state.song_start_range_percent = position
+            #         await save_room_state(room_id, state)
+            # logger.debug("Set start position for room %s to %.2f%%", room_id, position)
+            # return result
+            pass
+        # 直接入库。我真服了这b AI为什么这么喜欢用redis
         except Exception as e:
             logger.error("Error setting start position for room %s: %s", room_id, e)
             return False

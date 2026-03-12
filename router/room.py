@@ -135,7 +135,9 @@ async def room_setting(
         raise HTTPException(status_code=404, detail="Room not found")
 
     if payload.song_queue is not None:
-        await room_cache.set_room_song_queue(roomid, payload.song_queue)
+        # await room_cache.set_room_song_queue(roomid, payload.song_queue)
+        # 先直接存数据库
+        pass
 
     if payload.title is not None:
         room.title = payload.title

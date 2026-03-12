@@ -21,7 +21,7 @@ class RoundStartData(BaseModel):
     """回合开始数据"""
     round_index: int = Field(..., ge=0)
     audio_url: str | None = None
-    start_pertent: float = Field(default=0.0, ge=0.0, le=1.0)
+    start_percent: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class RoundStartMessage(MessageBase):

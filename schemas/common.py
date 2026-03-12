@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 公共Schema定义
 包含多个模块共享的Pydantic模型
 """
+from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 

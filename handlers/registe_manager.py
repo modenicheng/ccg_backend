@@ -52,8 +52,8 @@ async def handle(
     **kwargs,
 ) -> Any:
     """Dispatch an incoming WebSocket event to the registered handler."""
-    logger.debug("Handling event: %s with data type: %s", event.name,
-                 type(data).__name__)
+    # logger.debug("Handling event: %s with data type: %s", event.name,
+    #              type(data).__name__)
     if event.name not in _handlers:
         logger.error("No handler for event type: %s", event.name)
         raise ValueError(f"No handler for event type: {event.name}")
