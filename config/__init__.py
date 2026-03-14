@@ -1,3 +1,5 @@
+"""Configuration module for CCG backend."""
+
 from __future__ import annotations
 
 from .settings import AppConfig, app_config, load_config

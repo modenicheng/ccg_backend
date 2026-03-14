@@ -1,10 +1,14 @@
+"""File-based caching for song assets."""
+
 from __future__ import annotations
+
 import mimetypes
 import os
 from collections import OrderedDict
 
 from anyio import open_file
 from fastapi import HTTPException
+
 from config import app_config
 
 ASSET_CACHE_MAX_ITEMS = app_config.asset_cache_max_items

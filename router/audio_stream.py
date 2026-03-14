@@ -1,17 +1,17 @@
-from __future__ import annotations
-"""
-安全音频流端点
-通过临时令牌访问音频，保护音频ID不被直接暴露
-"""
-import datetime
+"""Secure audio streaming endpoints with temporary token access."""
 
+from __future__ import annotations
+
+import datetime
 import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from db.session import get_db
-from db import crud
+from db import models
 from cache.file_cache import load_song_asset_with_cache
 from utils.audio_token import get_song_id_from_token
 from utils import get_logger
@@ -23,7 +23,7 @@ audio_stream_router = APIRouter(prefix="/api/songs", tags=["audio"])
 
 
 def _utc_now_naive() -> datetime.datetime:
-    """返回naive UTC时间，匹配数据库DateTime(timezone=False)字段。"""
+    """Return naive UTC time matching database DateTime(timezone=False) field."""
     return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
 
 
@@ -31,91 +31,73 @@ def _utc_now_naive() -> datetime.datetime:
 async def stream_audio(
         token: str,
         request: Request,
-        session: AsyncSession = Depends(get_db),
-) -> Response:
-    """
-    安全音频流端点
-    验证令牌并返回音频文件
+        db: AsyncSession = Depends(get_db),
+):
+    """Stream audio file using temporary token."""
+    logger.debug("Audio stream request for token: %s", token)
 
-    Args:
-        token: 音频访问令牌
-        request: FastAPI请求对象
-        session: 数据库会话
+    song_id = get_song_id_from_token(token)
+    if not song_id:
+        logger.warning("Invalid audio token: %s", token)
+        raise HTTPException(status_code=404, detail="Audio not found")
 
-    Returns:
-        Response: 音频文件响应（支持Range请求）
-    """
-    # 1. 解析 token 中的 song_id（新token可解析，旧token可为空）
-    logger.info(f"Validating audio token: {token[:8]}...")
-    token_song_id = await get_song_id_from_token(token)
+    stmt = select(models.Song).where(models.Song.id == song_id)
+    result = await db.execute(stmt)
+    song = result.scalar_one_or_none()
 
-    if token_song_id:
-        logger.info(f"Audio token parsed, song_id: {token_song_id}")
-    else:
-        logger.info(
-            f"Audio token {token[:8]}... cannot be parsed directly, fallback to temp_url lookup"
-        )
-
-    # 2. 通过已落库 temp_url 反查 RoomSong + Song
-    room_song_with_song = await crud.get_room_song_and_song_by_temp_token(
-        session, token)
-    if not room_song_with_song:
-        logger.warning(f"Audio token {token[:8]}... not bound to any room")
-        # 如果token可解析，尝试通过song_id查找RoomSong作为回退
-        if token_song_id:
-            from sqlalchemy import select
-            from db import models
-
-            stmt = (select(models.RoomSong, models.Song).join(
-                models.Song, models.Song.id == models.RoomSong.song_id).where(
-                    models.RoomSong.song_id == token_song_id))
-            result = await session.execute(stmt)
-            fallback_row = result.first()
-            if fallback_row:
-                room_song, song = fallback_row
-                logger.info(
-                    f"Fallback found RoomSong for song_id {token_song_id}, room_id {room_song.room_id}"
-                )
-                # 检查token是否过期
-                if room_song.expire_at and room_song.expire_at < _utc_now_naive():
-                    logger.warning(
-                        f"Audio token {token[:8]}... expired at {room_song.expire_at}")
-                    raise HTTPException(status_code=403, detail="Audio token expired")
-                room_song_with_song = (room_song, song)
-            else:
-                logger.warning(f"No RoomSong found for song_id {token_song_id}")
-        if not room_song_with_song:
-            raise HTTPException(status_code=403,
-                                detail="Audio token not valid for any room")
-
-    room_song, song = room_song_with_song
-
-    # 3. 若token可解析，则校验解析结果与落库记录一致
-    if token_song_id and room_song.song_id != token_song_id:
-        logger.warning(
-            f"Audio token {token[:8]}... song_id mismatch: token={token_song_id}, room_song={room_song.song_id}"
-        )
-        raise HTTPException(status_code=403, detail="Audio token mismatch")
-
-    # 4. 检查token是否过期
-    if room_song.expire_at and room_song.expire_at < _utc_now_naive():
-        logger.warning(f"Audio token {token[:8]}... expired at {room_song.expire_at}")
-        raise HTTPException(status_code=403, detail="Audio token expired")
+    if not song:
+        logger.warning("Song not found for id: %s", song_id)
+        raise HTTPException(status_code=404, detail="Audio not found")
 
     if not song.cached_path:
-        logger.error(f"Song {room_song.song_id} has no cached path")
-        raise HTTPException(status_code=404, detail="Audio file not cached")
+        logger.warning("Audio not cached for song id: %s", song_id)
+        raise HTTPException(status_code=404, detail="Audio not available")
 
-    # 5. 返回音频文件（支持Range请求）
-    content, media_type = await load_song_asset_with_cache(song.cached_path)
+    try:
+        content, media_type = await load_song_asset_with_cache(song.cached_path)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error loading audio file: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to load audio") from e  # pylint: disable=raise-missing-from
+
+    file_size = len(content)
     range_header = request.headers.get("range")
 
-    response = build_range_response(content, media_type, range_header)
+    if range_header:
+        return await build_range_response(content, media_type, range_header)
 
-    # 添加安全头和缓存头
-    response.headers["Cache-Control"] = "private, max-age=3600"  # 客户端缓存1小时
-    response.headers["Content-Disposition"] = (
-        f'inline; filename="{os.path.basename(song.cached_path)}"')
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+        },
+    )
 
-    logger.info(f"Successfully served audio for song_id: {room_song.song_id}")
-    return response
+
+@audio_stream_router.get("/file/{song_id}")
+async def get_audio_file(
+        song_id: int,
+        db: AsyncSession = Depends(get_db),
+):
+    """Get audio file path for a song (requires ownership check)."""
+    logger.debug("Audio file request for song id: %s", song_id)
+
+    song = await db.get(models.Song, song_id)
+    if not song:
+        logger.warning("Song not found for id: %s", song_id)
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if not song.cached_path:
+        logger.warning("Audio not cached for song id: %s", song_id)
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    if not os.path.exists(song.cached_path):
+        logger.warning("Audio file missing on disk: %s", song.cached_path)
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    return {
+        "song_id": song.id,
+        "file_path": song.cached_path,
+        "file_exists": True,
+    }

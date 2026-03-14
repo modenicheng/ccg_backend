@@ -1,3 +1,5 @@
+"""Application settings and configuration management."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,8 +19,10 @@ _FALSY = {"0", "false", "no", "off"}
 _LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True)  # pylint: disable=too-many-instance-attributes
 class AppConfig:
+    """Application configuration dataclass."""
+
     database_url: str
     database_echo: bool
     redis_url: str
@@ -234,9 +238,11 @@ def _build_from_values(values: dict[str, Any]) -> AppConfig:
             "CCG_SONG_URL_BACKOFF_SECONDS",
             minimum=0.0,
         ),
-        log_level=_to_str(_pick_value(values, "CCG_LOG_LEVEL", "INFO"),
-                          "CCG_LOG_LEVEL",
-                          allow_empty=False).upper(),
+        log_level=_to_str(
+            _pick_value(values, "CCG_LOG_LEVEL", "INFO"),
+            "CCG_LOG_LEVEL",
+            allow_empty=False,
+        ).upper(),
         audio_token_ttl=_to_int(
             _pick_value(values, "CCG_AUDIO_TOKEN_TTL", 21600),
             "CCG_AUDIO_TOKEN_TTL",
@@ -257,6 +263,7 @@ def _build_from_values(values: dict[str, Any]) -> AppConfig:
 
 
 def load_config() -> AppConfig:
+    """Load application configuration from YAML and environment variables."""
     yaml_path_raw = os.getenv("CCG_CONFIG_YAML_PATH", "config.yaml").strip()
     yaml_path = Path(yaml_path_raw)
     if not yaml_path.is_absolute():
@@ -277,13 +284,11 @@ def load_config() -> AppConfig:
         config = _build_from_values(merged)
 
         if yaml_loaded:
-            rprint(
-                f"[bold green]Config loaded[/]: yaml({yaml_path}) + env(.env + process env, 覆盖 yaml)"
-            )
+            rprint("[bold green]Config loaded[/]: "
+                   "yaml({yaml_path}) + env(.env + process env, 覆盖 yaml)")
         else:
-            rprint(
-                "[bold yellow]Config loaded[/]: yaml not found, using env(.env + process env) only"
-            )
+            rprint("[bold yellow]Config loaded[/]: "
+                   "yaml not found, using env(.env + process env) only")
         return config
     except Exception as exc:
         rprint(f"[bold red]配置解析失败，服务启动终止[/]: {exc}")

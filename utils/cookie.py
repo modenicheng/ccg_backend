@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 Cookie解析工具
 提供HTTP Cookie字符串解析功能
 """
+from __future__ import annotations
 
 
 def parse_cookie_string(cookie_str: str) -> dict[str, str]:

@@ -45,6 +45,7 @@ def _to_room_info_response(room: Room) -> RoomInfoResponse:
 
 
 def generate_room_id(length: int = 6) -> str:
+    """Generate a random room ID."""
     chars = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(chars) for _ in range(length))
 
@@ -53,6 +54,7 @@ def generate_room_id(length: int = 6) -> str:
 async def create_room(
     info: CreateRoomRequest,
     session: AsyncSession = Depends(get_db)) -> CreateRoomResponse:
+    """Create a new room."""
     room_id = generate_room_id()
     logger.info("Creating room with ID: %s", room_id)
 
@@ -78,9 +80,10 @@ async def create_room(
 
 
 @room_router.post("/{roomid}", response_model=JoinRoomResponse)
-async def join_room(roomid: str,
-                    data: JoinRoomRequest,
-                    session: AsyncSession = Depends(get_db)):
+async def join_room(
+    roomid: str, data: JoinRoomRequest,
+    session: AsyncSession = Depends(get_db)) -> JoinRoomResponse:
+    """Join an existing room."""
     stmt = select(Room).where(Room.id == roomid)
     result = await session.execute(stmt)
     room = result.scalar_one_or_none()
@@ -111,6 +114,7 @@ async def join_room(roomid: str,
 @room_router.get("/{roomid}", response_model=RoomInfoResponse)
 async def room_info(
     roomid: str, session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
+    """Get room information."""
     stmt = (select(Room).where(Room.id == roomid).options(
         selectinload(Room.users),
         selectinload(Room.tag_groups).selectinload(TagGroup.tags),
@@ -126,6 +130,7 @@ async def room_info(
 async def room_setting(
     roomid: str, payload: PatchRoomRequest,
     session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
+    """Update room settings."""
     stmt = (select(Room).where(Room.id == roomid).options(
         selectinload(Room.users),
         selectinload(Room.tag_groups).selectinload(TagGroup.tags),

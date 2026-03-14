@@ -1,13 +1,15 @@
+"""Redis client connection management module."""
+
 from __future__ import annotations
 
+from typing import Awaitable, cast
 from urllib.parse import urlparse
 
 import redis.asyncio as redis
 from redis.asyncio import Redis
-from typing import Awaitable, cast
 
 from config import app_config
-from utils import get_logger
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 

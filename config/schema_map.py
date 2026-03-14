@@ -1,3 +1,5 @@
+"""Schema mapping from YAML paths to environment variable keys."""
+
 from __future__ import annotations
 
 YAML_PATH_TO_ENV_KEY: dict[tuple[str, ...], str] = {

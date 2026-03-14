@@ -1,6 +1,7 @@
+"""The schemas class of WebSocket messages related to answer queue."""
 from __future__ import annotations
-from ..base_message import MessageBase
 from pydantic import BaseModel, Field
+from ..base_message import MessageBase
 
 
 class SelectionData(BaseModel):
@@ -19,15 +20,18 @@ class AnswerItem(SelectionData, DescriptionData):
 
 
 class AnswerFullMessage(MessageBase):
+    """完整的抢答消息，包含玩家ID、选择和描述数据"""
     event: int = Field(..., description="事件类型")
     data: AnswerItem
 
 
 class SelectionUpdateMessage(MessageBase):
+    """选择数据的更新消息"""
     event: int = Field(..., description="事件类型")
     data: SelectionData
 
 
 class DescriptionUpdateMessage(MessageBase):
+    """描述数据的更新消息"""
     event: int = Field(..., description="事件类型")
     data: DescriptionData

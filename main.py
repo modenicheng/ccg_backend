@@ -189,9 +189,7 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
 
         # 如果没有身份信息，创建一个观战者客户端
         if not user:
-            logger.info(f"WebSocket connection for room {roomid} as spectator")
-            # 创建一个临时的观战者用户对象
-            from db.models import User
+            logger.info("WebSocket connection for room %s as spectator", roomid)
             spectator_user = User(id=0,
                                   username="Spectator",
                                   token="",
@@ -261,16 +259,20 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 continue
 
             try:
-                await handle(event,
-                             parsed_data,
-                             clients=clients_manager,
-                             client=client,
-                             room_id=roomid)
+                await handle(
+                    event,
+                    parsed_data,
+                    clients=clients_manager,
+                    client=client,
+                    room_id=roomid,
+                )
             except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.error("Failed to handle event: %s, error: %s",
-                             event.name,
-                             exc,
-                             exc_info=True)
+                logger.error(
+                    "Failed to handle event: %s, error: %s",
+                    event.name,
+                    exc,
+                    exc_info=True,
+                )
                 await client.ws.send_json(
                     WebSocketErrorEvent(
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
@@ -304,9 +306,9 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
             return
 
         # 直接创建一个观战者客户端
-        logger.info(
-            f"WebSocket connection for room {roomid} as spectator (watch endpoint)")
-        from db.models import User
+        logger.info("WebSocket connection for room %s as spectator (watch endpoint)",
+                    roomid)
+
         spectator_user = User(id=0,
                               username="Spectator",
                               token="",

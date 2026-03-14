@@ -1,3 +1,5 @@
+"""Redis utility functions and key generation."""
+
 from __future__ import annotations
 
 import re
@@ -23,29 +25,34 @@ def _validate_room_id_for_key(room_id: str) -> str:
 
 
 class RedisKeys:
-    """Redis 键名生成类"""
+    """Redis key name generation utility class."""
 
     @staticmethod
     def room_song_queue(room_id: str) -> str:
+        """Generate Redis key for room song queue."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:song_queue"
 
     @staticmethod
     def playback_state(room_id: str) -> str:
+        """Generate Redis key for room playback state."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:playback"
 
     @staticmethod
     def answer_queue(room_id: str) -> str:
+        """Generate Redis key for room answer queue."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:answer_queue"
 
     @staticmethod
     def answer_queue_player_index(room_id: str) -> str:
+        """Generate Redis key for answer queue player index."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:answer_queue:player_index"
 
     @staticmethod
     def answerer(room_id: str) -> str:
+        """Generate Redis key for room answerer."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:answer_queue:answerer"

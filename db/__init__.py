@@ -1,3 +1,5 @@
+"""Database models and session management."""
+
 from __future__ import annotations
 from .models import (
     Base,
@@ -12,7 +14,15 @@ from .models import (
     TagGroup,
     User,
 )
-from .session import DATABASE_URL, drop_db, engine, get_db, init_db, ping_db, session_scope
+from .session import (
+    DATABASE_URL,
+    drop_db,
+    engine,
+    get_db,
+    init_db,
+    ping_db,
+    session_scope,
+)
 
 __all__ = [
     "Base",

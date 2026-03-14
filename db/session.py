@@ -32,7 +32,7 @@ if DATABASE_URL.startswith("sqlite+"):
         cursor.close()
 
 
-_AsyncSessionLocal = async_sessionmaker(
+AsyncSessionLocal = async_sessionmaker(  # pylint: disable=invalid-name
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False,
@@ -58,7 +58,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     - commit on successful request handling
     - rollback on error
     """
-    async with _AsyncSessionLocal() as session:
+    async with AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
@@ -70,7 +70,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Reusable transaction scope for non-FastAPI flows (tasks/scripts/services)."""
-    async with _AsyncSessionLocal() as session:
+    async with AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()

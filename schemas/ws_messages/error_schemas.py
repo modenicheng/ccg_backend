@@ -1,3 +1,9 @@
+"""
+    error_schemas.py
+
+    This module defines schemas for WebSocket error messages used in the application.
+    It provides models for serializing and deserializing error events sent over WebSocket connections.
+"""
 from __future__ import annotations
 from typing import Literal
 
@@ -7,6 +13,19 @@ from utils.enumerations import EventType, GameEventType, ErrorEventType
 
 
 class WebSocketErrorEvent(BaseModel):
+    """
+    Schema for WebSocket error event messages.
+
+    Attributes:
+        event (Literal[255] | EventType): The event type, always set to 255 for error events.
+        error_event (EventType | GameEventType | ErrorEventType): The event or error type that
+            triggered the error.
+        message (str): The error message content.
+
+    Methods:
+        model_dump(*args, **kwargs): Serializes the model to a dictionary, ensuring the 'event'
+            field is always 255 and 'error_event' is serialized to its value if it is an Enum.
+    """
     event: Literal[255] | EventType = Field(default=255, description="事件类型，固定为 255")
     error_event: EventType | GameEventType | ErrorEventType = Field(
         ..., description="引发错误的事件类型或错误类型")
@@ -16,7 +35,9 @@ class WebSocketErrorEvent(BaseModel):
         # 重写 model_dump 方法，确保 event 字段始终输出为整数 255
         data = super().model_dump(*args, **kwargs)
         data["event"] = 255  # 强制设置 event 字段为 255
-        data["error_event"] = self.error_event.value if isinstance(
-            self.error_event,
-            (EventType, GameEventType, ErrorEventType)) else self.error_event
+        error_event = getattr(self, "error_event", None)
+        if isinstance(error_event, (EventType, GameEventType, ErrorEventType)):
+            data["error_event"] = error_event.value
+        else:
+            data["error_event"] = error_event
         return data

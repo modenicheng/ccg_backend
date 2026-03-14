@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 自定义异常类
 定义项目中使用到的自定义异常
 """
+from __future__ import annotations
 
 
 class ParseError(Exception):

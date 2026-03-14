@@ -42,9 +42,10 @@ def handle_redis_operation(
 
     def decorator(
         func: Callable[Concatenate[Redis, P],
-                       Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+                       Awaitable[R]],) -> Callable[P, Awaitable[R]]:
 
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        async def wrapper(  # pylint: disable=too-many-branches
+                *args: P.args, **kwargs: P.kwargs) -> R:
             try:
                 redis = await get_redis()
                 # 注意：原函数现在需要接受redis作为第一个参数
@@ -221,9 +222,11 @@ async def delete_room_playback_state(redis: Redis, room_id: str) -> None:
 
 
 # 以下这三个方法是比较核心的，涉及答题队列的维护（利用 Redis 有序集合的特性）
-@handle_redis_operation(default_return=None,
-                        log_operation="appending player to answer queue",
-                        reraise_exceptions=(ValueError,))
+@handle_redis_operation(
+    default_return=None,
+    log_operation="appending player to answer queue",
+    reraise_exceptions=(ValueError,),
+)
 async def append_attempt_answer_player(redis: Redis, room_id: str,
                                        data: AnswerQueueItem) -> int | None:
     """
@@ -260,7 +263,9 @@ async def append_attempt_answer_player(redis: Redis, room_id: str,
     if reserve_ok == 0:
         logger.warning(
             "Player %s is already in the answer queue for room %s, skipping append",
-            data.player_id, room_id)
+            data.player_id,
+            room_id,
+        )
         raise ValueError(f"Player {data.player_id} is already in the answer queue")
 
     try:

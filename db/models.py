@@ -22,12 +22,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
+# pylint: disable=too-few-public-methods, not-callable
+
 
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base."""
 
 
 class RoomStatusORM(IntEnum):
+    """Enum for room status in the database."""
+
     WAITING = 0
     RUNNING = 1
     ENDED = 2

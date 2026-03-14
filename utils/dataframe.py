@@ -1,8 +1,9 @@
-from __future__ import annotations
 """
 数据帧处理工具
 提供二进制数据帧解析和构建功能
 """
+
+from __future__ import annotations
 from abc import abstractmethod
 import datetime
 import random

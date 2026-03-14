@@ -1,4 +1,5 @@
 """Tasks module for huey background jobs."""
+
 from __future__ import annotations
 
 # Standard library imports
@@ -178,8 +179,14 @@ async def _with_retry(
             if attempt >= max(1, retries):
                 break
             sleep_seconds = max(0.0, backoff_seconds) * (2**(attempt - 1))
-            logger.warning("%s failed on attempt %s/%s, retrying in %.2fs: %s",
-                           operation_name, attempt, max(1, retries), sleep_seconds, err)
+            logger.warning(
+                "%s failed on attempt %s/%s, retrying in %.2fs: %s",
+                operation_name,
+                attempt,
+                max(1, retries),
+                sleep_seconds,
+                err,
+            )
             await asyncio.sleep(sleep_seconds)
 
     assert last_error is not None
@@ -374,9 +381,10 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
             )
             if not song:
                 logger.warning(
-                    "Audio downloaded for %s but song not found in DB, skipped cached_path update: %s",
+                    "Audio downloaded for %s but song not found in DB, "
+                    "skipped cached_path update: %s",
                     mid,
-                    downloaded_path  # pylint: disable=line-too-long
+                    downloaded_path,
                 )
             else:
                 logger.info("Updated cached_path for %s: %s", mid, downloaded_path)
@@ -525,7 +533,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
         qapi.get_session().credential = credential
         logger.info(
             "Using custom credential from provided cookie string for fetching songlist %s",
-            songlist_id  # pylint: disable=line-too-long
+            songlist_id,  # pylint: disable=line-too-long
         )
 
     try:
@@ -556,7 +564,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                                 page,
                                 songlist_id,
                                 attempt,
-                                page_err  # pylint: disable=line-too-long
+                                page_err,  # pylint: disable=line-too-long
                             )
                             raise
                         sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(attempt -
@@ -567,7 +575,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                             attempt,
                             SONGLIST_FETCH_RETRIES,
                             sleep_seconds,
-                            page_err  # pylint: disable=line-too-long
+                            page_err,  # pylint: disable=line-too-long
                         )
                         await asyncio.sleep(sleep_seconds)
 
@@ -604,7 +612,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                         songlist_id,
                         title,
                         total,
-                        len(db_songs)  # pylint: disable=line-too-long
+                        len(db_songs),  # pylint: disable=line-too-long
                     )
                     return {
                         "songlist": songlist,
@@ -619,10 +627,11 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     raise
 
                 logger.warning(
-                    "DB operation hit asyncpg busy-connection error on attempt %s/%s, disposing engine and retrying: %s",
+                    "DB operation hit asyncpg busy-connection error on attempt %s/%s, "
+                    "disposing engine and retrying: %s",
                     attempt,
                     db_retries,
-                    db_err  # pylint: disable=line-too-long
+                    db_err,
                 )
                 await engine.dispose()
                 sleep_seconds = max(0.1, SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))

@@ -1,11 +1,12 @@
+"""Songlist management endpoints."""
+
 from __future__ import annotations
-import asyncio
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import ORJSONResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, load_only
+from sqlalchemy.orm import selectinload
 from db.crud import create_task_record, get_task_record_by_task_id, count_songlist_songs
 from db.models import Songlist, SonglistSong, Tasks, Song
 from db.session import get_db
@@ -48,11 +49,12 @@ async def songlist_list(
         limit: int = Query(default=20, ge=1, le=100),
         kw: str | None = Query(default=None, max_length=100),
         session: AsyncSession = Depends(get_db),
-):
+) -> SonglistListResponse:
+    """Get paginated list of songlists."""
     # 子查询统计每个歌单的歌曲数量
-    song_count_subq = (select(func.count(
-        SonglistSong.song_id).label("song_count")).where(
-            SonglistSong.songlist_id == Songlist.id).scalar_subquery())
+    song_count_subq = (
+        select(func.count(SonglistSong.song_id).label("song_count"))  # pylint: disable=not-callable
+        .where(SonglistSong.songlist_id == Songlist.id).scalar_subquery())
 
     # 主查询，不再加载歌曲关系
     stmt = (select(Songlist,
@@ -62,7 +64,7 @@ async def songlist_list(
         stmt = stmt.where(Songlist.title.ilike(f"%{kw}%"))
 
     # 统计 Songlist 总数
-    count_stmt = select(func.count()).select_from(Songlist)
+    count_stmt = select(func.count()).select_from(Songlist)  # pylint: disable=not-callable
     if kw:
         count_stmt = count_stmt.where(Songlist.title.ilike(f"%{kw}%"))
 
@@ -102,6 +104,7 @@ async def songlist_list(
 @songlist_router.post("/")
 async def create_songlist_from_mid(data: SonglistFromMidRequest,
                                    session: AsyncSession = Depends(get_db)):
+    """Create a songlist from platform mid."""
     if data.platform == MusicPlatform.QQ:
         task_id = str(uuid4())
         task = tasks.fetch_songlist.task_class(
@@ -125,12 +128,12 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
                 },
             )
             await session.commit()
-            logger.info(f"Created task record for songlist fetch: {task_id}")
+            logger.info("Created task record for songlist fetch: %s", task_id)
         except Exception as e:
-            logger.error(f"Failed to create task record: {e}")
+            logger.error("Failed to create task record: %s", e)
             await session.rollback()
             raise HTTPException(status_code=500,
-                                detail=f"Failed to create task record: {str(e)}")
+                                detail=f"Failed to create task record: {str(e)}") from e  # pylint: disable=raise-missing-from
         return TaskResponse(
             task_id=task_id,
             task_name="fetch_songlist",
@@ -140,13 +143,13 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
             created_at=None,
             updated_at=None,
         )
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported platform")
+    raise HTTPException(status_code=400, detail="Unsupported platform")
 
 
 @songlist_router.get("/task/{task_id}")
 async def get_songlist_task_result(task_id: str,
                                    session: AsyncSession = Depends(get_db)):
+    """Get task result for songlist fetch."""
     task_record = await get_task_record_by_task_id(session=session, task_id=task_id)
     if not task_record:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -154,8 +157,9 @@ async def get_songlist_task_result(task_id: str,
 
 
 @songlist_router.get("/{songlist_id}", response_model=SonglistResponse)
-async def get_songlist_detail(songlist_id: int,
-                              session: AsyncSession = Depends(get_db)):
+async def get_songlist_detail(
+    songlist_id: int, session: AsyncSession = Depends(get_db)) -> SonglistResponse:
+    """Get detailed songlist information."""
     # 使用 load_only 限制加载的 Song 字段
     stmt = (select(Songlist).where(Songlist.id == songlist_id).options(
         selectinload(Songlist.songs).selectinload(SonglistSong.song).load_only(
@@ -203,7 +207,8 @@ async def update_songlist(
         songlist_id: int,
         songlist_data: SonglistBase,
         session: AsyncSession = Depends(get_db),
-):
+) -> SonglistResponse:
+    """Update songlist details."""
     stmt = select(Songlist).where(Songlist.id == songlist_id)
     result = await session.execute(stmt)
     songlist = result.scalar_one_or_none()

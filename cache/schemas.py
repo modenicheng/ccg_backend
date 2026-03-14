@@ -48,7 +48,8 @@ class RedisModel(BaseModel):
                 result[key] = orjson.dumps(
                     value,  # type: ignore[attr-defined]
                     option=orjson.OPT_NON_STR_KEYS,  # type: ignore[attr-defined]
-                    default=str).decode("utf-8")
+                    default=str,
+                ).decode("utf-8")
         return result
 
     @classmethod
@@ -95,11 +96,15 @@ class TaskResult(RedisModel):
 
 
 class RoomStateTagItem(RedisModel):
+    """Redis model for room state tag item."""
+
     id: int
     name: str
 
 
 class RoomStateTagGroupItem(RedisModel):
+    """Redis model for room state tag group item."""
+
     id: int
     name: str
     description: str | None = None
@@ -107,6 +112,8 @@ class RoomStateTagGroupItem(RedisModel):
 
 
 class RoomStatePlayerItem(RedisModel):
+    """Redis model for room state player item."""
+
     id: int = Field(description="玩家数据库ID")
     username: str = Field(description="玩家用户名")
     is_owner: bool = Field(default=False)
@@ -115,17 +122,21 @@ class RoomStatePlayerItem(RedisModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# 下面的模型继承 RoomSchemas 并混入 RedisModel，
-# 用于保证 cache 与 ws_messages 的结构兼容，降低转换成本。
 class AnswerQueueItem(RedisModel, RoomSchemas.AnswerQueueItem):
+    """Redis model for answer queue item."""
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class PlaybackState(RedisModel, RoomSchemas.PlaybackState):
+    """Redis model for playback state."""
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class RoomBaseStateCache(RedisModel):
+    """Redis model for room base state."""
+
     # 兼容模型：房间基础状态已迁移 SQL，此模型仍用于状态拼装与传输结构统一。
     room_id: str
     title: str | None = None
@@ -135,7 +146,8 @@ class RoomBaseStateCache(RedisModel):
 
     @field_validator("status", mode="before")
     @classmethod
-    def normalize_status(cls, value: Any) -> RoomStatusORM:
+    def normalize_status(cls, value: Any) -> RoomStatusORM:  # pylint: disable=too-many-return-statements
+        """Normalize status value to RoomStatusORM enum."""
         if isinstance(value, RoomStatusORM):
             return value
 

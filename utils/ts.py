@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 时间戳工具函数
 提供时间戳相关的实用函数
 """
+from __future__ import annotations
 import time as time_module
 
 
