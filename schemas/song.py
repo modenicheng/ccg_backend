@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 Song request/response schemas.
 
@@ -7,6 +6,7 @@ Handles:
 - Song cache/download status updates
 - Song batch operations
 """
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Optional, List

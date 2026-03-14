@@ -33,15 +33,6 @@ class RoomSongResponse(RoomSongBase):
 
     song: SongResponse = Field(description="Song details")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "room_id": "ABCD12",
-                "song_id": 1,
-                "song_order": 1,
-                "song": SONG_EXAMPLE,
-            }
-        })
 
 
 class RoomSongsListResponse(BaseModel):
