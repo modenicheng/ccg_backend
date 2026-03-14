@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.websockets import WebSocketState
 
-import cache
 import cache.schemas
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
@@ -83,10 +82,6 @@ async def on_connect(  # pylint: disable=too-many-statements
                          exc_info=True)
             return
         try:
-            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
-            player_item.online = True
-            await room_cache.set_room_player(room_id, player_item)
-
             cl.user.online = True
 
             # 确保数据库中的在线状态在当前 session 内被持久化（cl.user 可能是跨 session 对象）
@@ -95,8 +90,6 @@ async def on_connect(  # pylint: disable=too-many-statements
             user_obj = user_result.scalar_one_or_none()
             if user_obj:
                 user_obj.online = True
-
-            await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error updating player status for non-spectator: %s",
                          e,
@@ -244,7 +237,6 @@ async def on_disconnect(
             user_obj = result.scalar_one_or_none()
             if user_obj:
                 user_obj.online = False
-            await room_cache.set_room_player(room_id, player_item)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error updating player status on disconnect: %s",
                          e,
@@ -290,7 +282,6 @@ async def handle_start_pos_update(
             logger.error("Failed to update start position for room %s", room_id)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling start position update: %s", e)
-
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
 async def handle_game_over_manual(

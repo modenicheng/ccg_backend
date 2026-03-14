@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
-from .common import SONG_EXAMPLE
 
 
 class SongBase(BaseModel):
@@ -41,8 +40,6 @@ class SongBase(BaseModel):
 class SongCreate(SongBase):
     """Schema for creating a new song."""
 
-    pass
-
 
 class SongResponse(SongBase):
     """Response schema for song details."""
@@ -56,7 +53,6 @@ class SongResponse(SongBase):
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"example": SONG_EXAMPLE},
     )
 
     @property

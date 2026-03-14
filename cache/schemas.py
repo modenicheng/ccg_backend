@@ -1,4 +1,13 @@
-"""Redis 缓存 schema 与序列化工具。"""
+"""缓存层 schema 与序列化工具。
+
+当前架构：
+- Redis：播放状态（playback）与抢答队列（answer_queue）等热点状态
+- SQL：房间基础状态与玩家在线状态
+
+本文件中的模型用于两类场景：
+1) Redis Hash / ZSet 的序列化与反序列化
+2) 与 WebSocket schema 保持结构一致的兼容数据模型
+"""
 
 from __future__ import annotations
 
@@ -11,11 +20,11 @@ from utils.enumerations import RoomStatus
 from schemas.ws_messages import room_schemas as RoomSchemas
 from db.models import RoomStatusORM
 
-# 这个文件定义了所有的 Pydantic 模型，用于 Redis 数据的序列化和反序列化
+# 本文件定义缓存层使用的 Pydantic 模型（含 Redis 序列化能力）
 
 
 class RedisModel(BaseModel):
-    """Base model for Redis data structures, with utility methods for serialization."""
+    """用于 Redis 数据结构的基础模型，提供序列化工具方法。"""
 
     def to_redis_hash(self) -> dict[str, str | int | float]:
         """
@@ -106,8 +115,8 @@ class RoomStatePlayerItem(RedisModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# 下面的模型直接继承自 RoomSchemas 中的 Pydantic 模型，并添加 RedisModel 的功能
-# 保持 cache 和 ws_messages 中的模型结构一致，方便数据转换和维护
+# 下面的模型继承 RoomSchemas 并混入 RedisModel，
+# 用于保证 cache 与 ws_messages 的结构兼容，降低转换成本。
 class AnswerQueueItem(RedisModel, RoomSchemas.AnswerQueueItem):
     model_config = ConfigDict(from_attributes=True)
 
@@ -117,6 +126,7 @@ class PlaybackState(RedisModel, RoomSchemas.PlaybackState):
 
 
 class RoomBaseStateCache(RedisModel):
+    # 兼容模型：房间基础状态已迁移 SQL，此模型仍用于状态拼装与传输结构统一。
     room_id: str
     title: str | None = None
     status: RoomStatusORM = RoomStatusORM.WAITING
