@@ -1,12 +1,13 @@
+# pylint: disable=missing-module-docstring,pointless-string-statement
 from __future__ import annotations
 import asyncio
-from deprecated import deprecated
+from enum import Enum
 from fastapi import WebSocket
 from db.models import Room, User
 from utils import get_logger
 from schemas.base_message import ErrorMessage, ErrorMessageData
-from enum import Enum
 
+"""WebSocket client management module."""
 logger = get_logger(__name__)
 
 
@@ -19,6 +20,11 @@ class Client:
         self.room: Room = room
 
     async def send(self, message: str | bytes | dict):
+        """Send message to client.
+
+        Args:
+            message: Message to send, can be bytes, string, or dict
+        """
         try:
             if isinstance(message, bytes):
                 await self.ws.send_bytes(message)
@@ -28,35 +34,60 @@ class Client:
                 await self.ws.send_json(message)
             else:
                 raise TypeError(f"Unsupported message type: {type(message)}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(
-                f"Failed to send message to client {self.user.username}<{self.user.id}>: {e}",
+                "Failed to send message to client %s<%s>: %s",
+                self.user.username,
+                self.user.id,
+                e,
                 exc_info=True,
             )
 
-    async def send_error(self, event_type, message: str):
-        event = event_type
+    async def send_error(self, event_type: Enum | int, message: str):
+        """Send error message to client.
+
+        Args:
+            event_type: Event type as Enum or integer
+            message: Error message text
+        """
+        event: int
         if isinstance(event_type, Enum):
-            event: int = event_type.value
-        elif not isinstance(event_type, int):
+            event = event_type.value
+        elif isinstance(event_type, int):
+            event = event_type
+        else:
             raise TypeError(f"Unsupported event_type type: {type(event_type)}")
         error_message = ErrorMessage(
+            event=255,
             data=ErrorMessageData(message=message, error_event=event))
         await self.send(error_message.model_dump())
 
 
 class ClientManager:
+    """Manager for WebSocket clients organized by rooms."""
     _rooms: dict[str, set[Client]]
 
     def __init__(self):
         self._rooms = {}
 
     def push(self, room_id: str, client: Client):
+        """Add client to room.
+
+        Args:
+            room_id: Room identifier
+            client: Client instance
+        """
         if room_id not in self._rooms:
             self._rooms[room_id] = set()
         self._rooms[room_id].add(client)
 
     def pop(self, room_id: str, client: Client):
+        """Remove client from room.
+
+        Args:
+            room_id: Room identifier
+            client: Client instance
+        """
         clients = self._rooms.get(room_id)
         if not clients:
             return
@@ -65,9 +96,22 @@ class ClientManager:
             self._rooms.pop(room_id, None)
 
     def get_clients(self, room_id: str) -> set[Client]:
+        """Get all clients in a room.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            Set of clients in the room
+        """
         return self._rooms.get(room_id, set())
 
     def get_all_clients(self) -> set[Client]:
+        """Get all clients across all rooms.
+
+        Returns:
+            Set of all clients
+        """
         all_clients: set[Client] = set()
         for clients in self._rooms.values():
             all_clients.update(clients)
@@ -78,6 +122,11 @@ class ClientManager:
         return {room_id: set(clients) for room_id, clients in self._rooms.items()}
 
     async def clear(self, room_id: str | None = None):
+        """Clear clients from room(s).
+
+        Args:
+            room_id: Room identifier or None to clear all rooms
+        """
         if room_id is None:
             results = await asyncio.gather(
                 *[
@@ -118,11 +167,25 @@ class ClientManager:
                     )
 
     def is_empty(self, room_id: str | None = None) -> bool:
+        """Check if room or all rooms are empty.
+
+        Args:
+            room_id: Room identifier or None to check all rooms
+
+        Returns:
+            True if empty, False otherwise
+        """
         if room_id is None:
             return len(self._rooms) == 0
         return len(self._rooms.get(room_id, set())) == 0
 
     async def send(self, client: Client, message: str | bytes | dict):
+        """Send message to client.
+
+        Args:
+            client: Client instance
+            message: Message to send
+        """
         try:
             if isinstance(message, bytes):
                 await client.ws.send_bytes(message)
@@ -132,20 +195,32 @@ class ClientManager:
                 await client.ws.send_json(message)
             else:
                 raise TypeError(f"Unsupported message type: {type(message)}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(
-                f"Failed to send message to client {client.user.username}<{client.user.id}>: {e}",
+                "Failed to send message to client %s<%s>: %s",
+                client.user.username,
+                client.user.id,
+                e,
                 exc_info=True,
             )
 
     async def broadcast_error(
         self,
         room_id: str,
-        event_type,
+        event_type: Enum | int,
         message: str,
         excluded_clients: set[Client] | None = None,
     ):
+        """Broadcast error message to all clients in room.
+
+        Args:
+            room_id: Room identifier
+            event_type: Error event type as Enum or integer
+            message: Error message text
+            excluded_clients: Clients to exclude from broadcast
+        """
         error_message = ErrorMessage(
+            event=255,
             data=ErrorMessageData(message=message, error_event=event_type))
         await self.broadcast(room_id,
                              error_message.model_dump(),
@@ -157,6 +232,13 @@ class ClientManager:
         message: str | bytes | dict,
         excluded_clients: set[Client] | None = None,
     ):
+        """Broadcast message to all clients in room.
+
+        Args:
+            room_id: Room identifier
+            message: Message to broadcast
+            excluded_clients: Clients to exclude from broadcast
+        """
         excluded_clients = excluded_clients or set()
         clients = self._rooms.get(room_id, set())
         results = await asyncio.gather(
@@ -184,19 +266,43 @@ class ClientManager:
         code: int = 1000,
         reason: str = "Kicked by server",
     ):
+        """Kick client from room and close connection.
+
+        Args:
+            room_id: Room identifier
+            client: Client to kick
+            code: WebSocket close code
+            reason: Close reason
+        """
         try:
             await client.ws.close(code=code, reason=reason)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(
-                f"Failed to kick client {client.user.username}<{client.user.id}>: {e}")
+                "Failed to kick client %s<%s>: %s",
+                client.user.username,
+                client.user.id,
+                e)
         finally:
             self.pop(room_id, client)
             del client
 
     def room_size(self, room_id: str) -> int:
+        """Get number of clients in a room.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            Number of clients in the room
+        """
         return len(self._rooms.get(room_id, set()))
 
     def total_size(self) -> int:
+        """Get total number of clients across all rooms.
+
+        Returns:
+            Total number of clients
+        """
         return sum(len(clients) for clients in self._rooms.values())
 
     def __len__(self):

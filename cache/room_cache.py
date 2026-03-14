@@ -389,6 +389,49 @@ async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) 
     return True
 
 
+@handle_redis_operation(default_return=False,
+                        log_operation="syncing answer queue is_answering")
+async def sync_answer_queue_is_answering(redis: Redis, room_id: str,
+                                         player_id: int) -> bool:
+    """同步答题队列中 is_answering 字段，确保仅当前答题者为 True。"""
+    key = RedisKeys.answer_queue(room_id)
+    index_key = RedisKeys.answer_queue_player_index(room_id)
+
+    members_with_scores = await cast(Awaitable[list[tuple[str, float]]],
+                                     redis.zrange(key, 0, -1, withscores=True))
+    if not members_with_scores:
+        return False
+
+    changed = False
+    for raw_member, score in members_with_scores:
+        try:
+            item = AnswerQueueItem.model_validate_json(raw_member, strict=False)
+        except (ValidationError, ValueError) as e:
+            logger.warning("Failed to parse answer queue member: %s", e)
+            continue
+
+        should_answering = item.player_id == player_id
+        if item.is_answering == should_answering:
+            # 顺便修复/补建索引
+            await cast(
+                Awaitable,
+                redis.hset(index_key, str(item.player_id), raw_member),
+            )
+            continue
+
+        updated_item = item.model_copy(update={"is_answering": should_answering})
+        updated_member = updated_item.model_dump_json()
+
+        await cast(Awaitable[int], redis.zrem(key, raw_member))
+        await cast(Awaitable[int], redis.zadd(key, {updated_member: score}))
+        await cast(Awaitable, redis.hset(index_key, str(item.player_id), updated_member))
+        changed = True
+
+    await cast(Awaitable[bool], redis.expire(key, ROOM_TTL_SECONDS))
+    await cast(Awaitable[bool], redis.expire(index_key, ROOM_TTL_SECONDS))
+    return changed
+
+
 @handle_redis_operation(default_return=False, log_operation="clearing current answerer")
 async def clear_room_current_answerer(redis: Redis, room_id: str) -> bool:
     """清除当前答题者"""

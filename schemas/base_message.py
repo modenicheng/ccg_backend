@@ -1,7 +1,6 @@
 from __future__ import annotations
-from time import time
 from utils.enumerations import EventType, GameEventType
-from typing import Literal, Any, List, Dict
+from typing import Literal, Any
 from enum import Enum
 from pydantic import BaseModel, Field
 
@@ -33,5 +32,5 @@ class ErrorMessageData(AutoEventConvertMixin):
 
 
 class ErrorMessage(MessageBase, AutoEventConvertMixin):
-    event: Literal[255] = EventType.ERROR.value
+    event: Literal[255] = Field(default=255, description="错误事件类型，固定为255")
     data: ErrorMessageData = Field(..., description="错误消息数据")

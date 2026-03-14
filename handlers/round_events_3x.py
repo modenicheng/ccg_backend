@@ -87,7 +87,8 @@ async def handle_game_start(
             )
 
         if precheck_song_ids:
-            songs_stmt = select(models.Song).where(models.Song.id.in_(precheck_song_ids))
+            songs_stmt = select(models.Song).where(
+                models.Song.id.in_(precheck_song_ids))
             songs_res = await session.execute(songs_stmt)
             song_map = {song.id: song for song in songs_res.scalars().all()}
 
@@ -263,6 +264,12 @@ async def handle_skip_round(
         await room_cache.clear_answer_queue(room_id)
         await room_cache.clear_room_current_answerer(room_id)
 
+        # 立即广播空抢答队列，避免前端残留上一轮队列状态
+        await clients.broadcast(
+            room_id,
+            AnswerQueueMessage(data=AnswerQueueData(queue=[])).model_dump(),
+        )
+
         # 2) 为新轮次生成可播放地址
         next_song_id = song_queue[next_index]
         audio_token = await crud.get_or_create_audio_token(session, room_id,
@@ -418,15 +425,15 @@ async def handle_attempt_answer(
 
     # 设置当前作答玩家
     await room_cache.set_room_current_answerer(room_id, player_id)
+    await room_cache.sync_answer_queue_is_answering(room_id, player_id)
 
-    #     # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
-    #     your_turn_data = YourTurnData(user_id=int(player_id))
-    #     your_turn_message = YourTurnMessage(data=your_turn_data)
-    #     await clients.broadcast(room_id, your_turn_message.model_dump())
-    #     logger.info("Broadcast YOUR_TURN for player %s in room %s", player_id,
-    #             room_id)
+    # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
+    your_turn_data = YourTurnData(user_id=int(player_id))
+    your_turn_message = YourTurnMessage(data=your_turn_data)
+    await clients.broadcast(room_id, your_turn_message.model_dump())
+    logger.info("Broadcast YOUR_TURN for player %s in room %s", player_id, room_id)
 
-    # # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
+    # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
     # sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
 
     # # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
@@ -523,6 +530,8 @@ async def handle_submit_answer(
     # 获取下一个玩家（如果队列中还有玩家）
     # 使用 room_cache.get_answer_queue 获取排序后的 AnswerQueueItem 列表
     current_queue = await room_cache.get_answer_queue(room_id)
+    should_resume_playback = False
+
     if current_queue:
         # 找到当前玩家的位置
         current_player_index = -1
@@ -536,40 +545,46 @@ async def handle_submit_answer(
             next_player_item = current_queue[current_player_index + 1]
             next_player = next_player_item.player_id
             await room_cache.set_room_current_answerer(room_id, next_player)
+            await room_cache.sync_answer_queue_is_answering(room_id, next_player)
 
-            # 在房间客户端中查找下一个玩家的连接
-            next_client_found = None
-            for room_client in clients.get_clients(room_id):
-                if room_client.user.id == next_player:
-                    next_client_found = room_client
-                    break
-
-            if next_client_found:
-                your_turn_data = YourTurnData(user_id=int(next_player))
-                your_turn_message = YourTurnMessage(data=your_turn_data)
-                await clients.broadcast(room_id, your_turn_message.model_dump())
-                logger.info(
-                    "Broadcast YOUR_TURN to room %s for next player %s",
-                    room_id,
-                    next_player,
-                )
-            else:
+            # 广播给全房间：无论目标连接是否存在，都要让前端状态一致
+            # 目标玩家若已掉线，前端也应感知当前轮到谁，避免停在旧状态
+            next_client_found = any(
+                room_client.user.id == next_player
+                for room_client in clients.get_clients(room_id)
+            )
+            if not next_client_found:
                 logger.warning(
-                    "Could not find WebSocket for next player %s in room %s",
+                    "Next player %s has no active WebSocket in room %s, "
+                    "still broadcasting YOUR_TURN",
                     next_player,
                     room_id,
                 )
+
+            your_turn_data = YourTurnData(user_id=int(next_player))
+            your_turn_message = YourTurnMessage(data=your_turn_data)
+            await clients.broadcast(room_id, your_turn_message.model_dump())
+            logger.info(
+                "Broadcast YOUR_TURN to room %s for next player %s",
+                room_id,
+                next_player,
+            )
             logger.info("Next player in queue: %s", next_player)
         else:
-            # 没有下一个玩家，清空当前作答者
+            # 队列无后续玩家（包括当前玩家未命中队列），恢复播放
             await room_cache.clear_room_current_answerer(room_id)
+            await room_cache.sync_answer_queue_is_answering(room_id, -1)
+            should_resume_playback = True
             logger.info(
                 "No next player in queue after player %s submission in room %s",
                 player_id,
                 room_id,
             )
     else:
-        # 队列为空，恢复播放
+        # 队列为空，直接恢复播放
+        should_resume_playback = True
+
+    if should_resume_playback:
         # 获取当前播放状态
         current_progress = await room_cache.get_room_play_progress(room_id)
         server_ts = get_ts_ms()
@@ -593,9 +608,14 @@ async def handle_submit_answer(
         play_message = PlayMessage(data=play_control_data)
         await clients.broadcast(room_id, play_message.model_dump())
 
-        logger.info("Answer queue empty, resumed playback in room %s", room_id)
+        logger.info(
+            "Answering phase finished, resumed playback in room %s",
+            room_id,
+        )
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
+    # 注意：这里重新读取，确保包含最新 is_answering 状态
+    current_queue = await room_cache.get_answer_queue(room_id)
     answer_queue_data = AnswerQueueData(queue=current_queue)
     answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
     await clients.broadcast(room_id, answer_queue_message.model_dump())

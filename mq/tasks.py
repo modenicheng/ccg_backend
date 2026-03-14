@@ -1,6 +1,5 @@
-from __future__ import annotations
 """Tasks module for huey background jobs."""
-# pylint: disable=wrong-import-position,missing-module-docstring,pointless-string-statement
+from __future__ import annotations
 
 # Standard library imports
 import os
@@ -610,8 +609,3 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error fetching songlist: %s", e, exc_info=True)
         return None
-
-
-# if __name__ == "__main__":
-#     songlist_id = 9561851623
-#     asyncio.run(fetch_songlist(songlist_id))
