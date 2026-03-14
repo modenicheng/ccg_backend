@@ -163,13 +163,6 @@ Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `s
 3. Ensure the function handles its own database session via `session_scope` if needed
 4. The consumer picks up tasks automatically when running `uv run huey_consumer.py mq.tasks.huey`
 
-### Run a Single Test
-```bash
-uv run pytest tests/path/to/test.py::test_function -v
-uv run pytest -k "pattern" -v
-uv run pytest -v --log-level=DEBUG
-```
-
 ## Ambiguous Patterns & Pitfalls
 
 - **Redis access**: Use `get_redis()` (from `cache.connection`) NOT `redis_client.get_client()` for Redis access. The former handles connection lifecycle.
@@ -198,25 +191,8 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
 
 ## Coding Style Manual
 
-1. Formatting the code
-
-   Use yapf.
-
-   ```bash
-   uv run yapf -i $(git ls-files '*.py')
-   ```
-
-   **DO NOT** use `.` for the full format. the venv directory will be included unexceptedly.
-
-2. Linting the code
-
-   Use pylint.
-
-   ```bash
-   uv run pylint $(git ls-files '*.py') # All python files
-   ```
-
-   May be you can ignore the `tests/` and `alembic` directories.
+1. **Formatting**: Use yapf (`uv run yapf -i path/to/file.py`). Do NOT use `.` - venv will be included.
+2. **Linting**: Use pylint (`pylint --ignore=tests,alembic .`). Excludes tests/ and alembic/ directories.
 
 *Last updated: March 2026*
 

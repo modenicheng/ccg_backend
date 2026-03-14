@@ -80,15 +80,16 @@ def _normalize_song_input(song_data: dict[str, Any]) -> Optional[dict[str, Any]]
 
     # 优先从 album 对象中获取封面，其次才是歌单中的 cover 字段
     # QQ 音乐 API 中，album.pic 是单曲封面，而歌单详情中的 picurl 是歌单封面
-    album_cover = album_info.get("pic") or album_info.get("cover") or album_info.get("picurl")
-    
+    album_cover = album_info.get("pic") or album_info.get("cover") or album_info.get(
+        "picurl")
+
     # 如果 album 中没有直接的封面字段，尝试从 pmid 构造
     if not album_cover:
         pmid = album_info.get("pmid")
         if pmid:
             # QQ 音乐专辑封面 URL 格式：https://y.gtimg.cn/music/photo_new/T002R300x300M000{pmid}.jpg
             album_cover = f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{pmid}.jpg"
-    
+
     return {
         "platform":
             platform,

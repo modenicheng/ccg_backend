@@ -1,8 +1,11 @@
+"""Database session management and utilities for SQLAlchemy with async support."""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -29,7 +32,7 @@ if DATABASE_URL.startswith("sqlite+"):
         cursor.close()
 
 
-AsyncSessionLocal = async_sessionmaker(
+_AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False,
@@ -55,7 +58,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     - commit on successful request handling
     - rollback on error
     """
-    async with AsyncSessionLocal() as session:
+    async with _AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
@@ -67,7 +70,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Reusable transaction scope for non-FastAPI flows (tasks/scripts/services)."""
-    async with AsyncSessionLocal() as session:
+    async with _AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
@@ -78,9 +81,10 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 
 async def ping_db() -> bool:
     """Simple connectivity probe."""
+
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except SQLAlchemyError:
         return False

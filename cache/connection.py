@@ -37,10 +37,10 @@ class RedisClient:
         try:
             redis_url = url or app_config.redis_url
             parsed = urlparse(redis_url)
-            if parsed.scheme == "redis" and not self._is_local_redis_endpoint(redis_url):
-                logger.warning(
-                    "Redis URL is using redis:// over non-local endpoint. "
-                    "Use rediss:// in production for TLS encryption.")
+            if parsed.scheme == "redis" and not self._is_local_redis_endpoint(
+                    redis_url):
+                logger.warning("Redis URL is using redis:// over non-local endpoint. "
+                               "Use rediss:// in production for TLS encryption.")
             self.client = redis.from_url(redis_url, decode_responses=True)
             # 测试连接
             await cast(Awaitable[bool], self.client.ping())

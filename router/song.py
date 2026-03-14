@@ -24,10 +24,10 @@ song_router = APIRouter(prefix="/api/songs", tags=["songs"])
 
 @song_router.get("/", response_model=SongListResponse)
 async def song_list(
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=100),
-    kw: str | None = Query(default=None, max_length=100),
-    session: AsyncSession = Depends(get_db),
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=20, ge=1, le=100),
+        kw: str | None = Query(default=None, max_length=100),
+        session: AsyncSession = Depends(get_db),
 ):
     stmt = select(Song).offset(offset).limit(limit)
     if kw:
@@ -46,8 +46,8 @@ async def song_list(
 
     song_list_data = [
         SongResponse.model_validate(
-            {c.name: getattr(song, c.name) for c in song.__table__.columns}
-        )
+            {c.name: getattr(song, c.name)
+             for c in song.__table__.columns})
         for song in songs
     ]
     return SongListResponse(total=total, list=song_list_data)
@@ -60,9 +60,8 @@ async def create_song(song_data: SongCreate, session: AsyncSession = Depends(get
         stmt = select(Song).where(Song.platform_song_id == song_data.platform_song_id)
         existing = await session.execute(stmt)
         if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail="Song with this platform ID already exists"
-            )
+            raise HTTPException(status_code=400,
+                                detail="Song with this platform ID already exists")
 
     # 基本验证：至少需要标题或平台ID
     if not song_data.title and not song_data.platform_song_id:
@@ -94,8 +93,7 @@ async def create_song(song_data: SongCreate, session: AsyncSession = Depends(get
         raise HTTPException(status_code=500, detail=f"Failed to create song: {str(e)}")
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name) for c in song.__table__.columns}
-    )
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.get("/{song_id}", response_model=SongResponse)
@@ -107,14 +105,13 @@ async def get_song(song_id: int, session: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Song not found")
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name) for c in song.__table__.columns}
-    )
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.put("/{song_id}", response_model=SongResponse)
-async def update_song(
-    song_id: int, song_data: SongCreate, session: AsyncSession = Depends(get_db)
-):
+async def update_song(song_id: int,
+                      song_data: SongCreate,
+                      session: AsyncSession = Depends(get_db)):
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
     song = result.scalar_one_or_none()
@@ -129,8 +126,7 @@ async def update_song(
     await session.refresh(song)
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
-        {c.name: getattr(song, c.name) for c in song.__table__.columns}
-    )
+        {c.name: getattr(song, c.name) for c in song.__table__.columns})
 
 
 @song_router.delete("/{song_id}")
@@ -144,13 +140,11 @@ async def delete_song(song_id: int, session: AsyncSession = Depends(get_db)):
     # Check if song belongs to any RUNNING room
     from sqlalchemy import exists
 
-    running_room_stmt = select(
-        exists().where(
-            RoomSong.song_id == song_id,
-            RoomSong.room_id == Room.id,
-            Room.status == RoomStatus.RUNNING.value,
-        )
-    )
+    running_room_stmt = select(exists().where(
+        RoomSong.song_id == song_id,
+        RoomSong.room_id == Room.id,
+        Room.status == RoomStatus.RUNNING.value,
+    ))
     running_result = await session.execute(running_room_stmt)
     is_in_running_room = running_result.scalar()
     if is_in_running_room:
@@ -166,9 +160,9 @@ async def delete_song(song_id: int, session: AsyncSession = Depends(get_db)):
 
 @song_router.get("/cache/{song_id}")
 async def get_song_asset(
-    song_id: int,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
+        song_id: int,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
 ) -> Response:
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
@@ -176,15 +170,13 @@ async def get_song_asset(
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
     if not song.cached_path:
-        raise HTTPException(
-            status_code=404, detail="Cached path not found for this song"
-        )
+        raise HTTPException(status_code=404,
+                            detail="Cached path not found for this song")
     content, media_type = await load_song_asset_with_cache(song.cached_path)
     range_header = request.headers.get("range")
     response = build_range_response(content, media_type, range_header)
     response.headers["Content-Disposition"] = (
-        f'inline; filename="{os.path.basename(song.cached_path)}"'
-    )
+        f'inline; filename="{os.path.basename(song.cached_path)}"')
     return response
 
 

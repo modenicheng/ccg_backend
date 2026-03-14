@@ -6,7 +6,6 @@ from fastapi import WebSocket
 from db.models import Room, User
 from utils import get_logger
 from schemas.base_message import ErrorMessage, ErrorMessageData
-
 """WebSocket client management module."""
 logger = get_logger(__name__)
 
@@ -57,9 +56,9 @@ class Client:
             event = event_type
         else:
             raise TypeError(f"Unsupported event_type type: {type(event_type)}")
-        error_message = ErrorMessage(
-            event=255,
-            data=ErrorMessageData(message=message, error_event=event))
+        error_message = ErrorMessage(event=255,
+                                     data=ErrorMessageData(message=message,
+                                                           error_event=event))
         await self.send(error_message.model_dump())
 
 
@@ -219,9 +218,9 @@ class ClientManager:
             message: Error message text
             excluded_clients: Clients to exclude from broadcast
         """
-        error_message = ErrorMessage(
-            event=255,
-            data=ErrorMessageData(message=message, error_event=event_type))
+        error_message = ErrorMessage(event=255,
+                                     data=ErrorMessageData(message=message,
+                                                           error_event=event_type))
         await self.broadcast(room_id,
                              error_message.model_dump(),
                              excluded_clients=excluded_clients)
@@ -277,11 +276,8 @@ class ClientManager:
         try:
             await client.ws.close(code=code, reason=reason)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error(
-                "Failed to kick client %s<%s>: %s",
-                client.user.username,
-                client.user.id,
-                e)
+            logger.error("Failed to kick client %s<%s>: %s", client.user.username,
+                         client.user.id, e)
         finally:
             self.pop(room_id, client)
             del client

@@ -59,8 +59,8 @@ class RoomStateMachine:
 
         # 2. 验证转移是否允许
         if not cls.is_transition_allowed(current_status, target):
-            logger.error("Invalid state transition for room %s: %s -> %s",
-                         room_id, current_status.name, target.name)
+            logger.error("Invalid state transition for room %s: %s -> %s", room_id,
+                         current_status.name, target.name)
             raise ValueError(
                 f"Invalid state transition: {current_status.name} -> {target.name}")
 
@@ -69,7 +69,7 @@ class RoomStateMachine:
         room.status = models.RoomStatusORM(target.value)
 
         logger.info("Room %s state transition: %s -> %s", room_id,
-                RoomStatus(old_status).name, target.name)
+                    RoomStatus(old_status).name, target.name)
 
         return True
 
@@ -94,7 +94,7 @@ class RoomStateMachine:
         room.status = models.RoomStatusORM(target.value)
 
         logger.warning("Force transition for room %s: %s -> %s", room_id,
-                   RoomStatus(old_status).name, target.name)
+                       RoomStatus(old_status).name, target.name)
 
         return True
 
@@ -176,7 +176,7 @@ class RoundStateMachine:
         room.round_state = target.value
 
         logger.info("Room %s round state transition: %s -> %s", room_id,
-                RoundState(old_round_state or 0).name, target.name)
+                    RoundState(old_round_state or 0).name, target.name)
 
         return True
 
@@ -201,7 +201,7 @@ class RoundStateMachine:
         room.round_state = target.value
 
         logger.warning("Force round state transition for room %s: %s -> %s", room_id,
-                   RoundState(old_round_state or 0).name, target.name)
+                       RoundState(old_round_state or 0).name, target.name)
 
         return True
 

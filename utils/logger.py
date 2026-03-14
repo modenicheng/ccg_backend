@@ -75,8 +75,7 @@ def init_logging(
             encoding="utf-8",
         )
         file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+            logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
         root_logger.addHandler(file_handler)
 
 

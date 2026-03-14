@@ -37,6 +37,7 @@ def _download_task_id(platform_song_id: str) -> str:
     """Build deterministic task id for song download status tracking."""
     return f"download_and_cache_song:{platform_song_id}"
 
+
 _ASYNC_LOOP_LOCK = threading.Lock()
 _ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
 _ASYNC_LOOP_THREAD: threading.Thread | None = None
@@ -111,7 +112,10 @@ async def _persist_task_state(  # pylint: disable=too-many-arguments,too-many-po
             await _write_task_state(session)
         except Exception as db_err:  # pylint: disable=broad-exception-caught
             logger.error(
-                "Failed to persist task state for %s (%s): %s", task_id, task_name, db_err,
+                "Failed to persist task state for %s (%s): %s",
+                task_id,
+                task_name,
+                db_err,
                 exc_info=True,
             )
         return
@@ -121,7 +125,10 @@ async def _persist_task_state(  # pylint: disable=too-many-arguments,too-many-po
             await _write_task_state(managed_session)
         except Exception as db_err:  # pylint: disable=broad-exception-caught
             logger.error(
-                "Failed to persist task state for %s (%s): %s", task_id, task_name, db_err,
+                "Failed to persist task state for %s (%s): %s",
+                task_id,
+                task_name,
+                db_err,
                 exc_info=True,
             )
 
@@ -171,10 +178,8 @@ async def _with_retry(
             if attempt >= max(1, retries):
                 break
             sleep_seconds = max(0.0, backoff_seconds) * (2**(attempt - 1))
-            logger.warning(
-                "%s failed on attempt %s/%s, retrying in %.2fs: %s",
-                operation_name, attempt, max(1, retries), sleep_seconds, err
-            )
+            logger.warning("%s failed on attempt %s/%s, retrying in %.2fs: %s",
+                           operation_name, attempt, max(1, retries), sleep_seconds, err)
             await asyncio.sleep(sleep_seconds)
 
     assert last_error is not None
@@ -331,7 +336,10 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
         task_id=task_id,
         task_name="download_and_cache_song",
         status="running",
-        result={"platform": "qq", "platform_song_id": mid},
+        result={
+            "platform": "qq",
+            "platform_song_id": mid
+        },
     )
 
     song_url = await _get_song_url(mid, filetype=qapi.song.SongFileType.OGG_320)
@@ -366,7 +374,9 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
             )
             if not song:
                 logger.warning(
-                    "Audio downloaded for %s but song not found in DB, skipped cached_path update: %s", mid, downloaded_path  # pylint: disable=line-too-long
+                    "Audio downloaded for %s but song not found in DB, skipped cached_path update: %s",
+                    mid,
+                    downloaded_path  # pylint: disable=line-too-long
                 )
             else:
                 logger.info("Updated cached_path for %s: %s", mid, downloaded_path)
@@ -514,7 +524,8 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
         credential = qapi.Credential.from_cookies_dict(parse_cookie_string(cookie_str))  # pylint: disable=redefined-outer-name
         qapi.get_session().credential = credential
         logger.info(
-            "Using custom credential from provided cookie string for fetching songlist %s", songlist_id  # pylint: disable=line-too-long
+            "Using custom credential from provided cookie string for fetching songlist %s",
+            songlist_id  # pylint: disable=line-too-long
         )
 
     try:
@@ -541,13 +552,22 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     except Exception as page_err:  # pylint: disable=broad-exception-caught
                         if attempt >= SONGLIST_FETCH_RETRIES:
                             logger.error(
-                                "Failed to fetch page %s of songlist %s after %s attempts: %s", page, songlist_id, attempt, page_err  # pylint: disable=line-too-long
+                                "Failed to fetch page %s of songlist %s after %s attempts: %s",
+                                page,
+                                songlist_id,
+                                attempt,
+                                page_err  # pylint: disable=line-too-long
                             )
                             raise
                         sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(attempt -
                                                                               1))
                         logger.warning(
-                            "Fetch page %s failed on attempt %s/%s, retrying in %.2fs: %s", page, attempt, SONGLIST_FETCH_RETRIES, sleep_seconds, page_err  # pylint: disable=line-too-long
+                            "Fetch page %s failed on attempt %s/%s, retrying in %.2fs: %s",
+                            page,
+                            attempt,
+                            SONGLIST_FETCH_RETRIES,
+                            sleep_seconds,
+                            page_err  # pylint: disable=line-too-long
                         )
                         await asyncio.sleep(sleep_seconds)
 
@@ -580,7 +600,11 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     )
 
                     logger.info(
-                        "Fetched songlist %s: %s with %s songs, persisted %s songs", songlist_id, title, total, len(db_songs)  # pylint: disable=line-too-long
+                        "Fetched songlist %s: %s with %s songs, persisted %s songs",
+                        songlist_id,
+                        title,
+                        total,
+                        len(db_songs)  # pylint: disable=line-too-long
                     )
                     return {
                         "songlist": songlist,
@@ -595,11 +619,13 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     raise
 
                 logger.warning(
-                    "DB operation hit asyncpg busy-connection error on attempt %s/%s, disposing engine and retrying: %s", attempt, db_retries, db_err  # pylint: disable=line-too-long
+                    "DB operation hit asyncpg busy-connection error on attempt %s/%s, disposing engine and retrying: %s",
+                    attempt,
+                    db_retries,
+                    db_err  # pylint: disable=line-too-long
                 )
                 await engine.dispose()
-                sleep_seconds = max(0.1,
-                                    SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
+                sleep_seconds = max(0.1, SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
                 await asyncio.sleep(sleep_seconds)
 
         return None

@@ -16,11 +16,8 @@ async def get_room_with_state(
     room_id: str,
 ) -> Room | None:
     """Load a Room with tag_groups→tags populated, for building RoomBaseStateCache."""
-    stmt = (
-        select(Room)
-        .where(Room.id == room_id)
-        .options(selectinload(Room.tag_groups).selectinload(TagGroup.tags))
-    )
+    stmt = (select(Room).where(Room.id == room_id).options(
+        selectinload(Room.tag_groups).selectinload(TagGroup.tags)))
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 

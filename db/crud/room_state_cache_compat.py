@@ -47,7 +47,10 @@ async def load_room_state(
     try:
         return await _load(session)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error loading room state for room %s: %s", room_id, e, exc_info=True)
+        logger.error("Error loading room state for room %s: %s",
+                     room_id,
+                     e,
+                     exc_info=True)
         return None
 
 
@@ -70,7 +73,10 @@ async def save_room_state(
     try:
         await _save(session)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error saving room state for room %s: %s", room_id, e, exc_info=True)
+        logger.error("Error saving room state for room %s: %s",
+                     room_id,
+                     e,
+                     exc_info=True)
 
 
 async def get_room_players(
@@ -86,7 +92,10 @@ async def get_room_players(
     try:
         return await _fetch(session)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error getting room players for room %s: %s", room_id, e, exc_info=True)
+        logger.error("Error getting room players for room %s: %s",
+                     room_id,
+                     e,
+                     exc_info=True)
         return []
 
 
@@ -103,7 +112,11 @@ async def set_room_player(
     try:
         return await _set(session)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error setting room player %s in room %s: %s", player.id, room_id, e, exc_info=True)
+        logger.error("Error setting room player %s in room %s: %s",
+                     player.id,
+                     room_id,
+                     e,
+                     exc_info=True)
         return False
 
 
@@ -123,7 +136,11 @@ async def get_room_player(
     try:
         return await _get(session)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error getting player %s in room %s: %s", player_id, room_id, e, exc_info=True)
+        logger.error("Error getting player %s in room %s: %s",
+                     player_id,
+                     room_id,
+                     e,
+                     exc_info=True)
         return None
 
 

@@ -59,10 +59,26 @@ async def test_room_players_cache(db_session: AsyncSession):
     room = models.Room(id=room_id, title="Test Room")
     db_session.add(room)
     users = [
-        models.User(username="Alice", room_id=room_id, is_owner=True, online=True, token="tok-alice"),
-        models.User(username="Bob", room_id=room_id, is_owner=False, online=True, token="tok-bob"),
-        models.User(username="Charlie", room_id=room_id, is_owner=False, online=False, token="tok-charlie"),
-        models.User(username="David", room_id=room_id, is_owner=False, online=True, token="tok-david"),
+        models.User(username="Alice",
+                    room_id=room_id,
+                    is_owner=True,
+                    online=True,
+                    token="tok-alice"),
+        models.User(username="Bob",
+                    room_id=room_id,
+                    is_owner=False,
+                    online=True,
+                    token="tok-bob"),
+        models.User(username="Charlie",
+                    room_id=room_id,
+                    is_owner=False,
+                    online=False,
+                    token="tok-charlie"),
+        models.User(username="David",
+                    room_id=room_id,
+                    is_owner=False,
+                    online=True,
+                    token="tok-david"),
     ]
     db_session.add_all(users)
     await db_session.flush()
@@ -121,19 +137,29 @@ async def test_player_online_status_sql(db_session: AsyncSession):
 
     room = models.Room(id=room_id, title="Flash Test Room")
     db_session.add(room)
-    user = models.User(username="Flash", room_id=room_id, is_owner=False, online=False, token="tok-flash")
+    user = models.User(username="Flash",
+                       room_id=room_id,
+                       is_owner=False,
+                       online=False,
+                       token="tok-flash")
     db_session.add(user)
     await db_session.flush()
     player_id = user.id
 
     # 模拟上线
-    ok = await update_room_player_online_status(room_id, player_id, True, session=db_session)
+    ok = await update_room_player_online_status(room_id,
+                                                player_id,
+                                                True,
+                                                session=db_session)
     assert ok is True
     # 同一 session identity map — user 对象已被直接修改，无需 refresh
     assert user.online is True
 
     # 模拟立刻断线（<100ms，无 sleep 模拟竞态）
-    ok = await update_room_player_online_status(room_id, player_id, False, session=db_session)
+    ok = await update_room_player_online_status(room_id,
+                                                player_id,
+                                                False,
+                                                session=db_session)
     assert ok is True
     assert user.online is False
 
@@ -148,8 +174,7 @@ async def test_concurrent_answer_queue():
         append_attempt_answer_player(
             room_id,
             AnswerQueueItem(player_id=i, offset_ts=base_ts + i * 10),
-        )
-        for i in range(5)
+        ) for i in range(5)
     ]
     await asyncio.gather(*tasks)
 

@@ -127,8 +127,7 @@ async def on_connect(  # pylint: disable=too-many-statements
 
         res = await asyncio.gather(
             send_if_connected(),
-            clients.broadcast(room_id,
-                              join_message.model_dump(),
+            clients.broadcast(room_id, join_message.model_dump(),
                               excluded_clients={cl}),
             return_exceptions=True,
         )

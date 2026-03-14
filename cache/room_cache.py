@@ -424,7 +424,8 @@ async def sync_answer_queue_is_answering(redis: Redis, room_id: str,
 
         await cast(Awaitable[int], redis.zrem(key, raw_member))
         await cast(Awaitable[int], redis.zadd(key, {updated_member: score}))
-        await cast(Awaitable, redis.hset(index_key, str(item.player_id), updated_member))
+        await cast(Awaitable, redis.hset(index_key, str(item.player_id),
+                                         updated_member))
         changed = True
 
     await cast(Awaitable[bool], redis.expire(key, ROOM_TTL_SECONDS))

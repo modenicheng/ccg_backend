@@ -258,7 +258,7 @@ const handleEndGame = async () => {
 };
 
 // JSX - 危险操作按钮
-<button 
+<button
   className="btn btn-error"
   onClick={() => setShowEndGameConfirm(true)}
 >
@@ -294,7 +294,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         <h2 className="text-2xl font-bold text-center mb-6">🎉 游戏结束</h2>
         <div className="space-y-2">
           {finalScores.map((player, index) => (
-            <div key={player.player_id} 
+            <div key={player.player_id}
                  className={`flex justify-between p-4 rounded-lg ${
                    index === 0 ? "bg-yellow-100" :
                    index === 1 ? "bg-gray-100" :
@@ -536,4 +536,3 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 * 结束游戏按钮需要二次确认
 
 * 防止误操作
-

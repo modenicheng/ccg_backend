@@ -41,13 +41,13 @@ async def main():
         report_threshold_mb=50.0, # 内存变化超过50MB时报告
         detailed_report=True,    # 输出详细报告
     )
-    
+
     # 启动监控
     await monitor.start()
-    
+
     # 运行一段时间
     await asyncio.sleep(300)
-    
+
     # 停止监控
     await monitor.stop()
 
@@ -62,12 +62,12 @@ from utils.memory_monitor import MemoryMonitor
 
 async def main():
     monitor = MemoryMonitor(interval=10.0)
-    
+
     async with monitor.monitor_context():
         # 在这个代码块中，内存监控会自动运行
         await perform_memory_intensive_operations()
         await asyncio.sleep(60)
-    
+
     # 离开上下文后，监控自动停止
 
 asyncio.run(main())
@@ -173,7 +173,7 @@ async def memory_status():
     """获取当前内存状态"""
     monitor = MemoryMonitor()
     info = monitor._get_memory_info()
-    
+
     return {
         "process": {
             "rss_mb": round(info["rss_mb"], 2),
@@ -196,7 +196,7 @@ async def memory_status():
 根据应用需求调整报告间隔：
 
 - **开发环境**: 10-30秒
-- **测试环境**: 30-60秒  
+- **测试环境**: 30-60秒
 - **生产环境**: 60-300秒
 
 ### 报告阈值
@@ -247,7 +247,7 @@ import os
 
 def get_memory_monitor_config():
     env = os.getenv("ENVIRONMENT", "development")
-    
+
     if env == "production":
         return {
             "interval": 300.0,  # 5分钟
@@ -275,10 +275,10 @@ async def safe_memory_monitoring():
     try:
         monitor = MemoryMonitor(interval=60.0)
         await monitor.start()
-        
+
         # 主应用逻辑
         await run_application()
-        
+
     except Exception as e:
         logger.error(f"内存监控出错: {e}")
     finally:
@@ -338,7 +338,7 @@ def custom_memory_callback(info: dict):
         "value": info["rss_mb"],
         "tags": {"type": "process"},
     })
-    
+
     # 触发警报
     if info["system_percent"] > 90:
         send_alert("系统内存使用率超过90%")
@@ -357,17 +357,17 @@ class IntegratedMemoryMonitor(MemoryMonitor):
     def __init__(self, monitoring_client, **kwargs):
         super().__init__(**kwargs)
         self.monitoring_client = monitoring_client
-    
+
     async def _monitor_loop(self):
         while self._running:
             memory_info = self._get_memory_info()
-            
+
             # 发送到监控系统
             self.monitoring_client.record_memory_metrics(
                 rss_mb=memory_info["rss_mb"],
                 system_percent=memory_info["system_percent"],
             )
-            
+
             # 调用父类方法输出日志
             await super()._monitor_loop()
 ```

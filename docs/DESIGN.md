@@ -371,7 +371,7 @@ CREATE TABLE player_answers (
 ```python
 # 文件: models.py
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Text, JSON, 
+    Column, Integer, String, Boolean, DateTime, Text, JSON,
     ForeignKey, UniqueConstraint, PrimaryKeyConstraint, func
 )
 from sqlalchemy.ext.declarative import declarative_base

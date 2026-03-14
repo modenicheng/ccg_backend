@@ -411,12 +411,11 @@ async def handle_attempt_answer(
             await handle_round_state_transition(clients, client, room_id,
                                                 RoundState.ANSWERING)
 
-            pause_message = PauseMessage(
-                data=PlayControlData(
-                    progress_ms=paused_progress_ms,
-                    offset_ts=server_ts,
-                    audio_url=new_playback_state.audio_url,
-                ))
+            pause_message = PauseMessage(data=PlayControlData(
+                progress_ms=paused_progress_ms,
+                offset_ts=server_ts,
+                audio_url=new_playback_state.audio_url,
+            ))
             await clients.broadcast(room_id, pause_message.model_dump())
         else:
             logger.info(
@@ -568,10 +567,8 @@ async def handle_submit_answer(
 
             # 广播给全房间：无论目标连接是否存在，都要让前端状态一致
             # 目标玩家若已掉线，前端也应感知当前轮到谁，避免停在旧状态
-            next_client_found = any(
-                room_client.user.id == next_player
-                for room_client in clients.get_clients(room_id)
-            )
+            next_client_found = any(room_client.user.id == next_player
+                                    for room_client in clients.get_clients(room_id))
             if not next_client_found:
                 logger.warning(
                     "Next player %s has no active WebSocket in room %s, "

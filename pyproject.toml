@@ -46,5 +46,6 @@ align_closing_bracket_with_visual_indent = true  # 对齐闭括号
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.5.1",
     "pylint>=4.0.5",
 ]

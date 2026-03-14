@@ -12,8 +12,7 @@ from db.models import Score, User, Room
 from db.session import session_scope
 from db.crud.room_state_related import set_room_start_position as _db_set_start_position
 from .room_cache import (
-    clear_answer_queue,
-)
+    clear_answer_queue,)
 
 logger = get_logger(__name__)
 
@@ -154,8 +153,7 @@ class RoundStateManager:
     """回合状态管理类，统一管理回合状态（DB + Cache）"""
 
     @staticmethod
-    async def get_round_state(room_id: str,
-                              session: AsyncSession) -> RoundState | None:
+    async def get_round_state(room_id: str, session: AsyncSession) -> RoundState | None:
         """获取回合状态"""
         room = await session.get(Room, room_id)
         if not room:

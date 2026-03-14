@@ -51,9 +51,7 @@ class SongResponse(SongBase):
         alias="is_cached",
     )
 
-    model_config = ConfigDict(
-        from_attributes=True,
-    )
+    model_config = ConfigDict(from_attributes=True,)
 
     @property
     def is_cached(self) -> bool:

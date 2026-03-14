@@ -16,7 +16,7 @@ CCG 是一个多人实时猜歌系统，核心能力包括：
 - WebSocket 实时同步（播放控制、抢答、判分、积分）
 - 音频预加载与缓存
 
-前端负责：交互界面、音频播放体验、WebSocket 客户端状态管理。  
+前端负责：交互界面、音频播放体验、WebSocket 客户端状态管理。
 后端负责：业务状态机、事件分发、数据库持久化、缓存与异步任务。
 
 ---
@@ -112,7 +112,7 @@ ccg_backend/
 - 玩家：`/ws/{roomid}`
 - 观战：`/ws/{roomid}/watch`
 
-后端在 `main.py` 中统一接收消息，并通过 `handlers/registe_manager.py` 分发。  
+后端在 `main.py` 中统一接收消息，并通过 `handlers/registe_manager.py` 分发。
 分发流程：
 
 1. 解析 event
@@ -230,7 +230,7 @@ ccg_backend/
 
 `../ccg_frontend/dist`
 
-若存在则返回前端 `index.html` 与静态资源。  
+若存在则返回前端 `index.html` 与静态资源。
 可用于简化单机部署，但需注意构建产物路径与发布流程一致。
 
 ### 4.7 异步任务进程（可选但推荐）

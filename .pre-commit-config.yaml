@@ -1,0 +1,24 @@
+# .pre-commit-config.yaml
+repos:
+  # 官方提供的基础钩子集合
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0  # 使用当前的较新版本
+    hooks:
+      - id: trailing-whitespace   # 自动移除行尾多余的空格
+      - id: end-of-file-fixer     # 确保文件以一个空行结尾
+      - id: check-yaml            # 检查 yaml 文件语法
+      - id: mixed-line-ending     # 【核心】自动把 CRLF 转换成 LF
+        args: ['--fix=lf']
+
+  # 引入 yapf 帮你自动格式化代码
+  - repo: https://github.com/google/yapf
+    rev: v0.43.0  # yapf 的版本号
+    hooks:
+      - id: yapf
+
+  # 检查 commit message 规范 (纯 Python 实现)
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.18.0  # 请使用较新版本
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]

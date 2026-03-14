@@ -1,7 +1,7 @@
 """a new init
 
 Revision ID: 658994cec749
-Revises: 
+Revises:
 Create Date: 2026-03-09 14:00:01.306084
 
 """
