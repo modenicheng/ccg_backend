@@ -33,7 +33,7 @@ from schemas.ws_messages.round_event_schemas import (
 )
 from schemas.ws_messages.playback_schemas import (
     PlayControlData,
-    PlayMessage,
+    PauseMessage,
 )
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
 
@@ -393,12 +393,31 @@ async def handle_attempt_answer(
             playback_state,
         )
         if playback_state.play_state == "playing":
+            paused_progress_ms = playback_state.progress_ms
+            if playback_state.offset_ts and playback_state.offset_ts > 0:
+                paused_progress_ms = max(
+                    0,
+                    playback_state.progress_ms +
+                    max(0, server_ts - playback_state.offset_ts),
+                )
+
             new_playback_state = playback_state.model_copy(
-                update={"play_state": "paused"})
+                update={
+                    "play_state": "paused",
+                    "progress_ms": paused_progress_ms,
+                    "offset_ts": server_ts,
+                })
             await room_cache.set_room_playback_state(room_id, new_playback_state)
             await handle_round_state_transition(clients, client, room_id,
                                                 RoundState.ANSWERING)
-            await clients.broadcast(room_id, new_playback_state.model_dump())
+
+            pause_message = PauseMessage(
+                data=PlayControlData(
+                    progress_ms=paused_progress_ms,
+                    offset_ts=server_ts,
+                    audio_url=new_playback_state.audio_url,
+                ))
+            await clients.broadcast(room_id, pause_message.model_dump())
         else:
             logger.info(
                 "Playback already paused in room %s when player %s attempted to answer",
@@ -530,7 +549,7 @@ async def handle_submit_answer(
     # 获取下一个玩家（如果队列中还有玩家）
     # 使用 room_cache.get_answer_queue 获取排序后的 AnswerQueueItem 列表
     current_queue = await room_cache.get_answer_queue(room_id)
-    should_resume_playback = False
+    should_finish_answering = False
 
     if current_queue:
         # 找到当前玩家的位置
@@ -574,42 +593,19 @@ async def handle_submit_answer(
             # 队列无后续玩家（包括当前玩家未命中队列），恢复播放
             await room_cache.clear_room_current_answerer(room_id)
             await room_cache.sync_answer_queue_is_answering(room_id, -1)
-            should_resume_playback = True
+            should_finish_answering = True
             logger.info(
                 "No next player in queue after player %s submission in room %s",
                 player_id,
                 room_id,
             )
     else:
-        # 队列为空，直接恢复播放
-        should_resume_playback = True
+        # 队列为空，作答阶段结束，默认不自动恢复播放
+        should_finish_answering = True
 
-    if should_resume_playback:
-        # 获取当前播放状态
-        current_progress = await room_cache.get_room_play_progress(room_id)
-        server_ts = get_ts_ms()
-
-        # 更新Redis播放状态
-        await room_cache.update_room_playback_state(
-            room_id=room_id,
-            progress_ms=current_progress,
-            offset_ts=server_ts,
-            audio_url=None,
-        )
-
-        # 触发状态转换到 PLAYING_AUDIO（并广播）
-        await handle_round_state_transition(clients, client, room_id,
-                                            RoundState.PLAYING_AUDIO)
-
-        # 广播PLAY事件
-        play_control_data = PlayControlData(progress_ms=current_progress,
-                                            offset_ts=server_ts,
-                                            audio_url=None)
-        play_message = PlayMessage(data=play_control_data)
-        await clients.broadcast(room_id, play_message.model_dump())
-
+    if should_finish_answering:
         logger.info(
-            "Answering phase finished, resumed playback in room %s",
+            "Answering phase finished in room %s, keep playback paused by default",
             room_id,
         )
 
