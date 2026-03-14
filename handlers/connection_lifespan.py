@@ -39,14 +39,9 @@ async def on_connect(  # pylint: disable=too-many-statements
     """
     Handle client connection to a room.
 
-    This function is called when a client connects to a room. It performs the following operations:
-    1. Updates the player's online status in the room cache
-    2. Persists the online status to the database for the current session
-    3. Fetches the current room state with associated users, tag groups, and scores
-    4. Updates the room's player online status in cache
-    5. Retrieves the current playback state and answer queue for the room
-     6. Sends the room state to the connected client and broadcasts a player join message
-        to other clients
+    玩家断线重连时恢复其在线状态，但不广播加入消息。
+    新玩家加入房间需通过 RESTful API (POST /api/room/{roomid})，
+    该 API 已实现对局开始后禁止新玩家加入的逻辑。
 
     Args:
         session (AsyncSession): The async database session for executing queries and commits
@@ -59,48 +54,8 @@ async def on_connect(  # pylint: disable=too-many-statements
 
     Raises:
         Logs a warning if the room is not found in the database during connection
-
-    Note:
-        - The function ensures database persistence of online status within the current session,
-          as cl.user may be a cross-session object
-        - Uses asyncio.gather to concurrently send messages to avoid blocking subsequent code
-        - Excludes the connecting client from the broadcast join message
     """
     # pylint: disable=too-many-locals
-
-    # 检查是否是观战者用户（id为0）
-    is_spectator = cl.user.id == 0
-
-    # 只有非观战者用户才更新缓存和数据库状态
-    if not is_spectator:
-        # 这是验证部分
-        try:
-            user_obj = await crud.simple_authentication(session, cl.ws.cookies, room_id)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Authentication failed for client %s: %s",
-                         cl.user.id,
-                         e,
-                         exc_info=True)
-            return
-        try:
-            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
-            player_item.online = True
-            await room_cache.set_room_player(room_id, player_item)
-
-            cl.user.online = True
-
-            # 确保数据库中的在线状态在当前 session 内被持久化（cl.user 可能是跨 session 对象）
-            user_stmt = select(models.User).where(models.User.id == cl.user.id)
-            user_result = await session.execute(user_stmt)
-            user_obj = user_result.scalar_one_or_none()
-            if user_obj:
-                user_obj.online = True
-
-            await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Error updating player status for non-spectator: %s",
-                         e,
-                         exc_info=True)
 
     stmt = (select(models.Room).where(models.Room.id == room_id).options(
         selectinload(models.Room.users),
@@ -112,6 +67,40 @@ async def on_connect(  # pylint: disable=too-many-statements
     if room is None:
         logger.warning("Room %s not found during on_connect for client %s", room_id, cl)
         return
+
+    # 检查玩家是否已在房间中（断线重连）
+    # 新玩家必须通过 RESTful API 加入房间，该 API 已实现对局开始后禁止加入的逻辑
+    existing_player_ids = {u.id for u in room.users}
+    is_reconnecting = cl.user.id in existing_player_ids
+
+    # 验证玩家身份
+    try:
+        await crud.simple_authentication(session, cl.ws.cookies, room_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Authentication failed for client %s: %s",
+                     cl.user.id,
+                     e,
+                     exc_info=True)
+        return
+
+    # 更新玩家在线状态
+    try:
+        player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
+        player_item.online = True
+        await room_cache.set_room_player(room_id, player_item)
+
+        cl.user.online = True
+
+        # 确保数据库中的在线状态在当前 session 内被持久化
+        user_stmt = select(models.User).where(models.User.id == cl.user.id)
+        user_result = await session.execute(user_stmt)
+        user_obj = user_result.scalar_one_or_none()
+        if user_obj:
+            user_obj.online = True
+
+        await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error updating player status: %s", e, exc_info=True)
 
     # 连接时发送当前播放状态
     message = RoomSchema.ClientRoomState.model_validate(room)
@@ -131,19 +120,20 @@ async def on_connect(  # pylint: disable=too-many-statements
 
     room_state_message = RoomSchema.RoomStateMessage(data=message)
 
-    # 只有非观战者用户才广播加入消息
-    if not is_spectator:
+    # 发送房间状态给客户端
+    async def send_if_connected():
+        if cl.ws.client_state == WebSocketState.CONNECTED:
+            await cl.ws.send_json(room_state_message.model_dump())
+        else:
+            logger.warning("Client %s WebSocket not connected, skipping send",
+                           cl.user.id)
+
+    # 只有非断线重连的玩家才广播加入消息
+    if not is_reconnecting:
         try:
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             join_message = RoomSchema.PlayerJoinMessage(
                 data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-
-            async def send_if_connected():
-                if cl.ws.client_state == WebSocketState.CONNECTED:
-                    await cl.ws.send_json(room_state_message.model_dump())
-                else:
-                    logger.warning("Client %s WebSocket not connected, skipping send",
-                                   cl.user.id)
 
             res = await asyncio.gather(
                 *[
@@ -155,9 +145,7 @@ async def on_connect(  # pylint: disable=too-many-statements
                 return_exceptions=True,
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Error sending messages for non-spectator: %s",
-                         e,
-                         exc_info=True)
+            logger.error("Error sending messages: %s", e, exc_info=True)
 
             # 即使出错也要发送房间状态给客户端
             async def send_if_connected2():
@@ -172,16 +160,9 @@ async def on_connect(  # pylint: disable=too-many-statements
                 return_exceptions=True,
             )
     else:
-        # 观战者用户只发送房间状态，不广播加入消息
-        async def send_if_connected3():
-            if cl.ws.client_state == WebSocketState.CONNECTED:
-                await cl.ws.send_json(room_state_message.model_dump())
-            else:
-                logger.warning("Client %s WebSocket not connected, skipping send",
-                               cl.user.id)
-
+        # 断线重连只发送房间状态，不广播加入消息
         res = await asyncio.gather(
-            send_if_connected3(),
+            send_if_connected(),
             return_exceptions=True,
         )
 
@@ -206,14 +187,14 @@ async def on_disconnect(
     """
     Handle client disconnection from a room.
 
-    Closes the websocket connection, updates player status to offline,
-    broadcasts a leave message to other clients in the room, and persists
-    the offline status to the database and cache.
+    对局未开始：用户离开时清除全部信息（从房间移除）
+    对局开始后：保留全部信息，仅显示断联状态，支持断线重连
+    使用 try/finally 确保 clients.pop 一定执行
 
     Args:
         session: AsyncSession for database operations.
         cl: Client object representing the disconnected client.
-        clients: ClientManager instance managing all connected clients.
+        clients: ClientManager instance managing all connected connected clients.
         room_id: Unique identifier of the room the client is leaving.
 
     Returns:
@@ -224,34 +205,69 @@ async def on_disconnect(
     except Exception:  # pylint: disable=broad-exception-caught
         logger.warning("Failed to close websocket for client %s", cl)
 
-    # 检查是否是观战者用户（id为0）
-    is_spectator = cl.user.id == 0
+    try:
+        # 获取房间状态以判断对局是否开始
+        stmt = select(models.Room).where(models.Room.id == room_id)
+        result = await session.execute(stmt)
+        room = result.scalar_one_or_none()
+        
+        if room is None:
+            logger.warning("Room %s not found during on_disconnect for client %s", room_id, cl)
+            return
 
-    # 只有非观战者用户才更新状态和广播离开消息
-    if not is_spectator:
-        try:
+        # 判断对局是否已开始
+        # room.status: 0=waiting, 1=playing, 2=ended
+        # room.round_state: 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED
+        is_game_started = room.status in (1, 2) or (room.round_state or 0) > 0
+
+        if not is_game_started:
+            # 对局未开始：清除玩家全部信息（从房间移除）
+            logger.info(
+                "Player %s left room %s before game started, removing from room",
+                cl.user.id,
+                room_id,
+            )
+            
+            # 从数据库房间用户列表中移除
+            if cl.user in room.users:
+                room.users.remove(cl.user)
+            
+            # 从缓存中移除玩家
+            await room_cache.remove_room_player(room_id, cl.user.id)
+            
+            # 广播玩家离开消息
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             player_item.online = False
-
             leave_message = RoomSchema.PlayerLeaveMessage(
                 data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
             await clients.broadcast(room_id,
                                     leave_message.model_dump(),
                                     excluded_clients={cl})
-
-            user = select(models.User).where(models.User.id == cl.user.id)
-            result = await session.execute(user)
-            user_obj = result.scalar_one_or_none()
-            if user_obj:
-                user_obj.online = False
+        else:
+            # 对局已开始：仅更新离线状态，保留玩家信息
+            logger.info(
+                "Player %s disconnected from room %s during game, marking as offline",
+                cl.user.id,
+                room_id,
+            )
+            
+            # 更新缓存中的在线状态
+            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
+            player_item.online = False
             await room_cache.set_room_player(room_id, player_item)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Error updating player status on disconnect: %s",
-                         e,
-                         exc_info=True)
-
-    # 无论是否是观战者，都从客户端管理器中移除
-    clients.pop(room_id, cl)
+            await room_cache.update_room_player_online_status(room_id, cl.user.id, False)
+            
+            # 广播玩家离线消息（但不从房间移除）
+            leave_message = RoomSchema.PlayerLeaveMessage(
+                data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
+            await clients.broadcast(room_id,
+                                    leave_message.model_dump(),
+                                    excluded_clients={cl})
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error handling disconnect for client %s: %s", cl, e, exc_info=True)
+    finally:
+        # 无论如何都要从客户端管理器中移除（异常保护）
+        clients.pop(room_id, cl)
 
 
 @regist(GameEventType.START_POS_UPDATE, data_validator=StartPosUpdateData)
