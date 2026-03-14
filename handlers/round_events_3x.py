@@ -76,6 +76,50 @@ async def handle_game_start(
             )
             return
 
+        # 开始游戏前校验：队列前3首（不足3首则按实际数量）歌曲必须已下载完成（基于 tasks 表）
+        required_precheck_count = min(3, len(song_queue))
+        precheck_song_ids = song_queue[:required_precheck_count]
+        if required_precheck_count < 3:
+            logger.info(
+                "Room %s has only %d songs in queue, precheck will validate all available songs",
+                room_id,
+                required_precheck_count,
+            )
+
+        if precheck_song_ids:
+            songs_stmt = select(models.Song).where(models.Song.id.in_(precheck_song_ids))
+            songs_res = await session.execute(songs_stmt)
+            song_map = {song.id: song for song in songs_res.scalars().all()}
+
+            not_ready_song_ids: list[int] = []
+            for song_id in precheck_song_ids:
+                song = song_map.get(song_id)
+                if not song:
+                    not_ready_song_ids.append(song_id)
+                    continue
+
+                # 仅对有平台歌曲ID的歌曲执行下载任务状态校验
+                if not song.platform_song_id:
+                    continue
+
+                task_id = f"download_and_cache_song:{song.platform_song_id}"
+                task_record = await crud.get_task_record_by_task_id(session, task_id)
+                if not task_record or task_record.status != "success":
+                    not_ready_song_ids.append(song_id)
+
+            if not_ready_song_ids:
+                logger.warning(
+                    "Room %s cannot start game: first %d songs are not fully downloaded, song_ids=%s",
+                    room_id,
+                    required_precheck_count,
+                    not_ready_song_ids,
+                )
+                await client.send_error(
+                    GameEventType.GAME_START,
+                    f"Cannot start game: first {required_precheck_count} songs are not downloaded yet",
+                )
+                return
+
         # 使用 RoomStateManager 处理游戏开始
         if not await RoomStateManager.start_game(room_id, session):
             await client.send_error(GameEventType.GAME_START, "Failed to start game")
@@ -217,7 +261,7 @@ async def handle_skip_round(
 
         # 清理上一轮的作答状态
         await room_cache.clear_answer_queue(room_id)
-        await room_cache.set_room_current_answerer(room_id, "")
+        await room_cache.clear_room_current_answerer(room_id)
 
         # 2) 为新轮次生成可播放地址
         next_song_id = song_queue[next_index]
@@ -327,6 +371,14 @@ async def handle_attempt_answer(
         server_ts,
     )
 
+    # 在基础校验完成后再向客户端广播（转发原始事件）共前端维护抢答队列状态，避免后端全量广播队列导致性能问题
+    # 此时前端可以先自主暂停，然后在后续收到 PAUSE 事件时再进一步调整播放状态
+    await clients.broadcast(
+        room_id,
+        data.model_dump(),
+        excluded_clients={client},
+    )
+
     if playback_state := await room_cache.get_room_playback_state(room_id):
         logger.debug(
             "Current playback state for room %s: %s",
@@ -346,47 +398,26 @@ async def handle_attempt_answer(
                 room_id,
                 player_id,
             )
-        new_queue = await room_cache.get_answer_queue(room_id)
-        await clients.broadcast(
-            room_id,
-            AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
+
+        # 尝试让前端自己依据抢答时间戳和当前播放状态来计算抢答队列，避免后端大量全量广播
+        # # new_queue = await room_cache.get_answer_queue(room_id)
+        # await clients.broadcast(
+        #     room_id,
+        #     AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
     else:
         logger.warning(
             "No playback state found for room %s when player %s attempted to answer",
             room_id,
             player_id,
         )
+        await client.send_error(
+            GameEventType.ATTEMPT_ANSWER.value,
+            "Failed to join answer queue: No playback state",
+        )
+        return
 
-    # if was_empty:
-    #     # 使用首抢玩家上报的当前播放进度，避免后端旧缓存导致进度归零
-    #     pause_progress = max(0, progress_ms)
-
-    #     # 更新Redis播放状态
-    #     await room_cache.update_room_playback_state(
-    #         room_id=room_id,
-    #         round_state=RoundState.ANSWERING.name,
-    #         progress_ms=pause_progress,
-    #         offset_ts=offset_ts,  # 使用抢答时间戳作为offset_ts
-    #         audio_url=None,
-    #         event_ts=server_ts,
-    #         event_name="PAUSE",
-    #     )
-
-    #     # 触发状态转换到 ANSWERING（并广播）
-    #     await handle_round_state_transition(clients, client, room_id,
-    #                                         RoundState.ANSWERING)
-
-    #     # 首次抢答时广播PAUSE信令，带当前播放进度以同步所有客户端
-    #     pause_control_data = PlayControlData(
-    #         progress_ms=pause_progress,
-    #         offset_ts=offset_ts,
-    #         audio_url=None,
-    #     )
-    #     pause_message = PauseMessage(data=pause_control_data)
-    #     await clients.broadcast(room_id, pause_message.model_dump())
-
-    #     # 设置当前作答玩家
-    #     await room_cache.set_room_current_answerer(room_id, player_id)
+    # 设置当前作答玩家
+    await room_cache.set_room_current_answerer(room_id, player_id)
 
     #     # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
     #     your_turn_data = YourTurnData(user_id=int(player_id))
@@ -503,13 +534,13 @@ async def handle_submit_answer(
         if current_player_index >= 0 and current_player_index + 1 < len(current_queue):
             # 有下一个玩家
             next_player_item = current_queue[current_player_index + 1]
-            next_player = str(next_player_item.player_id)
+            next_player = next_player_item.player_id
             await room_cache.set_room_current_answerer(room_id, next_player)
 
             # 在房间客户端中查找下一个玩家的连接
             next_client_found = None
             for room_client in clients.get_clients(room_id):
-                if str(room_client.user.id) == next_player:
+                if room_client.user.id == next_player:
                     next_client_found = room_client
                     break
 
@@ -531,7 +562,7 @@ async def handle_submit_answer(
             logger.info("Next player in queue: %s", next_player)
         else:
             # 没有下一个玩家，清空当前作答者
-            await room_cache.set_room_current_answerer(room_id, "")
+            await room_cache.clear_room_current_answerer(room_id)
             logger.info(
                 "No next player in queue after player %s submission in room %s",
                 player_id,
@@ -546,12 +577,9 @@ async def handle_submit_answer(
         # 更新Redis播放状态
         await room_cache.update_room_playback_state(
             room_id=room_id,
-            round_state=RoundState.PLAYING_AUDIO.name,
             progress_ms=current_progress,
             offset_ts=server_ts,
             audio_url=None,
-            event_ts=server_ts,
-            event_name="PLAY",
         )
 
         # 触发状态转换到 PLAYING_AUDIO（并广播）

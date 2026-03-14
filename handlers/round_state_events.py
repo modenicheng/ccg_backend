@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 
 def build_round_state_update_message(
-    target_round_state: RoundState,) -> RoundStateUpdateMessage:
+        target_round_state: RoundState) -> RoundStateUpdateMessage:
     """构建回合状态更新消息"""
     round_state_update_data = RoundStateUpdateData(
         round_state=target_round_state.value,

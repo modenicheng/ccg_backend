@@ -9,7 +9,6 @@ from utils.enumerations import GameEventType
 
 class GameStartData(BaseModel):
     """游戏开始数据"""
-    pass  # 可能不需要额外数据，但保留结构
 
 
 class GameStartMessage(MessageBase):
@@ -31,7 +30,6 @@ class RoundStartMessage(MessageBase):
 
 class RoundEndData(BaseModel):
     """回合结束数据"""
-    pass  # 可能不需要额外数据，但保留结构
 
 
 class AnswerQueueData(BaseModel):

@@ -1,32 +1,42 @@
 from __future__ import annotations
+"""Tasks module for huey background jobs."""
+# pylint: disable=wrong-import-position,missing-module-docstring,pointless-string-statement
+
+# Standard library imports
+import os
+import asyncio
+import logging
+import threading
 from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 from urllib.parse import urlparse
 
+# Third-party imports
 from huey import RedisHuey
-import os
 import httpx
-import threading
-
 import qqmusic_api as qapi
-from config import app_config
+from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
+from sqlalchemy.ext.asyncio import AsyncSession
+from pydub import AudioSegment
 
+# Local application imports
+from config import app_config
 from db.crud import (
     create_or_update_songlist,
     create_or_update_songs,
     update_song_cached_path,
     create_task_record,
 )
-from db.session import AsyncSessionLocal, engine
-from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
+from db.session import session_scope, engine
 from utils import parse_cookie_string
-import asyncio
-import logging
-# from db.session import AsyncSessionLocal
-# from db.models import Song
 
 logger = logging.getLogger("huey")
+
+
+def _download_task_id(platform_song_id: str) -> str:
+    """Build deterministic task id for song download status tracking."""
+    return f"download_and_cache_song:{platform_song_id}"
 
 _ASYNC_LOOP_LOCK = threading.Lock()
 _ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
@@ -35,8 +45,6 @@ _ASYNC_LOOP_THREAD: threading.Thread | None = None
 REDIS_URI = app_config.redis_url
 
 huey = RedisHuey("ccg-backend", url=REDIS_URI)
-
-from pydub import AudioSegment
 
 SONGLIST_FETCH_CONCURRENCY = app_config.songlist_fetch_concurrency
 SONGLIST_FETCH_RETRIES = app_config.songlist_fetch_retries
@@ -50,7 +58,7 @@ QQ_MUSIC_COOKIE = app_config.qq_music_cookie
 T = TypeVar("T")
 
 
-def _to_jsonable(value: Any):
+def _to_jsonable(value: Any):  # pylint: disable=too-many-return-statements
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, datetime):
@@ -75,12 +83,13 @@ def _to_jsonable(value: Any):
     return str(value)
 
 
-async def _persist_task_state(
+async def _persist_task_state(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     task_id: str,
     status: str,
     task_name: str,
     result: Any = None,
     error: str | None = None,
+    session: AsyncSession | None = None,
 ) -> None:
     payload: dict[str, Any] = {}
     if result is not None:
@@ -89,26 +98,37 @@ async def _persist_task_state(
     if error is not None:
         payload["error"] = error
 
-    async with AsyncSessionLocal() as session:
+    async def _write_task_state(db_session: AsyncSession) -> None:
+        await create_task_record(
+            session=db_session,
+            task_id=task_id,
+            task_name=task_name,
+            status=status,
+            result_json=payload or None,
+        )
+
+    if session is not None:
         try:
-            await create_task_record(
-                session=session,
-                task_id=task_id,
-                task_name=task_name,
-                status=status,
-                result_json=payload or None,
-            )
-            await session.commit()
-        except Exception as db_err:
-            await session.rollback()
+            await _write_task_state(session)
+        except Exception as db_err:  # pylint: disable=broad-exception-caught
             logger.error(
-                f"Failed to persist task state for {task_id} ({task_name}): {db_err}",
+                "Failed to persist task state for %s (%s): %s", task_id, task_name, db_err,
+                exc_info=True,
+            )
+        return
+
+    async with session_scope() as managed_session:
+        try:
+            await _write_task_state(managed_session)
+        except Exception as db_err:  # pylint: disable=broad-exception-caught
+            logger.error(
+                "Failed to persist task state for %s (%s): %s", task_id, task_name, db_err,
                 exc_info=True,
             )
 
 
 def _ensure_background_event_loop() -> asyncio.AbstractEventLoop:
-    global _ASYNC_LOOP, _ASYNC_LOOP_THREAD
+    global _ASYNC_LOOP, _ASYNC_LOOP_THREAD  # pylint: disable=global-statement
     with _ASYNC_LOOP_LOCK:
         if _ASYNC_LOOP is not None and not _ASYNC_LOOP.is_closed():
             return _ASYNC_LOOP
@@ -147,13 +167,14 @@ async def _with_retry(
     for attempt in range(1, max(1, retries) + 1):
         try:
             return await task_factory()
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-exception-caught  # pylint: disable=broad-exception-caught
             last_error = err
             if attempt >= max(1, retries):
                 break
             sleep_seconds = max(0.0, backoff_seconds) * (2**(attempt - 1))
             logger.warning(
-                f"{operation_name} failed on attempt {attempt}/{max(1, retries)}, retrying in {sleep_seconds:.2f}s: {err}"
+                "%s failed on attempt %s/%s, retrying in %.2fs: %s",
+                operation_name, attempt, max(1, retries), sleep_seconds, err
             )
             await asyncio.sleep(sleep_seconds)
 
@@ -178,7 +199,7 @@ def _resolve_audio_download_path(mid: str,
                   os.path.join(project_root, configured_dir))
     os.makedirs(target_dir, exist_ok=True)
 
-    return os.path.join(target_dir, f"{safe_mid}{ext}")
+    return os.path.join(target_dir, f"{safe_mid}{ext}")  # pylint: disable=line-too-long
 
 
 if QQ_MUSIC_COOKIE:
@@ -188,7 +209,7 @@ if QQ_MUSIC_COOKIE:
         qapi.get_session().credential = credential
     else:
         logger.warning(
-            "CCG_QQ_MUSIC_COOKIE is set but failed to parse; using default qqmusic_api session without credential"
+            "CCG_QQ_MUSIC_COOKIE is set but failed to parse; using default qqmusic_api session without credential"  # pylint: disable=line-too-long
         )
 else:
     logger.warning(
@@ -211,12 +232,23 @@ def convert_to_opus(input_path, output_path=None, bitrate="128k"):
 
     # 导出为 Opus
     audio.export(output_path, format="opus", bitrate=bitrate)
-    logger.info(f"Audio converted to opus: {output_path}")
+    logger.info("Audio converted to opus: %s", output_path)
     return output_path
 
 
 @huey.task()
 def download_audio_file(url, save_path=None, mid: str | None = None):
+    """
+    Download audio file from URL and save to specified path.
+
+    Args:
+        url: Audio file URL
+        save_path: Optional local path to save the file
+        mid: Optional song MID identifier
+
+    Returns:
+        str or None: Path to downloaded file or None on failure
+    """
     return _run_async(_download_audio_file_impl(url=url, save_path=save_path, mid=mid))
 
 
@@ -240,10 +272,10 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
         response.raise_for_status()
         with open(final_save_path, "wb") as f:
             f.write(response.content)
-        logger.info(f"Audio downloaded successfully: {final_save_path}")
+        logger.info("Audio downloaded successfully: %s", final_save_path)
         return final_save_path
-    except Exception as e:
-        logger.error(f"Error when downloading audio from {url}: {e}", exc_info=True)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error when downloading audio from %s: %s", url, e, exc_info=True)
         return None
 
 
@@ -267,17 +299,17 @@ async def _get_song_url(
         )
         url = result.get(mid)
         if not url:
-            logger.error(f"No URL found for song mid {mid}")
+            logger.error("No URL found for song mid %s", mid)
         return url
-    except Exception as e:
-        logger.error(f"Error fetching song URL for mid {mid}: {e}", exc_info=True)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error fetching song URL for mid %s: %s", mid, e, exc_info=True)
         return None
 
 
 @huey.task()
 def download_and_cache_song(mid: str, save_path: str | None = None):
     """A function that wrap the inner func. Run this func will push the task to huey.
-    Run the inner func will directly execute the logic, which is more suitable for testing and debugging.
+    Run the inner func will directly execute the logic, which is more suitable for testing and debugging.  # pylint: disable=line-too-long
 
     Args:
         mid (str): _description_
@@ -295,43 +327,89 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
         logger.error("download_and_cache_song got empty mid")
         return None
 
+    task_id = _download_task_id(mid)
+    await _persist_task_state(
+        task_id=task_id,
+        task_name="download_and_cache_song",
+        status="running",
+        result={"platform": "qq", "platform_song_id": mid},
+    )
+
     song_url = await _get_song_url(mid, filetype=qapi.song.SongFileType.OGG_320)
     if not song_url:
+        await _persist_task_state(
+            task_id=task_id,
+            task_name="download_and_cache_song",
+            status="failed",
+            error="Failed to resolve song url",
+        )
         return None
 
     downloaded_path = await _download_audio_file_impl(song_url,
                                                       save_path=save_path,
                                                       mid=mid)
     if not downloaded_path:
+        await _persist_task_state(
+            task_id=task_id,
+            task_name="download_and_cache_song",
+            status="failed",
+            error="Failed to download audio file",
+        )
         return None
 
-    async with AsyncSessionLocal() as session:
-        try:
+    try:
+        async with session_scope() as session:
             song = await update_song_cached_path(
                 session=session,
                 platform="qq",
                 platform_song_id=mid,
                 cached_path=downloaded_path,
             )
-            await session.commit()
             if not song:
                 logger.warning(
-                    f"Audio downloaded for {mid} but song not found in DB, skipped cached_path update: {downloaded_path}"
+                    "Audio downloaded for %s but song not found in DB, skipped cached_path update: %s", mid, downloaded_path  # pylint: disable=line-too-long
                 )
             else:
-                logger.info(f"Updated cached_path for {mid}: {downloaded_path}")
+                logger.info("Updated cached_path for %s: %s", mid, downloaded_path)
+
+            await _persist_task_state(
+                task_id=task_id,
+                task_name="download_and_cache_song",
+                status="success",
+                result={
+                    "platform": "qq",
+                    "platform_song_id": mid,
+                    "cached_path": downloaded_path,
+                },
+                session=session,
+            )
             return downloaded_path
-        except Exception as err:
-            await session.rollback()
-            logger.error(f"Failed to update cached_path for {mid}: {err}",
-                         exc_info=True)
-            return None
+    except Exception as err:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to update cached_path for %s: %s", mid, err, exc_info=True)
+        await _persist_task_state(
+            task_id=task_id,
+            task_name="download_and_cache_song",
+            status="failed",
+            error=f"Failed to update song cached_path: {err}",
+        )
+        return None
 
 
 @huey.task()
 def fetch_songlist(songlist_id: int,
                    cookie_str: str | None = None,
                    task_id: str | None = None):
+    """
+    Fetch songlist from QQ Music and persist to database.
+
+    Args:
+        songlist_id: QQ Music songlist ID
+        cookie_str: Optional cookie string for authentication
+        task_id: Optional task ID for state tracking
+
+    Returns:
+        dict or None: Songlist data or None on failure
+    """
     if task_id:
         _run_async(
             _persist_task_state(task_id=task_id,
@@ -372,7 +450,7 @@ def fetch_songlist(songlist_id: int,
         raise
 
 
-async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
+async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):  # pylint: disable=too-many-locals
     """
     使用 qqmusic_api 获取歌单信息。
     {
@@ -381,7 +459,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
             "host_uin": 939861972,
             "dirid": 8,
             "title": "崩铁角色+地区",
-            "picurl": "https://music-file.y.qq.com/songlist/user/NKoqNeC5NKSA/68a3ff5b/HjXL0fy6EiixGOe8lSMEtc_190f80.jpg?imageView2/4/w/600/h/600",
+            "picurl": "https://music-file.y.qq.com/songlist/user/NKoqNeC5NKSA/68a3ff5b/HjXL0fy6EiixGOe8lSMEtc_190f80.jpg?imageView2/4/w/600/h/600",  # pylint: disable=line-too-long
             "picid": 0,
             "desc": "",
             "vec_tagid": [
@@ -434,10 +512,10 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
     }
     """
     if cookie_str:
-        credential = qapi.Credential.from_cookies_dict(parse_cookie_string(cookie_str))
+        credential = qapi.Credential.from_cookies_dict(parse_cookie_string(cookie_str))  # pylint: disable=redefined-outer-name
         qapi.get_session().credential = credential
         logger.info(
-            f"Using custom credential from provided cookie string for fetching songlist {songlist_id}"
+            "Using custom credential from provided cookie string for fetching songlist %s", songlist_id  # pylint: disable=line-too-long
         )
 
     try:
@@ -461,16 +539,16 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                         songlist_page = await qapi.songlist.get_detail(songlist_id,
                                                                        page=page)
                         return songlist_page["songlist"]
-                    except Exception as page_err:
+                    except Exception as page_err:  # pylint: disable=broad-exception-caught
                         if attempt >= SONGLIST_FETCH_RETRIES:
                             logger.error(
-                                f"Failed to fetch page {page} of songlist {songlist_id} after {attempt} attempts: {page_err}"
+                                "Failed to fetch page %s of songlist %s after %s attempts: %s", page, songlist_id, attempt, page_err  # pylint: disable=line-too-long
                             )
                             raise
                         sleep_seconds = SONGLIST_FETCH_BACKOFF_SECONDS * (2**(attempt -
                                                                               1))
                         logger.warning(
-                            f"Fetch page {page} failed on attempt {attempt}/{SONGLIST_FETCH_RETRIES}, retrying in {sleep_seconds:.2f}s: {page_err}"
+                            "Fetch page %s failed on attempt %s/%s, retrying in %.2fs: %s", page, attempt, SONGLIST_FETCH_RETRIES, sleep_seconds, page_err  # pylint: disable=line-too-long
                         )
                         await asyncio.sleep(sleep_seconds)
 
@@ -484,8 +562,8 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
 
         db_retries = max(2, SONG_URL_RETRIES)
         for attempt in range(1, db_retries + 1):
-            async with AsyncSessionLocal() as session:
-                try:
+            try:
+                async with session_scope() as session:
                     songlist = await create_or_update_songlist(
                         session=session,
                         platform="qq",
@@ -501,38 +579,36 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                         songlist_id=songlist.id,
                         songs=songs,
                     )
-                    await session.commit()
 
                     logger.info(
-                        f"Fetched songlist {songlist_id}: {title} with {total} songs, persisted {len(db_songs)} songs"
+                        "Fetched songlist %s: %s with %s songs, persisted %s songs", songlist_id, title, total, len(db_songs)  # pylint: disable=line-too-long
                     )
                     return {
                         "songlist": songlist,
                         "songs": db_songs,
                     }
-                except SQLAlchemyInterfaceError as db_err:
-                    await session.rollback()
-                    err_text = str(db_err).lower()
-                    if "another operation is in progress" not in err_text:
-                        raise
+            except SQLAlchemyInterfaceError as db_err:
+                err_text = str(db_err).lower()
+                if "another operation is in progress" not in err_text:
+                    raise
 
-                    if attempt >= db_retries:
-                        raise
+                if attempt >= db_retries:
+                    raise
 
-                    logger.warning(
-                        f"DB operation hit asyncpg busy-connection error on attempt {attempt}/{db_retries}, disposing engine and retrying: {db_err}"
-                    )
-                    await engine.dispose()
-                    sleep_seconds = max(0.1,
-                                        SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
-                    await asyncio.sleep(sleep_seconds)
+                logger.warning(
+                    "DB operation hit asyncpg busy-connection error on attempt %s/%s, disposing engine and retrying: %s", attempt, db_retries, db_err  # pylint: disable=line-too-long
+                )
+                await engine.dispose()
+                sleep_seconds = max(0.1,
+                                    SONG_URL_BACKOFF_SECONDS) * (2**(attempt - 1))
+                await asyncio.sleep(sleep_seconds)
 
         return None
     except KeyError as e:
-        logger.error(f"KeyError fetching songlist: {e}", exc_info=True)
+        logger.error("KeyError fetching songlist: %s", e, exc_info=True)
         return None
-    except Exception as e:
-        logger.error(f"Error fetching songlist: {e}", exc_info=True)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error fetching songlist: %s", e, exc_info=True)
         return None
 
 

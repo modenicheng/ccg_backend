@@ -1,28 +1,29 @@
+"""Room-related API endpoints for CCG backend."""
+
 from __future__ import annotations
+import secrets
+import string
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from db.models import Room, User, TagGroup, RoomStatusORM
+from db.session import get_db
+from cache.connection import get_redis
 from schemas.room import JoinRoomRequest, JoinRoomResponse
 from schemas.user import UserLogin, BaseUser
 from schemas.tag import TagGroupResponse
-from utils import get_logger
 from schemas import (
     CreateRoomResponse,
     PatchRoomRequest,
     RoomInfoResponse,
     CreateRoomRequest,
 )
-
-from fastapi import APIRouter, HTTPException, Depends
-import secrets
-import string
-from cache.connection import get_redis
-from cache import room_cache
-from uuid import uuid4
-from db.session import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -53,7 +54,7 @@ async def create_room(
     info: CreateRoomRequest,
     session: AsyncSession = Depends(get_db)) -> CreateRoomResponse:
     room_id = generate_room_id()
-    logger.info(f"Creating room with ID: {room_id}")
+    logger.info("Creating room with ID: %s", room_id)
 
     owner = User(username=info.host_name,
                  is_owner=True,
@@ -65,9 +66,9 @@ async def create_room(
     session.add(new_room)
 
     try:
-        redis = await get_redis()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Redis unavailable")
+        await get_redis()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Redis unavailable") from exc
     await session.commit()
 
     return CreateRoomResponse(
@@ -98,9 +99,9 @@ async def join_room(roomid: str,
     try:
         session.add(new_user)
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         raise HTTPException(status_code=400,
-                            detail="Username already taken in this room")
+                            detail="Username already taken in this room") from exc
     return JoinRoomResponse(
         room_id=roomid,
         user=UserLogin.model_validate(new_user),

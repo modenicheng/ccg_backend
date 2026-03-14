@@ -38,7 +38,7 @@ async def on_connect(  # pylint: disable=too-many-statements
     """
     Handle client connection to a room.
 
-    玩家断线重连时恢复其在线状态，但不广播加入消息。
+    所有连接（含断线重连）均广播加入消息。
     新玩家加入房间需通过 RESTful API (POST /api/room/{roomid})，
     该 API 已实现对局开始后禁止新玩家加入的逻辑。
 
@@ -67,11 +67,6 @@ async def on_connect(  # pylint: disable=too-many-statements
         logger.warning("Room %s not found during on_connect for client %s", room_id, cl)
         return
 
-    # 检查玩家是否已在房间中（断线重连）
-    # 新玩家必须通过 RESTful API 加入房间，该 API 已实现对局开始后禁止加入的逻辑
-    existing_player_ids = {u.id for u in room.users}
-    is_reconnecting = cl.user.id in existing_player_ids
-
     # 验证玩家身份
     try:
         await crud.simple_authentication(session, cl.ws.cookies, room_id)
@@ -86,7 +81,6 @@ async def on_connect(  # pylint: disable=too-many-statements
     try:
         player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
         player_item.online = True
-        await room_cache.set_room_player(room_id, player_item)
 
         cl.user.online = True
 
@@ -97,7 +91,6 @@ async def on_connect(  # pylint: disable=too-many-statements
         if user_obj:
             user_obj.online = True
 
-        await room_cache.update_room_player_online_status(room_id, cl.user.id, True)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error updating player status: %s", e, exc_info=True)
 
@@ -127,39 +120,22 @@ async def on_connect(  # pylint: disable=too-many-statements
             logger.warning("Client %s WebSocket not connected, skipping send",
                            cl.user.id)
 
-    # 只有非断线重连的玩家才广播加入消息
-    if not is_reconnecting:
-        try:
-            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
-            join_message = RoomSchema.PlayerJoinMessage(
-                data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
+    try:
+        player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
+        join_message = RoomSchema.PlayerJoinMessage(
+            data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
 
-            res = await asyncio.gather(
-                *[
-                    send_if_connected(),
-                    clients.broadcast(room_id,
-                                      join_message.model_dump(),
-                                      excluded_clients={cl}),
-                ],
-                return_exceptions=True,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error("Error sending messages: %s", e, exc_info=True)
+        res = await asyncio.gather(
+            send_if_connected(),
+            clients.broadcast(room_id,
+                              join_message.model_dump(),
+                              excluded_clients={cl}),
+            return_exceptions=True,
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error sending messages: %s", e, exc_info=True)
 
-            # 即使出错也要发送房间状态给客户端
-            async def send_if_connected2():
-                if cl.ws.client_state == WebSocketState.CONNECTED:
-                    await cl.ws.send_json(room_state_message.model_dump())
-                else:
-                    logger.warning("Client %s WebSocket not connected, skipping send",
-                                   cl.user.id)
-
-            res = await asyncio.gather(
-                send_if_connected2(),
-                return_exceptions=True,
-            )
-    else:
-        # 断线重连只发送房间状态，不广播加入消息
+        # 即使出错也要尝试发送房间状态给客户端
         res = await asyncio.gather(
             send_if_connected(),
             return_exceptions=True,
@@ -209,9 +185,10 @@ async def on_disconnect(
         stmt = select(models.Room).where(models.Room.id == room_id)
         result = await session.execute(stmt)
         room = result.scalar_one_or_none()
-        
+
         if room is None:
-            logger.warning("Room %s not found during on_disconnect for client %s", room_id, cl)
+            logger.warning("Room %s not found during on_disconnect for client %s",
+                           room_id, cl)
             return
 
         # 判断对局是否已开始
@@ -226,14 +203,18 @@ async def on_disconnect(
                 cl.user.id,
                 room_id,
             )
-            
+
             # 从数据库房间用户列表中移除
             if cl.user in room.users:
                 room.users.remove(cl.user)
-            
-            # 从缓存中移除玩家
-            await room_cache.remove_room_player(room_id, cl.user.id)
-            
+
+            cl.user.online = False
+            user_stmt = select(models.User).where(models.User.id == cl.user.id)
+            user_result = await session.execute(user_stmt)
+            user_obj = user_result.scalar_one_or_none()
+            if user_obj:
+                user_obj.online = False
+
             # 广播玩家离开消息
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             player_item.online = False
@@ -249,12 +230,16 @@ async def on_disconnect(
                 cl.user.id,
                 room_id,
             )
-            
-            # 更新缓存中的在线状态
+
+            cl.user.online = False
+            user_stmt = select(models.User).where(models.User.id == cl.user.id)
+            user_result = await session.execute(user_stmt)
+            user_obj = user_result.scalar_one_or_none()
+            if user_obj:
+                user_obj.online = False
+
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             player_item.online = False
-            await room_cache.update_room_player_online_status(room_id, cl.user.id, False)
-            
             # 广播玩家离线消息（但不从房间移除）
             leave_message = RoomSchema.PlayerLeaveMessage(
                 data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
@@ -262,7 +247,10 @@ async def on_disconnect(
                                     leave_message.model_dump(),
                                     excluded_clients={cl})
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error handling disconnect for client %s: %s", cl, e, exc_info=True)
+        logger.error("Error handling disconnect for client %s: %s",
+                     cl,
+                     e,
+                     exc_info=True)
     finally:
         # 无论如何都要从客户端管理器中移除（异常保护）
         clients.pop(room_id, cl)
@@ -304,6 +292,7 @@ async def handle_start_pos_update(
             logger.error("Failed to update start position for room %s", room_id)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling start position update: %s", e)
+
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
 async def handle_game_over_manual(

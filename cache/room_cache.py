@@ -343,7 +343,8 @@ async def remove_from_answer_queue(redis: Redis, room_id: str,
     player_id_key = str(player_id)
 
     # 优先通过索引删除，避免遍历 + JSON 反序列化
-    member_json = await cast(Awaitable[str | None], redis.hget(index_key, player_id_key))
+    member_json = await cast(Awaitable[str | None],
+                             redis.hget(index_key, player_id_key))
     if member_json:
         removed = await cast(Awaitable[int], redis.zrem(key, member_json))
         await cast(Awaitable[int], redis.hdel(index_key, player_id_key))
@@ -373,18 +374,26 @@ async def remove_from_answer_queue(redis: Redis, room_id: str,
 
 
 @handle_redis_operation(default_return=None, log_operation="getting current answerer")
-async def get_room_current_answerer(redis: Redis, room_id: str) -> str | None:
-    """获取当前答题者（保留 Redis 实现）"""
+async def get_room_current_answerer(redis: Redis, room_id: str) -> int | None:
+    """获取当前答题者"""
     key = RedisKeys.answerer(room_id)
-    answerer = await cast(Awaitable[str | None], redis.get(key))
+    answerer = await cast(Awaitable[int | None], redis.get(key))
     return answerer
 
 
 @handle_redis_operation(default_return=False, log_operation="setting current answerer")
-async def set_room_current_answerer(redis: Redis, room_id: str, player_id: str) -> bool:
-    """设置当前答题者（保留 Redis 实现）"""
+async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) -> bool:
+    """设置当前答题者"""
     key = RedisKeys.answerer(room_id)
     await cast(Awaitable, redis.set(key, player_id, ex=ROOM_TTL_SECONDS))
+    return True
+
+
+@handle_redis_operation(default_return=False, log_operation="clearing current answerer")
+async def clear_room_current_answerer(redis: Redis, room_id: str) -> bool:
+    """清除当前答题者"""
+    key = RedisKeys.answerer(room_id)
+    await cast(Awaitable, redis.delete(key))
     return True
 
 
