@@ -21,6 +21,23 @@ from .room_song_related import (get_room_songs, shuffle_room_songs, add_songs_to
                                 fetch_room_object)
 from .song_related import (create_or_update_songlist, create_or_update_song,
                            create_or_update_songs, update_song_cached_path)
+from .room_state_related import (
+    get_room_with_state,
+    get_room_players,
+    get_player_by_id,
+    update_player_online_status,
+    set_all_room_players_offline,
+    set_room_start_position,
+)
+from .room_state_cache_compat import (
+    load_room_state,
+    save_room_state,
+    get_room_players as get_room_players_cache,
+    set_room_player,
+    get_room_player,
+    update_room_player_online_status,
+    remove_room_player,
+)
 
 __all__ = [
     "get_or_create_audio_token",
@@ -59,4 +76,19 @@ __all__ = [
     "create_or_update_song",
     "create_or_update_songs",
     "update_song_cached_path",
+    # Room state related (SQL-backed)
+    "get_room_with_state",
+    "get_room_players",
+    "get_player_by_id",
+    "update_player_online_status",
+    "set_all_room_players_offline",
+    "set_room_start_position",
+    # Room state compatibility APIs migrated from cache.room_cache
+    "load_room_state",
+    "save_room_state",
+    "get_room_players_cache",
+    "set_room_player",
+    "get_room_player",
+    "update_room_player_online_status",
+    "remove_room_player",
 ]

@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 分数计算工具
 提供玩家分数计算相关功能
 """
+from __future__ import annotations
 
 
 def calculate_player_scores(

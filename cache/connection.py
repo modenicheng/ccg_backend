@@ -1,7 +1,10 @@
 from __future__ import annotations
+
+from urllib.parse import urlparse
+
 import redis.asyncio as redis
 from redis.asyncio import Redis
-from typing import Optional, Awaitable, cast
+from typing import Awaitable, cast
 
 from config import app_config
 from utils import get_logger
@@ -13,10 +16,16 @@ class RedisClient:
     """Redis 客户端管理类"""
 
     def __init__(self):
-        self.client: Optional[Redis] = None
+        self.client: Redis | None = None
         self.connected = False
 
-    async def connect(self, url: Optional[str] = None) -> bool:
+    @staticmethod
+    def _is_local_redis_endpoint(redis_url: str) -> bool:
+        parsed = urlparse(redis_url)
+        host = parsed.hostname
+        return host in {"localhost", "127.0.0.1", "::1"} or parsed.scheme == "unix"
+
+    async def connect(self, url: str | None = None) -> bool:
         """连接到 Redis
 
         Args:
@@ -27,13 +36,18 @@ class RedisClient:
         """
         try:
             redis_url = url or app_config.redis_url
+            parsed = urlparse(redis_url)
+            if parsed.scheme == "redis" and not self._is_local_redis_endpoint(redis_url):
+                logger.warning(
+                    "Redis URL is using redis:// over non-local endpoint. "
+                    "Use rediss:// in production for TLS encryption.")
             self.client = redis.from_url(redis_url, decode_responses=True)
             # 测试连接
             await cast(Awaitable[bool], self.client.ping())
             self.connected = True
             return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to connect to Redis: %s", e)
             self.connected = False
             return False
 
@@ -42,8 +56,8 @@ class RedisClient:
         if self.client:
             try:
                 await self.client.aclose()
-            except Exception as e:
-                logger.error(f"Error closing Redis connection: {e}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.error("Error closing Redis connection: %s", e)
             finally:
                 self.client = None
                 self.connected = False

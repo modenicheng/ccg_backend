@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.websockets import WebSocketState
 
-import cache
 import cache.schemas
 from cache import room_cache
 from cache.room_state_manager import RoomStateManager
@@ -254,7 +253,6 @@ async def on_disconnect(
             # 更新缓存中的在线状态
             player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
             player_item.online = False
-            await room_cache.set_room_player(room_id, player_item)
             await room_cache.update_room_player_online_status(room_id, cl.user.id, False)
             
             # 广播玩家离线消息（但不从房间移除）
@@ -306,7 +304,6 @@ async def handle_start_pos_update(
             logger.error("Failed to update start position for room %s", room_id)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling start position update: %s", e)
-
 
 @regist(GameEventType.GAME_OVER, data_validator=GameOverData)
 async def handle_game_over_manual(

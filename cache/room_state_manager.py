@@ -1,57 +1,29 @@
-"""房间状态管理类，统一管理房间状态（DB + Cache）"""
+"""房间状态管理类，统一管理房间状态（DB）"""
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
-# 标准库导入
-
-# 第三方库导入
-
-# 本地导入
 from utils.enumerations import RoomStatus, RoundState
 from utils import get_logger
 from room_state.state_machine import RoomStateMachine, RoundStateMachine
 from db.models import Score, User, Room
+from db.session import session_scope
+from db.crud.room_state_related import set_room_start_position as _db_set_start_position
 from .room_cache import (
-    load_room_state,
-    save_room_state,
     clear_answer_queue,
 )
-from .schemas import RoomBaseStateCache
 
 logger = get_logger(__name__)
 
 
 class RoomStateManager:
-    """房间状态管理类，统一管理房间状态（DB + Cache）"""
-
-    @staticmethod
-    async def get_room_state(room_id: str) -> Optional[RoomBaseStateCache]:
-        """获取房间状态
-
-        Args:
-            room_id (str): 房间 ID
-
-        Returns:
-            Optional[RoomBaseStateCache]: 房间状态缓存对象，如果未找到则返回 None
-        """
-        return await load_room_state(room_id)
-
-    @staticmethod
-    async def save_room_state(room_id: str, state: RoomBaseStateCache) -> None:
-        """保存房间状态
-
-        Args:
-            room_id (str): 房间 ID
-            state (RoomBaseStateCache): 房间状态缓存对象
-        """
-        await save_room_state(room_id, state)
+    """房间状态管理类，统一管理房间状态（DB）"""
 
     @staticmethod
     async def set_start_position(room_id: str, position: float) -> bool:
-        """设置房间起始位置
+        """设置房间起始位置，写入数据库。
 
         Args:
             room_id (str): 房间 ID
@@ -61,18 +33,10 @@ class RoomStateManager:
             bool: 是否设置成功
         """
         try:
-            # 使用新添加的函数设置起始位置
-            # result = await set_room_start_position(room_id, position)
-            # if result:
-            #     # 同时更新缓存对象
-            #     state = await load_room_state(room_id)
-            #     if state:
-            #         state.song_start_range_percent = position
-            #         await save_room_state(room_id, state)
-            # logger.debug("Set start position for room %s to %.2f%%", room_id, position)
-            # return result
-            pass
-        # 直接入库。我真服了这b AI为什么这么喜欢用redis
+            async with session_scope() as db:
+                result = await _db_set_start_position(db, room_id, position)
+            logger.debug("Set start position for room %s to %.2f%%", room_id, position)
+            return result
         except Exception as e:
             logger.error("Error setting start position for room %s: %s", room_id, e)
             return False
@@ -124,7 +88,7 @@ class RoomStateManager:
             return False
 
     @staticmethod
-    async def end_game(room_id: str, session: AsyncSession) -> Dict[str, Any]:
+    async def end_game(room_id: str, session: AsyncSession) -> dict[str, Any]:
         """结束游戏
 
         Args:
@@ -155,14 +119,14 @@ class RoomStateManager:
                 })
 
             logger.info("Game ended for room %s", room_id)
-            return {"success": True, "final_scores": final_scores}
+            return {"success": True, "final_scores": final_scores, "error": None}
         except ValueError as e:
             logger.error("Error ending game for room %s: %s", room_id, e)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "final_scores": [], "error": str(e)}
         except Exception as e:
             logger.error("Error ending game for room %s: %s", room_id, e)
             await session.rollback()
-            return {"success": False, "error": str(e)}
+            return {"success": False, "final_scores": [], "error": str(e)}
 
     @staticmethod
     async def end_round(room_id: str) -> bool:
@@ -191,7 +155,7 @@ class RoundStateManager:
 
     @staticmethod
     async def get_round_state(room_id: str,
-                              session: AsyncSession) -> Optional[RoundState]:
+                              session: AsyncSession) -> RoundState | None:
         """获取回合状态"""
         room = await session.get(Room, room_id)
         if not room:
