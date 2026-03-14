@@ -1,4 +1,3 @@
-from __future__ import annotations
 """
 Room songs request/response schemas.
 
@@ -7,12 +6,12 @@ Handles:
 - Room song ordering
 - Room song batch operations
 """
+from __future__ import annotations
 
 from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.song import SongResponse
-from .common import SONG_EXAMPLE
 
 
 class RoomSongBase(BaseModel):
@@ -32,7 +31,6 @@ class RoomSongResponse(RoomSongBase):
     """Response schema for room song association details."""
 
     song: SongResponse = Field(description="Song details")
-
 
 
 class RoomSongsListResponse(BaseModel):

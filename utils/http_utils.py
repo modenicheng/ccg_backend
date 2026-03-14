@@ -1,8 +1,8 @@
-from __future__ import annotations
 """
 HTTP实用工具函数
 提供通用的HTTP相关功能，如Range请求处理等
 """
+from __future__ import annotations
 
 from typing import Optional
 from fastapi import HTTPException, Response
