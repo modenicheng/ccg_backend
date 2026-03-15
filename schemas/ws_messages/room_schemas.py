@@ -86,10 +86,14 @@ class PlayerLeaveMessage(MessageBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class KickUserData(BaseModel):
+    user_id: int = Field(..., ge=1, description="被踢出的用户ID")
+
+
 class KickUserMessage(BaseModel):
     event: Literal[15] = GameEventType.KICK_USER.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
-    data: dict
+    data: KickUserData
 
 
 class StartPosUpdateData(BaseModel):

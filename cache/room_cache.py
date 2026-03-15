@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, ParamSpec, TypeVar, cast, Concatena
 from pydantic import ValidationError
 from redis.asyncio.client import Redis
 
-from db.models import RoomStatusORM
+from db.models import Room, RoomStatusORM
 from db.session import session_scope
 from db.crud.room_state_related import (
     get_room_playback_state_json,
@@ -181,12 +181,24 @@ async def _save_playback_state_to_db(room_id: str, state: PlaybackState) -> None
                        room_id, e)
 
 
-async def _generate_default_playback_state(room_id: str) -> PlaybackState:
-    """依据 current_song_index 生成默认播放状态（暂停，进度归零，填充临时播放 URL）。"""
+async def _generate_default_playback_state(room_id: str) -> PlaybackState | None:
+    """依据 current_song_index 生成默认播放状态（暂停，进度归零，填充临时播放 URL）。
+
+    若房间处于 WAITING 或 ENDED 状态则返回 None，不生成播放状态。
+    """
     current_order = 0
     audio_url: str | None = None
     try:
         async with session_scope() as db:
+            room = await db.get(Room, room_id)
+            if room is None:
+                return None
+            if RoomStatusORM(room.status) in (RoomStatusORM.WAITING,
+                                              RoomStatusORM.ENDED):
+                logger.debug(
+                    "Room %s is in status %s, skipping default playback state generation",
+                    room_id, room.status)
+                return None
             song_id, song_index = await get_current_song_info(db, room_id)
             if song_id is not None and song_index is not None:
                 current_order = song_index
@@ -200,6 +212,7 @@ async def _generate_default_playback_state(room_id: str) -> PlaybackState:
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.warning("Failed to generate default playback state for room %s: %s",
                        room_id, e)
+        return None
     return PlaybackState(
         progress_ms=0,
         offset_ts=0,
@@ -275,7 +288,7 @@ async def get_room_playback_state(redis: Redis, room_id: str) -> PlaybackState |
         await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
         return db_state
 
-    # DB 也没有：依据 current_song_index 生成默认状态
+    # DB 也没有：依据 current_song_index 生成默认状态（仅 RUNNING 房间）
     logger.debug("No playback state in DB for room %s, generating default", room_id)
     return await _generate_default_playback_state(room_id)
 

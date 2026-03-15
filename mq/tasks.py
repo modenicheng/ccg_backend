@@ -16,12 +16,14 @@ from urllib.parse import urlparse
 from huey import RedisHuey
 import httpx
 import qqmusic_api as qapi
+from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydub import AudioSegment
 
 # Local application imports
 from config import app_config
+from db import models
 from db.crud import (
     create_or_update_songlist,
     create_or_update_songs,
@@ -349,46 +351,22 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
         },
     )
 
-    song_url = await _get_song_url(mid, filetype=qapi.song.SongFileType.OGG_320)
-    if not song_url:
-        await _persist_task_state(
-            task_id=task_id,
-            task_name="download_and_cache_song",
-            status="failed",
-            error="Failed to resolve song url",
+    # 查询歌曲记录
+    async with session_scope() as session:
+        stmt = select(models.Song).where(
+            models.Song.platform == "qq",
+            models.Song.platform_song_id == mid,
         )
-        return None
+        result = await session.execute(stmt)
+        song = result.scalar_one_or_none()
 
-    downloaded_path = await _download_audio_file_impl(song_url,
-                                                      save_path=save_path,
-                                                      mid=mid)
-    if not downloaded_path:
-        await _persist_task_state(
-            task_id=task_id,
-            task_name="download_and_cache_song",
-            status="failed",
-            error="Failed to download audio file",
-        )
-        return None
-
-    try:
-        async with session_scope() as session:
-            song = await update_song_cached_path(
-                session=session,
-                platform="qq",
-                platform_song_id=mid,
-                cached_path=downloaded_path,
+        # 检查数据库中的缓存路径
+        if song and song.cached_path and os.path.exists(song.cached_path):
+            logger.info(
+                "Song %s already cached at %s, skipping download",
+                mid,
+                song.cached_path,
             )
-            if not song:
-                logger.warning(
-                    "Audio downloaded for %s but song not found in DB, "
-                    "skipped cached_path update: %s",
-                    mid,
-                    downloaded_path,
-                )
-            else:
-                logger.info("Updated cached_path for %s: %s", mid, downloaded_path)
-
             await _persist_task_state(
                 task_id=task_id,
                 task_name="download_and_cache_song",
@@ -396,20 +374,95 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
                 result={
                     "platform": "qq",
                     "platform_song_id": mid,
-                    "cached_path": downloaded_path,
+                    "cached_path": song.cached_path,
+                    "skipped": True,
                 },
                 session=session,
             )
-            return downloaded_path
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Failed to update cached_path for %s: %s", mid, err, exc_info=True)
+            return song.cached_path
+
+        # 获取歌曲URL用于生成候选路径
+        song_url = await _get_song_url(mid, filetype=qapi.song.SongFileType.OGG_320)
+        if not song_url:
+            await _persist_task_state(
+                task_id=task_id,
+                task_name="download_and_cache_song",
+                status="failed",
+                error="Failed to resolve song url",
+                session=session,
+            )
+            return None
+
+        # 生成候选路径（如果提供了save_path则使用，否则根据mid和url生成）
+        candidate_path = save_path or _resolve_audio_download_path(mid, song_url)
+        if os.path.exists(candidate_path):
+            # 文件已存在但数据库中没有记录，更新数据库
+            if song:
+                song.cached_path = candidate_path
+                await session.flush()
+                logger.info(
+                    "File already exists for %s at %s, updated cached_path",
+                    mid,
+                    candidate_path,
+                )
+            else:
+                logger.warning(
+                    "File exists but song record not found for %s, cannot update cached_path",
+                    mid,
+                )
+            await _persist_task_state(
+                task_id=task_id,
+                task_name="download_and_cache_song",
+                status="success",
+                result={
+                    "platform": "qq",
+                    "platform_song_id": mid,
+                    "cached_path": candidate_path,
+                    "skipped": True,
+                },
+                session=session,
+            )
+            return candidate_path
+
+        # 下载文件
+        downloaded_path = await _download_audio_file_impl(song_url,
+                                                          save_path=save_path,
+                                                          mid=mid)
+        if not downloaded_path:
+            await _persist_task_state(
+                task_id=task_id,
+                task_name="download_and_cache_song",
+                status="failed",
+                error="Failed to download audio file",
+                session=session,
+            )
+            return None
+
+        # 更新数据库缓存路径
+        if song:
+            song.cached_path = downloaded_path
+            await session.flush()
+            logger.info("Updated cached_path for %s: %s", mid, downloaded_path)
+        else:
+            logger.warning(
+                "Audio downloaded for %s but song not found in DB, "
+                "skipped cached_path update: %s",
+                mid,
+                downloaded_path,
+            )
+
         await _persist_task_state(
             task_id=task_id,
             task_name="download_and_cache_song",
-            status="failed",
-            error=f"Failed to update song cached_path: {err}",
+            status="success",
+            result={
+                "platform": "qq",
+                "platform_song_id": mid,
+                "cached_path": downloaded_path,
+            },
+            session=session,
         )
-        return None
+        return downloaded_path
 
 
 @huey.task()

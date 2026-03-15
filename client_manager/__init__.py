@@ -105,6 +105,19 @@ class ClientManager:
         """
         return self._rooms.get(room_id, set())
 
+    def has_user_connection(self, room_id: str, user_id: int) -> bool:
+        """Check whether a user already has an active connection in a room.
+
+        Args:
+            room_id: Room identifier
+            user_id: User identifier
+
+        Returns:
+            True if at least one active connection exists for the user in this room
+        """
+        return any(
+            client.user.id == user_id for client in self._rooms.get(room_id, set()))
+
     def get_all_clients(self) -> set[Client]:
         """Get all clients across all rooms.
 

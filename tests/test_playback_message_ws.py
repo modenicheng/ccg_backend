@@ -11,9 +11,10 @@ import httpx
 import pytest
 import pytest_asyncio
 from rich import print as rprint
+from websockets.exceptions import InvalidStatus
 
 from cache.room_cache import delete_room_playback_state, get_room_playback_state
-from tests.ws_conn import create_join_and_connect_ws
+from tests.ws_conn import _connect_websocket, create_join_and_connect_ws
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -266,3 +267,14 @@ async def test_playback_message_pipe_in_single_room(shared_conn):
         assert state is not None, f"{label} did not update playback state as expected"
         rprint(f"[bold magenta][{label}] PIPE REDIS STATE[/bold magenta]",
                state.model_dump())
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_duplicate_user_websocket_connection_is_rejected(
+        shared_conn, running_server):
+    """同一用户在同一房间重复建立 WS 连接时，第二个连接应被拒绝。"""
+    ws_url = f"{running_server['base_ws_url']}/ws/{shared_conn.room_id}"
+
+    with pytest.raises(InvalidStatus):
+        duplicate_ws = await _connect_websocket(ws_url, shared_conn.cookie_header, 3.0)
+        await duplicate_ws.close()

@@ -21,8 +21,10 @@ from schemas.ws_messages.room_schemas import (
     AnswerQueueItem,
     ClearAnswerQueueData,
     GameOverData,
+    KickUserMessage,
     StartPosUpdateData,
 )
+from db.session import session_scope
 from utils import get_logger
 from utils.enumerations import GameEventType
 
@@ -161,8 +163,8 @@ async def on_disconnect(
     """
     Handle client disconnection from a room.
 
-    对局未开始：用户离开时清除全部信息（从房间移除）
-    对局开始后：保留全部信息，仅显示断联状态，支持断线重连
+    对局未开始：用户离开时仅更新为离线（不自动清理玩家）
+    对局开始后：同样保留玩家信息并显示断联状态，支持断线重连
     使用 try/finally 确保 clients.pop 一定执行
 
     Args:
@@ -190,61 +192,66 @@ async def on_disconnect(
                            room_id, cl)
             return
 
+        # 若同一用户在该房间仍有其他活跃连接（例如刷新重连后的旧连接断开），
+        # 则不应将其标记为离线，也不应广播 PLAYER_LEAVE。
+        has_other_active_session = any(
+            other.user.id == cl.user.id for other in clients.get_clients(room_id))
+        if has_other_active_session:
+            logger.info(
+                "Skip offline mark for user %s in room %s because another active session exists",
+                cl.user.id,
+                room_id,
+            )
+            return
+
         # 判断对局是否已开始
         # room.status: 0=waiting, 1=playing, 2=ended
         # room.round_state: 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED
         is_game_started = room.status in (1, 2) or (room.round_state or 0) > 0
 
-        if not is_game_started:
-            # 对局未开始：清除玩家全部信息（从房间移除）
+        # 从当前 session 加载 user_obj（避免跨 session 对象引用问题）
+        user_obj = await crud.get_player_by_id(session, cl.user.id)
+
+        # 用户已被删除（如被房主踢出）时，不再广播离开消息
+        if user_obj is None:
             logger.info(
-                "Player %s left room %s before game started, removing from room",
+                "Player %s not found during disconnect in room %s, likely removed",
                 cl.user.id,
                 room_id,
             )
+            return
 
-            # 从数据库房间用户列表中移除
-            if cl.user in room.users:
-                room.users.remove(cl.user)
+        # 构建广播用的 player_item（在修改状态前先取快照，online 固定为 False）
+        player_item = RoomSchema.RoomStatePlayerItem(
+            id=cl.user.id,
+            username=cl.user.username,
+            is_owner=cl.user.is_owner,
+            online=False,
+        )
 
-            cl.user.online = False
-            user_stmt = select(models.User).where(models.User.id == cl.user.id)
-            user_result = await session.execute(user_stmt)
-            user_obj = user_result.scalar_one_or_none()
-            if user_obj:
-                user_obj.online = False
-
-            # 广播玩家离开消息
-            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
-            player_item.online = False
-            leave_message = RoomSchema.PlayerLeaveMessage(
-                data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-            await clients.broadcast(room_id,
-                                    leave_message.model_dump(),
-                                    excluded_clients={cl})
+        if not is_game_started:
+            logger.info(
+                "Player %s left room %s before game started, keeping player and marking offline",
+                cl.user.id,
+                room_id,
+            )
         else:
-            # 对局已开始：仅更新离线状态，保留玩家信息
             logger.info(
                 "Player %s disconnected from room %s during game, marking as offline",
                 cl.user.id,
                 room_id,
             )
 
-            cl.user.online = False
-            user_stmt = select(models.User).where(models.User.id == cl.user.id)
-            user_result = await session.execute(user_stmt)
-            user_obj = user_result.scalar_one_or_none()
-            if user_obj:
-                user_obj.online = False
+        cl.user.online = False
+        if user_obj is not None:
+            user_obj.online = False
 
-            player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
-            player_item.online = False
-            # 广播玩家离线消息（但不从房间移除）
-            leave_message = RoomSchema.PlayerLeaveMessage(
-                data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-            await clients.broadcast(room_id,
-                                    leave_message.model_dump(),
-                                    excluded_clients={cl})
+        # 广播玩家离开/离线消息
+        leave_message = RoomSchema.PlayerLeaveMessage(data=player_item)
+        await clients.broadcast(room_id,
+                                leave_message.model_dump(),
+                                excluded_clients={cl})
+
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error handling disconnect for client %s: %s",
                      cl,
@@ -253,6 +260,70 @@ async def on_disconnect(
     finally:
         # 无论如何都要从客户端管理器中移除（异常保护）
         clients.pop(room_id, cl)
+
+
+@regist(GameEventType.KICK_USER, data_validator=KickUserMessage)
+async def handle_kick_user(
+    data: KickUserMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **_kwargs,
+) -> None:
+    """处理踢人事件：广播踢人消息、删除用户并关闭其连接。"""
+    if not client.user.is_owner:
+        logger.warning("Non-owner %s tried to kick user", client.user.id)
+        await client.send_error(GameEventType.KICK_USER,
+                                "Only room owner can kick users")
+        return
+
+    target_user_id = data.data.user_id
+    if target_user_id == client.user.id:
+        await client.send_error(GameEventType.KICK_USER, "Room owner cannot kick self")
+        return
+
+    removed_player_item: RoomSchema.RoomStatePlayerItem | None = None
+
+    async with session_scope() as session:
+        target_user = await crud.get_player_by_id(session, target_user_id)
+        if target_user is None or target_user.room_id != room_id:
+            await client.send_error(GameEventType.KICK_USER,
+                                    f"User {target_user_id} not found in room")
+            return
+
+        removed_player_item = RoomSchema.RoomStatePlayerItem(
+            id=target_user.id,
+            username=target_user.username,
+            is_owner=target_user.is_owner,
+            online=False,
+        )
+
+        # 清理房间抢答相关状态，避免脏数据残留
+        await room_cache.remove_from_answer_queue(room_id, target_user_id)
+        current_answerer = await room_cache.get_room_current_answerer(room_id)
+        if current_answerer == target_user_id:
+            await room_cache.clear_room_current_answerer(room_id)
+
+        # 级联删除用户（scores/player_answers 等通过 FK CASCADE 删除）
+        await session.delete(target_user)
+
+    kick_message = RoomSchema.KickUserMessage(data=RoomSchema.KickUserData(
+        user_id=target_user_id))
+    await clients.broadcast(room_id, kick_message.model_dump())
+
+    if removed_player_item is not None:
+        leave_message = RoomSchema.PlayerLeaveMessage(data=removed_player_item)
+        await clients.broadcast(room_id, leave_message.model_dump())
+
+    target_clients = [
+        cl for cl in clients.get_clients(room_id) if cl.user.id == target_user_id
+    ]
+    if target_clients:
+        tasks = [
+            clients.kick(room_id, cl, code=4001, reason="Kicked by room owner")
+            for cl in target_clients
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @regist(GameEventType.START_POS_UPDATE, data_validator=StartPosUpdateData)

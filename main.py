@@ -197,6 +197,21 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                                   is_owner=False)
             client = Client(websocket, spectator_user, room)
         else:
+            if clients_manager.has_user_connection(roomid, user.id):
+                logger.info(
+                    "Reject duplicate websocket connection for user %s in room %s",
+                    user.id,
+                    roomid,
+                    extra={
+                        "event": "duplicate_connection_rejected",
+                        "user_id": user.id,
+                        "room_id": roomid,
+                        "ws_endpoint": "/ws/{roomid}",
+                    },
+                )
+                await websocket.close(code=1008,
+                                      reason="Duplicate connection is not allowed")
+                return
             client = Client(websocket, user, room)
 
         await client.ws.accept()

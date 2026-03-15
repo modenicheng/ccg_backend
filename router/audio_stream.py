@@ -36,7 +36,7 @@ async def stream_audio(
     """Stream audio file using temporary token."""
     logger.debug("Audio stream request for token: %s", token)
 
-    song_id = get_song_id_from_token(token)
+    song_id = await get_song_id_from_token(token)
     if not song_id:
         logger.warning("Invalid audio token: %s", token)
         raise HTTPException(status_code=404, detail="Audio not found")
@@ -63,7 +63,7 @@ async def stream_audio(
     range_header = request.headers.get("range")
 
     if range_header:
-        return await build_range_response(content, media_type, range_header)
+        return build_range_response(content, media_type, range_header)
 
     return Response(
         content=content,
