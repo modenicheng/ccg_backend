@@ -1,6 +1,8 @@
 """CRUD helpers for room state management (SQL-backed)."""
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -91,3 +93,42 @@ async def set_room_start_position(
         return False
     room.song_start_range_percent = percent
     return True
+
+
+async def get_room_playback_state_json(
+    session: AsyncSession,
+    room_id: str,
+) -> dict[str, Any] | None:
+    """Return the persisted playback state JSON for a room, or None if absent."""
+    room = await session.get(Room, room_id)
+    if room is None:
+        return None
+    return room.playback_state_json  # type: ignore[return-value]
+
+
+async def set_room_playback_state_json(
+    session: AsyncSession,
+    room_id: str,
+    state_dict: dict[str, Any],
+) -> bool:
+    """Persist the playback state JSON for a room.
+
+    Returns True if the room was found and updated, False otherwise.
+    """
+    room = await session.get(Room, room_id)
+    if room is None:
+        logger.warning("set_room_playback_state_json: room %s not found", room_id)
+        return False
+    room.playback_state_json = state_dict
+    return True
+
+
+async def get_room_current_song_index(
+    session: AsyncSession,
+    room_id: str,
+) -> int | None:
+    """Return rooms.current_song_index for the given room."""
+    room = await session.get(Room, room_id)
+    if room is None:
+        return None
+    return room.current_song_index

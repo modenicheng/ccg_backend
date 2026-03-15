@@ -9,6 +9,15 @@ from pydantic import ValidationError
 from redis.asyncio.client import Redis
 
 from db.models import RoomStatusORM
+from db.session import session_scope
+from db.crud.room_state_related import (
+    get_room_playback_state_json,
+    get_room_current_song_index,
+    set_room_playback_state_json,
+)
+from db.crud.judge_related import get_current_song_info
+from db.crud.audio_preload_and_token import get_or_create_audio_token
+from utils.audio_token import get_audio_stream_url
 from schemas.ws_messages import room_schemas as RoomSchemas
 from utils import get_logger
 
@@ -148,10 +157,62 @@ def _normalize_status_value(raw_status: str | None) -> str | None:
     return str(RoomStatusORM.WAITING.value)
 
 
+async def _load_playback_state_from_db(room_id: str) -> PlaybackState | None:
+    """从数据库加载持久化播放状态。"""
+    try:
+        async with session_scope() as db:
+            state_dict = await get_room_playback_state_json(db, room_id)
+        if state_dict is None:
+            return None
+        return PlaybackState.model_validate(state_dict)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to load playback state from DB for room %s: %s", room_id,
+                       e)
+        return None
+
+
+async def _save_playback_state_to_db(room_id: str, state: PlaybackState) -> None:
+    """将播放状态持久化到数据库。"""
+    try:
+        async with session_scope() as db:
+            await set_room_playback_state_json(db, room_id, state.model_dump())
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to persist playback state to DB for room %s: %s",
+                       room_id, e)
+
+
+async def _generate_default_playback_state(room_id: str) -> PlaybackState:
+    """依据 current_song_index 生成默认播放状态（暂停，进度归零，填充临时播放 URL）。"""
+    current_order = 0
+    audio_url: str | None = None
+    try:
+        async with session_scope() as db:
+            song_id, song_index = await get_current_song_info(db, room_id)
+            if song_id is not None and song_index is not None:
+                current_order = song_index
+                token = await get_or_create_audio_token(db, room_id, song_id)
+                audio_url = get_audio_stream_url(token)
+            else:
+                # 没有当前歌曲时仍尝试获取 index 作为 current_order
+                idx = await get_room_current_song_index(db, room_id)
+                if idx is not None:
+                    current_order = idx
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to generate default playback state for room %s: %s",
+                       room_id, e)
+    return PlaybackState(
+        progress_ms=0,
+        offset_ts=0,
+        play_state="paused",
+        current_order=current_order,
+        audio_url=audio_url,
+    )
+
+
 @handle_redis_operation(default_return=None, log_operation="saving playback state")
 async def set_room_playback_state(redis: Redis, room_id: str,
                                   playback_state: PlaybackState) -> None:
-    """将房间播放状态保存到 Redis
+    """将房间播放状态保存到 Redis，并异步持久化到数据库。
 
     Args:
         redis: Redis连接
@@ -161,6 +222,8 @@ async def set_room_playback_state(redis: Redis, room_id: str,
     key = RedisKeys.playback_state(room_id)
     await cast(Awaitable, redis.hset(key, mapping=playback_state.to_redis_hash()))
     await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+    # 同步持久化到 DB，确保 Redis 驱逐后仍可恢复
+    await _save_playback_state_to_db(room_id, playback_state)
 
 
 @handle_redis_operation(default_return=None, log_operation="updating playback progress")
@@ -200,13 +263,21 @@ async def get_room_playback_state(redis: Redis, room_id: str) -> PlaybackState |
     """
     key = RedisKeys.playback_state(room_id)
     data = await cast(Awaitable[dict], redis.hgetall(key))
-    if not data:
-        logger.debug("No playback state found for room %s", room_id)
-        return None
+    if data:
+        return PlaybackState.from_redis_hash(data)
 
-    # 从 Redis Hash 重建模型
-    playback_state = PlaybackState.from_redis_hash(data)
-    return playback_state
+    # Cache miss：尝试从数据库恢复
+    logger.debug("Playback state cache miss for room %s, checking DB", room_id)
+    db_state = await _load_playback_state_from_db(room_id)
+    if db_state is not None:
+        # 回填 Redis
+        await cast(Awaitable, redis.hset(key, mapping=db_state.to_redis_hash()))
+        await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
+        return db_state
+
+    # DB 也没有：依据 current_song_index 生成默认状态
+    logger.debug("No playback state in DB for room %s, generating default", room_id)
+    return await _generate_default_playback_state(room_id)
 
 
 @handle_redis_operation(default_return=None, log_operation="deleting playback state")

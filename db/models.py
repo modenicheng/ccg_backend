@@ -187,6 +187,9 @@ class Room(Base):
     round_state: Mapped[int | None] = mapped_column(Integer, nullable=True,
                                                     default=0)  # 0 for PENDING
 
+    playback_state_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, comment="持久化播放状态快照，cache miss 时用于恢复")
+
     __table_args__ = (
         CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
         CheckConstraint("round_state in (0, 1, 2, 3, 4)", name="ck_rooms_round_state"),
