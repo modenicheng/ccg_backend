@@ -243,6 +243,7 @@ async def update_songlist(
 
 @songlist_router.delete("/{songlist_id}")
 async def delete_songlist(songlist_id: int, session: AsyncSession = Depends(get_db)):
+    """Delete a songlist."""
     stmt = select(Songlist).where(Songlist.id == songlist_id)
     result = await session.execute(stmt)
     songlist = result.scalar_one_or_none()

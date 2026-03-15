@@ -1,15 +1,18 @@
+"""Room-related schemas."""
+
 from __future__ import annotations
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
 from time import time
-from .song import SongItem
-from db.models import Base, RoomStatusORM
-from schemas.tag import TagGroupResponse
-from utils.enumerations import GameEventType
-from .user import BaseUser, UserLogin
-from .common import RoomStateTagItem, RoomStateTagGroupItem, RoomStatePlayerItem
+from typing import Literal
 
 from deprecated import deprecated
+from pydantic import BaseModel, ConfigDict, Field
+
+from db.models import RoomStatusORM
+from schemas.tag import TagGroupResponse
+from utils.enumerations import GameEventType
+from .common import RoomStatePlayerItem, RoomStateTagGroupItem
+from .song import SongItem
+from .user import BaseUser, UserLogin
 
 
 class RoomSchema(BaseModel):

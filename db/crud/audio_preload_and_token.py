@@ -173,7 +173,7 @@ async def update_room_song_temp_token(
             expire_at)
 
 
-async def prepare_preload_songs(
+async def prepare_preload_songs(  # pylint: disable=too-many-locals
     session: AsyncSession,
     room_id: str,
     start_index: int = 0,
@@ -212,8 +212,11 @@ async def prepare_preload_songs(
     for song_id in target_song_ids:
         song = songs_by_id.get(song_id)
         if not song:
-            l.warning("Song %s not found while preparing preload for room %s", song_id,
-                      room_id)
+            l.warning(
+                "Song %s not found while preparing preload for room %s",
+                song_id,
+                room_id,
+            )
             continue
 
         if song.platform != "qq" or not song.platform_song_id:

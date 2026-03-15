@@ -1,10 +1,12 @@
 """房间状态管理类，统一管理房间状态（DB）"""
 
+# pylint: disable=broad-exception-caught
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import Result, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from utils.enumerations import RoomStatus, RoundState
@@ -38,7 +40,7 @@ class RoomStateManager:
                 result = await _db_set_start_position(db, room_id, position)
             logger.debug("Set start position for room %s to %.2f%%", room_id, position)
             return result
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error("Error setting start position for room %s: %s", room_id, e)
             return False
 
@@ -57,7 +59,7 @@ class RoomStateManager:
             logger.debug("Cleared answer queue for room %s, result: %s", room_id,
                          result)
             return result is not None
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error("Error clearing answer queue for room %s: %s", room_id, e)
             return False
 
@@ -83,7 +85,7 @@ class RoomStateManager:
         except ValueError as e:
             logger.error("Error starting game for room %s: %s", room_id, e)
             return False
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error("Error starting game for room %s: %s", room_id, e)
             await session.rollback()
             return False
@@ -107,7 +109,7 @@ class RoomStateManager:
                                                      RoundState.PENDING)
 
             # 获取最终得分
-            score_records = await session.execute(
+            score_records: Result[Tuple[Score, str]] = await session.execute(
                 select(Score, User.username).join(User, Score.user_id == User.id).where(
                     Score.room_id == room_id).order_by(Score.total_score.desc()))
 
@@ -124,7 +126,7 @@ class RoomStateManager:
         except ValueError as e:
             logger.error("Error ending game for room %s: %s", room_id, e)
             return {"success": False, "final_scores": [], "error": str(e)}
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error("Error ending game for room %s: %s", room_id, e)
             await session.rollback()
             return {"success": False, "final_scores": [], "error": str(e)}
@@ -181,7 +183,7 @@ class RoundStateManager:
         except ValueError as e:
             logger.error("Error transitioning round state for room %s: %s", room_id, e)
             return False
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error("Error transitioning round state for room %s: %s", room_id, e)
             await session.rollback()
             return False

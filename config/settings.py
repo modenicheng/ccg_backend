@@ -19,8 +19,8 @@ _FALSY = {"0", "false", "no", "off"}
 _LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 
 
-@dataclass(frozen=True)  # pylint: disable=too-many-instance-attributes
-class AppConfig:
+@dataclass(frozen=True)
+class AppConfig:  # pylint: disable=too-many-instance-attributes
     """Application configuration dataclass."""
 
     database_url: str

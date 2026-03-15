@@ -1,3 +1,5 @@
+"""Tag management endpoints."""
+
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -7,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from db.models import Tag, TagGroup
 from db.session import get_db
-from schemas.tag import TagGroupCreate, TagGroupPatch, TagGroupResponse, TagsCreateRequest, TagResponse, TagListResponse, TagPatch
+from schemas.tag import (
+    TagGroupCreate,
+    TagGroupPatch,
+    TagGroupResponse,
+    TagsCreateRequest,
+    TagResponse,
+    TagListResponse,
+    TagPatch,
+)
 
 tag_router = APIRouter(prefix="/api/tags", tags=["tags"])
 
@@ -50,8 +60,10 @@ async def _get_existing_tags_by_ids(tag_ids: list[int],
 
 
 @tag_router.post("/", response_model=TagListResponse)
-async def create_tags(tag_names: TagsCreateRequest,
-                      session: AsyncSession = Depends(get_db)):
+async def create_tags(
+    tag_names: TagsCreateRequest, session: AsyncSession = Depends(get_db)
+) -> TagListResponse:
+    """Create new tags."""
     tags = await _create_tags(tag_names.tags, session)
     await session.commit()
     return TagListResponse(tags=[TagResponse.model_validate(tag) for tag in tags])
@@ -62,16 +74,18 @@ async def get_tags(
         session: AsyncSession = Depends(get_db),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
-):
+) -> TagListResponse:
+    """Get paginated list of tags."""
     result = await session.execute(select(Tag).limit(limit).offset(offset))
     tags = result.scalars().all()
     return TagListResponse(tags=[TagResponse.model_validate(tag) for tag in tags])
 
 
 @tag_router.patch("/{tag_id}", response_model=TagResponse)
-async def patch_tag(tag_id: int,
-                    data: TagPatch,
-                    session: AsyncSession = Depends(get_db)):
+async def patch_tag(
+    tag_id: int, data: TagPatch,
+    session: AsyncSession = Depends(get_db)) -> TagResponse:
+    """Update a tag."""
     result = await session.execute(select(Tag).where(Tag.id == tag_id))
     tag = result.scalar_one_or_none()
     if not tag:
@@ -84,15 +98,16 @@ async def patch_tag(tag_id: int,
     tag.name = new_name
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
-        raise HTTPException(status_code=409, detail="Tag name already exists")
+        raise HTTPException(status_code=409, detail="Tag name already exists") from exc  # pylint: disable=raise-missing-from
 
     return TagResponse.model_validate(tag)
 
 
 @tag_router.delete("/{tag_id}", status_code=204)
-async def delete_tag(tag_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_tag(tag_id: int, session: AsyncSession = Depends(get_db)) -> None:
+    """Delete a tag."""
     result = await session.execute(select(Tag).where(Tag.id == tag_id))
     tag = result.scalar_one_or_none()
     if not tag:
@@ -107,7 +122,8 @@ async def get_tag_groups(
         session: AsyncSession = Depends(get_db),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
-):
+) -> list[TagGroupResponse]:
+    """Get paginated list of tag groups."""
     result = await session.execute(
         select(TagGroup).options(selectinload(
             TagGroup.tags)).limit(limit).offset(offset))
@@ -116,8 +132,9 @@ async def get_tag_groups(
 
 
 @tag_router.post("/groups/", response_model=TagGroupResponse)
-async def create_tag_group(data: TagGroupCreate,
-                           session: AsyncSession = Depends(get_db)):
+async def create_tag_group(
+    data: TagGroupCreate, session: AsyncSession = Depends(get_db)) -> TagGroupResponse:
+    """Create a new tag group."""
     # 收集所有要关联的标签
     tags_to_associate: list[Tag] = []
 
@@ -156,7 +173,9 @@ async def create_tag_group(data: TagGroupCreate,
 
 
 @tag_router.patch("/groups/", response_model=TagGroupResponse)
-async def patch_tag_group(data: TagGroupPatch, session: AsyncSession = Depends(get_db)):
+async def patch_tag_group(
+    data: TagGroupPatch, session: AsyncSession = Depends(get_db)) -> TagGroupResponse:
+    """Update a tag group."""
     group_id = data.id
     # 1. 获取标签组
     result = await session.execute(
@@ -218,7 +237,9 @@ async def patch_tag_group(data: TagGroupPatch, session: AsyncSession = Depends(g
 
 
 @tag_router.delete("/groups/{group_id}", status_code=204)
-async def delete_tag_group(group_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_tag_group(
+    group_id: int, session: AsyncSession = Depends(get_db)) -> None:
+    """Delete a tag group."""
     result = await session.execute(select(TagGroup).where(TagGroup.id == group_id))
     tag_group = result.scalar_one_or_none()
     if not tag_group:

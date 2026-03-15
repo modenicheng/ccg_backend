@@ -42,6 +42,11 @@ indent_width = 4             # 缩进空格数
 column_limit = 88            # 每行最大字符数
 align_closing_bracket_with_visual_indent = true  # 对齐闭括号
 
+[tool.yapfignore]
+ignore_patterns = [
+    "alembic/**/*",
+]
+
 [tool.pylint.TYPECHECK]
 generated-members =["sqlalchemy.sql.func.*", "func.*"]
 

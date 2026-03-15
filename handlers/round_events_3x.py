@@ -47,7 +47,7 @@ logger = get_logger(__name__)
 
 
 @regist(GameEventType.GAME_START, data_validator=GameStartMessage)
-async def handle_game_start(
+async def handle_game_start(  # pylint: disable=too-many-locals
     data: GameStartMessage,
     clients: ClientManager,
     client: Client,
@@ -110,14 +110,14 @@ async def handle_game_start(
 
             if not_ready_song_ids:
                 logger.warning(
-                    "Room %s cannot start game: first %d songs are not fully downloaded, song_ids=%s",
+                    "Room %s cannot start game: first %d songs not downloaded, song_ids=%s",
                     room_id,
                     required_precheck_count,
                     not_ready_song_ids,
                 )
                 await client.send_error(
                     GameEventType.GAME_START,
-                    f"Cannot start game: first {required_precheck_count} songs are not downloaded yet",
+                    f"Cannot start game: first {required_precheck_count} songs not downloaded",
                 )
                 return
 

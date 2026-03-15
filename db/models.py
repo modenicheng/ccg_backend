@@ -145,6 +145,8 @@ class Song(Base):
 
 
 class Album(Base):
+    """Album table."""
+
     __tablename__ = "albums"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -386,5 +388,4 @@ class Tasks(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp(),
-    )
+        onupdate=func.current_timestamp())

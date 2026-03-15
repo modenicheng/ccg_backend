@@ -1,3 +1,5 @@
+"""State machine implementations for room and round management."""
+
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,8 +61,12 @@ class RoomStateMachine:
 
         # 2. 验证转移是否允许
         if not cls.is_transition_allowed(current_status, target):
-            logger.error("Invalid state transition for room %s: %s -> %s", room_id,
-                         current_status.name, target.name)
+            logger.error(
+                "Invalid state transition for room %s: %s -> %s",
+                room_id,
+                current_status.name,
+                target.name,
+            )
             raise ValueError(
                 f"Invalid state transition: {current_status.name} -> {target.name}")
 
@@ -68,8 +74,12 @@ class RoomStateMachine:
         old_status = room.status
         room.status = models.RoomStatusORM(target.value)
 
-        logger.info("Room %s state transition: %s -> %s", room_id,
-                    RoomStatus(old_status).name, target.name)
+        logger.info(
+            "Room %s state transition: %s -> %s",
+            room_id,
+            RoomStatus(old_status).name,
+            target.name,
+        )
 
         return True
 
@@ -93,8 +103,12 @@ class RoomStateMachine:
         old_status = room.status
         room.status = models.RoomStatusORM(target.value)
 
-        logger.warning("Force transition for room %s: %s -> %s", room_id,
-                       RoomStatus(old_status).name, target.name)
+        logger.warning(
+            "Force transition for room %s: %s -> %s",
+            room_id,
+            RoomStatus(old_status).name,
+            target.name,
+        )
 
         return True
 
@@ -110,7 +124,9 @@ class RoundStateMachine:
         RoundState.PENDING: [RoundState.PLAYING_AUDIO],
         RoundState.PLAYING_AUDIO: [RoundState.ANSWERING, RoundState.COMPLETED],
         RoundState.ANSWERING: [
-            RoundState.PLAYING_AUDIO, RoundState.JUDGING, RoundState.COMPLETED
+            RoundState.PLAYING_AUDIO,
+            RoundState.JUDGING,
+            RoundState.COMPLETED,
         ],
         RoundState.JUDGING: [RoundState.COMPLETED],
         RoundState.COMPLETED: [RoundState.PENDING],
@@ -165,8 +181,12 @@ class RoundStateMachine:
 
         # 2. 验证转移是否允许
         if not cls.is_transition_allowed(current_round_state, target):
-            logger.error("Invalid round state transition for room %s: %s -> %s",
-                         room_id, current_round_state.name, target.name)
+            logger.error(
+                "Invalid round state transition for room %s: %s -> %s",
+                room_id,
+                current_round_state.name,
+                target.name,
+            )
             raise ValueError(
                 f"Invalid round state transition: {current_round_state.name} -> {target.name}"
             )
@@ -175,8 +195,12 @@ class RoundStateMachine:
         old_round_state = room.round_state
         room.round_state = target.value
 
-        logger.info("Room %s round state transition: %s -> %s", room_id,
-                    RoundState(old_round_state or 0).name, target.name)
+        logger.info(
+            "Room %s round state transition: %s -> %s",
+            room_id,
+            RoundState(old_round_state or 0).name,
+            target.name,
+        )
 
         return True
 
@@ -200,8 +224,12 @@ class RoundStateMachine:
         old_round_state = room.round_state
         room.round_state = target.value
 
-        logger.warning("Force round state transition for room %s: %s -> %s", room_id,
-                       RoundState(old_round_state or 0).name, target.name)
+        logger.warning(
+            "Force round state transition for room %s: %s -> %s",
+            room_id,
+            RoundState(old_round_state or 0).name,
+            target.name,
+        )
 
         return True
 

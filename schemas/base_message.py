@@ -1,18 +1,24 @@
+"""Base message schemas for WebSocket communication."""
+
 from __future__ import annotations
-from utils.enumerations import EventType, GameEventType
-from typing import Literal, Any
 from enum import Enum
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
+from utils.enumerations import EventType, GameEventType
 from utils.ts import get_ts_ms
 
 
 class MessageBase(BaseModel):
+    """Base class for all WebSocket messages."""
+
     event: Any = Field(..., description="事件类型")
     ts: int = Field(default_factory=get_ts_ms, description="事件发生的时间戳（毫秒）")
 
 
 class AutoEventConvertMixin(BaseModel):
+    """Mixin to automatically convert event enums to values during serialization."""
 
     def model_dump(self, *args, **kwargs) -> dict:
         """
@@ -27,10 +33,14 @@ class AutoEventConvertMixin(BaseModel):
 
 
 class ErrorMessageData(AutoEventConvertMixin):
+    """Data payload for error messages."""
+
     message: str = Field(..., description="错误消息内容")
     error_event: int | EventType | GameEventType = Field(..., description="引发错误的事件类型")
 
 
 class ErrorMessage(MessageBase, AutoEventConvertMixin):
+    """Error message schema."""
+
     event: Literal[255] = Field(default=255, description="错误事件类型，固定为255")
     data: ErrorMessageData = Field(..., description="错误消息数据")

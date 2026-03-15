@@ -17,28 +17,28 @@ logger = get_logger(__name__)
 
 app = FastAPI()
 
-memory_monitor: MemoryMonitor | None = None
+MEMORY_MONITOR: MemoryMonitor | None = None  # pylint: disable=invalid-name
 
 
 @app.on_event("startup")
 async def startup_event():
     """Start memory monitoring on application startup."""
-    global memory_monitor
-    memory_monitor = MemoryMonitor(
+    global MEMORY_MONITOR  # pylint: disable=global-statement
+    MEMORY_MONITOR = MemoryMonitor(
         interval=30.0,
         report_threshold_mb=50.0,
         detailed_report=True,
     )
-    await memory_monitor.start()
+    await MEMORY_MONITOR.start()
     logger.info("Memory monitor started")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop memory monitoring on application shutdown."""
-    global memory_monitor
-    if memory_monitor is not None:
-        await memory_monitor.stop()
+    global MEMORY_MONITOR  # pylint: disable=global-statement
+    if MEMORY_MONITOR is not None:  # pylint: disable=global-variable-not-assigned
+        await MEMORY_MONITOR.stop()
         logger.info("Memory monitor stopped")
 
 
