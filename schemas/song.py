@@ -110,8 +110,6 @@ class TaskResponse(BaseModel):
     task_id: str = Field(description="Unique task identifier")
     task_name: str = Field(description="Name of the task")
     status: str = Field(description="Current task status")
-    result: Optional[dict[str, Any]] = Field(default=None,
-                                             description="Task result JSON, if any")
     created_at: Optional[datetime] = Field(default=None,
                                            description="Task creation timestamp")
     updated_at: Optional[datetime] = Field(default=None,
@@ -125,7 +123,6 @@ class TaskResponse(BaseModel):
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
                 "task_name": "fetch_songlist",
                 "status": "pending",
-                "result": None,
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z",
                 "huey_task_id": "550e8400-e29b-41d4-a716-446655440000",
