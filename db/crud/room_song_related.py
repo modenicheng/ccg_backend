@@ -24,10 +24,15 @@ async def get_room_songs(  # pylint: disable=too-many-arguments,too-many-positio
     limit: int = 20,
     include_song_details: bool = True,
     order: Literal["+song_order", "-song_order", "+song_id", "-song_id"] = "+song_id",
+    kw: str | None = None,
 ) -> list[models.RoomSong]:
     """Get all songs associated with a room."""
 
     stmt = select(models.RoomSong).where(models.RoomSong.room_id == room_id)
+
+    if kw:
+        stmt = stmt.join(models.RoomSong.song).where(
+            models.Song.title.ilike(f"%{kw}%"),)
 
     if include_song_details:
         stmt = stmt.options(selectinload(models.RoomSong.song))
@@ -324,9 +329,17 @@ async def get_room_song(session: AsyncSession, room_id: str,
     return result.scalar_one_or_none()
 
 
-async def count_room_songs(session: AsyncSession, room_id: str) -> int | None:
+async def count_room_songs(session: AsyncSession,
+                           room_id: str,
+                           kw: str | None = None) -> int | None:
     """Count total number of songs in a room."""
-    stmt = select(func.count(1)).where(models.RoomSong.room_id == room_id)  # pylint: disable=not-callable
+    if kw:
+        stmt = (  # pylint: disable=not-callable
+            select(func.count(1)).select_from(models.RoomSong).join(
+                models.RoomSong.song).where(models.RoomSong.room_id == room_id).where(
+                    models.Song.title.ilike(f"%{kw}%")))
+    else:
+        stmt = select(func.count(1)).where(models.RoomSong.room_id == room_id)  # pylint: disable=not-callable
     result = await session.execute(stmt)
     return result.scalar()
 

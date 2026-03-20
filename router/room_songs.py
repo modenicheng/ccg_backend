@@ -122,6 +122,7 @@ async def get_room_songs_list(
         roomid: str,
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=20, ge=1, le=1000),
+        kw: str | None = Query(default=None, max_length=100),
         session: AsyncSession = Depends(get_db),
 ) -> RoomSongsListResponse:
     """Get all songs in a room."""
@@ -137,9 +138,10 @@ async def get_room_songs_list(
                                            roomid,
                                            include_song_details=True,
                                            offset=offset,
-                                           limit=limit)
+                                           limit=limit,
+                                           kw=kw)
 
-    total = await crud.count_room_songs(session, roomid) or 0
+    total = await crud.count_room_songs(session, roomid, kw=kw) or 0
 
     # Convert to response format
     song_responses = []
