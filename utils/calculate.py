@@ -14,6 +14,12 @@ def calculate_player_scores(
 ) -> dict[str, int]:
     """Calculate player scores based on answer queue and correct answers.
 
+    计分规则：
+    - 每个命中标签组计1分（需精确匹配该组所有标签）
+    - 同一标签组仅最先抢答者得分
+    - 同一玩家在标签组上最多得1分（即使匹配多个标签组）
+    - 精准描述命中计1分
+
     Args:
         answer_queue: List of player IDs in answer order (strings)
         player_answers: Dict mapping player_id to answer data
@@ -24,40 +30,52 @@ def calculate_player_scores(
     Returns:
         Dict mapping player_id to score delta for this round
     """
-    player_scores = {}
-    # Initialize scores for all players in answer queue
+    player_scores: dict[str, int] = {}
     for player_id in answer_queue:
         player_scores[player_id] = 0
 
-    # Create a copy of correct_tags to modify as we award points
-    remaining_correct_tags = correct_tags.copy()
+    awarded_tags: set[int] = set()
+    player_awarded_tag: set[str] = set()
 
-    # Tag scoring: for each player in answer order
     for player_id in answer_queue:
+        if player_id in player_awarded_tag:
+            continue
+
         if player_id not in player_answers:
             continue
 
         player_answer = player_answers[player_id]
-        selected_tags = player_answer.get("selected_tag_ids", [])
+        selected_tags = set(player_answer.get("selected_tag_ids", []))
 
-        # Check each correct tag
-        for tag in list(remaining_correct_tags):
-            if tag in selected_tags:
-                # Award 1 point for each correct tag
-                player_scores[player_id] += 1
-                # Remove this tag from consideration
-                remaining_correct_tags.remove(tag)
+        for group_tags in tag_group_map.values():
+            group_tag_set = set(group_tags)
+            required_tags = set(correct_tags) & group_tag_set
 
-    # Description scoring: for each player in answer order
+            if not required_tags:
+                continue
+
+            if selected_tags >= required_tags:
+                can_score = True
+                for tag in required_tags:
+                    if tag in awarded_tags:
+                        can_score = False
+                        break
+
+                if can_score:
+                    player_scores[player_id] += 1
+                    awarded_tags.update(required_tags)
+                    player_awarded_tag.add(player_id)
+                    break
+
     if correct_description_ids:
+        correct_desc_set = set(correct_description_ids)
+
         for player_id in answer_queue:
             if player_id not in player_answers:
                 continue
 
-            # Check if player is in correct_description_ids
-            if int(player_id) in correct_description_ids:
+            if int(player_id) in correct_desc_set:
                 player_scores[player_id] += 1
-                # Only first matching player gets description point
                 break
 
     return player_scores

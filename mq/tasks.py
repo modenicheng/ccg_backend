@@ -313,6 +313,7 @@ async def _get_song_url(
         url = result.get(mid)
         if not url:
             logger.error("No URL found for song mid %s", mid)
+        logger.debug("Fetched song URL for mid %s: %s", mid, url)
         return url
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error fetching song URL for mid %s: %s", mid, e, exc_info=True)

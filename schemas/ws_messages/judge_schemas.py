@@ -9,7 +9,8 @@ Classes:
         correct tags, description IDs, new descriptions, and scoring options.
 """
 from __future__ import annotations
-from typing import Literal, Any
+
+from typing import Any
 from pydantic import BaseModel, Field
 from utils.enumerations import GameEventType
 from ..base_message import MessageBase
@@ -33,18 +34,32 @@ class SongInfo(BaseModel):
     platform_url: str | None = None
 
 
-class PlayerDescription(BaseModel):
-    """
-    PlayerDescription represents a player's submitted description.
+class TagData(BaseModel):
+    """标签数据"""
+    id: int = Field(..., description="标签ID")
+    name: str = Field(..., description="标签名称")
 
-    Attributes:
-        id (int): The unique identifier for the player's description.
-        username (str): The player's username.
-        description (str): The description text submitted by the player.
-    """
-    id: int
-    username: str
-    description: str
+
+class TagGroupData(BaseModel):
+    """标签组数据"""
+    group_id: int = Field(..., description="标签组ID")
+    name: str = Field(..., description="标签组名称")
+    tags: list[TagData] = Field(default_factory=list, description="标签列表")
+
+
+class DescriptionCandidate(BaseModel):
+    """精准描述候选"""
+    id: int = Field(..., description="描述ID")
+    text: str = Field(..., description="描述文本")
+    count: int = Field(default=0, description="历史上被选为正确的次数")
+
+
+class PlayerAnswerData(BaseModel):
+    """玩家答案数据"""
+    player_id: int = Field(..., description="玩家ID")
+    username: str = Field(..., description="玩家用户名")
+    selected_tags: list[int] = Field(default_factory=list, description="选择的标签ID列表")
+    description: str | None = Field(default=None, description="精准描述文本")
 
 
 class JudgingData(BaseModel):
@@ -52,15 +67,13 @@ class JudgingData(BaseModel):
     JudgingData contains all information needed for the judge to review a round.
 
     Attributes:
-        song (SongInfo): Information about the current song.
-        history_tag_ids (list[int]): List of previously used tag IDs.
-        reference_descriptions (list[str]): Reference descriptions for the song.
-        player_descriptions (list[PlayerDescription]): Descriptions submitted by players.
+        tag_groups (list[TagGroupData]): 房间的标签组列表
+        description_candidates (list[DescriptionCandidate]): 精准描述候选列表
+        answers (list[PlayerAnswerData]): 本轮所有玩家提交的答案
     """
-    song: SongInfo
-    history_tag_ids: list[int] = Field(default_factory=list)
-    reference_descriptions: list[str] = Field(default_factory=list)
-    player_descriptions: list[PlayerDescription] = Field(default_factory=list)
+    tag_groups: list[TagGroupData] = Field(default_factory=list)
+    description_candidates: list[DescriptionCandidate] = Field(default_factory=list)
+    answers: list[PlayerAnswerData] = Field(default_factory=list)
 
 
 class JudgingMessage(MessageBase):
@@ -69,7 +82,7 @@ class JudgingMessage(MessageBase):
 
     Contains the event type and the data required for the judge to review a round.
     """
-    event: Literal[40] = GameEventType.JUDGING.value
+    event: int = GameEventType.JUDGING.value
     data: JudgingData
 
 
@@ -78,10 +91,10 @@ class JudgeSubmitData(BaseModel):
     Data model for judge submission data sent via WebSocket.
 
     Attributes:
-        correct_tags (list[int]): List of IDs representing correct tags selected by the judge.
-        correct_description_ids (list[int]): List of IDs for descriptions marked as correct.
-        new_correct_descriptions (list[str]): List of new correct descriptions provided by the judge.
-        skip_scoring (bool): Flag indicating whether to skip scoring for this submission.
+        correct_tags: List of IDs representing correct tags selected by the judge.
+        correct_description_ids: List of IDs for descriptions marked as correct.
+        new_correct_descriptions: List of new correct descriptions provided.
+        skip_scoring: Flag indicating whether to skip scoring for this submission.
     """
     correct_tags: list[int] = Field(default_factory=list)
     correct_description_ids: list[int] = Field(default_factory=list)
@@ -95,7 +108,7 @@ class JudgeSubmitMessage(MessageBase):
 
     Contains the event type and the judge's submission data.
     """
-    event: Literal[41] = GameEventType.JUDGE_SUBMIT.value
+    event: int = GameEventType.JUDGE_SUBMIT.value
     data: JudgeSubmitData
 
 
@@ -129,7 +142,7 @@ class ScoreUpdateMessage(MessageBase):
 
     Contains the event type and the updated score data.
     """
-    event: Literal[42] = GameEventType.SCORE_UPDATE.value
+    event: int = GameEventType.SCORE_UPDATE.value
     data: ScoreUpdateData
 
 
@@ -139,8 +152,8 @@ class SkipRoundMessage(MessageBase):
 
     Contains the event type and optional data for skipping a round.
     """
-    event: Literal[43] = GameEventType.SKIP_ROUND.value
-    data: Any = None  # 可以根据需要添加字段
+    event: int = GameEventType.SKIP_ROUND.value
+    data: Any = None
 
 
 class ShowAnswerData(BaseModel):
@@ -161,5 +174,5 @@ class ShowAnswerMessage(MessageBase):
 
     Contains the event type and the correct answer data.
     """
-    event: Literal[44] = GameEventType.SHOW_ANSWER.value
+    event: int = GameEventType.SHOW_ANSWER.value
     data: ShowAnswerData

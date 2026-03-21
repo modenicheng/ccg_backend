@@ -27,13 +27,18 @@ from handlers.audio_common import preload_songs_for_round_start
 from handlers.registe_manager import regist
 from handlers.round_state_events import build_round_state_update_message
 from schemas.ws_messages.judge_schemas import (
+    DescriptionCandidate,
     JudgeSubmitMessage,
     JudgingData,
     JudgingMessage,
+    PlayerAnswerData,
     ScoreEntry,
     ScoreUpdateData,
     ScoreUpdateMessage,
-    SongInfo,
+    ShowAnswerData,
+    ShowAnswerMessage,
+    TagData,
+    TagGroupData,
 )
 from schemas.ws_messages.round_event_schemas import (
     RoundEndMessage,
@@ -55,6 +60,12 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
     # pylint: disable=unused-argument,too-many-locals
     try:
         async with session_scope() as db:
+            # 获取房间对象（包含标签组信息）
+            room = await fetch_room_object(db, room_id)
+            if not room:
+                await client.send_error(GameEventType.JUDGING, "Room not found")
+                return
+
             # 获取当前歌曲信息
             song_id, song_index = await get_current_song_info(db, room_id)
             if song_id is None or song_index is None:
@@ -70,74 +81,67 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
                 await client.send_error(GameEventType.JUDGING, "Song not found")
                 return
 
-            # 获取历史标签
-            tag_history_stmt = select(models.SongTagHistory.tag_id).where(
-                models.SongTagHistory.song_id == song_id)
-            tag_history_result = await db.execute(tag_history_stmt)
-            history_tag_ids = [tag_id[0] for tag_id in tag_history_result.all()]
+            # 构建标签组数据
+            tag_groups_data = []
+            for tag_group in room.tag_groups:
+                tags = [TagData(id=tag.id, name=tag.name) for tag in tag_group.tags]
+                tag_groups_data.append(
+                    TagGroupData(
+                        group_id=tag_group.id,
+                        name=tag_group.name,
+                        tags=tags,
+                    ))
 
-            # 获取参考精确描述（正确答案）
-            description_history_stmt = select(
-                models.SongDescriptionHistory.description_text).where(
-                    models.SongDescriptionHistory.song_id == song_id,
-                    models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
-                )
+            # 获取历史正确描述（用于展示候选）
+            # 按 times_selected 降序排序，最多取10条
+            description_history_stmt = select(models.SongDescriptionHistory).where(
+                models.SongDescriptionHistory.song_id == song_id,
+                models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
+            ).order_by(models.SongDescriptionHistory.times_selected.desc()).limit(10)
             description_history_result = await db.execute(description_history_stmt)
-            reference_descriptions = [
-                desc[0] for desc in description_history_result.all()
-            ]
+            description_history_records = description_history_result.scalars().all()
 
-            # 随机选择一个或多个参考描述
-            if reference_descriptions:
-                # 随机选择1-3个描述
-                num_descriptions = min(random.randint(1, 3),
-                                       len(reference_descriptions))
-                reference_descriptions = random.sample(reference_descriptions,
-                                                       num_descriptions)
+            # 随机选择1-3条参考描述
+            description_candidates = []
+            if description_history_records:
+                # 随机打乱并取1-3条
+                shuffled = list(description_history_records)
+                random.shuffle(shuffled)
+                selected = shuffled[:min(random.randint(1, 3), len(shuffled))]
+                description_candidates = [
+                    DescriptionCandidate(
+                        id=record.id,
+                        text=record.description_text,
+                        count=record.times_selected,
+                    ) for record in selected
+                ]
 
-            # 获取玩家答案（用于显示抢答者的精确描述）
+            # 获取玩家答案（用于显示）
             player_answers = await get_player_answers_for_judging(
                 db, room_id, song_id, song_index)
 
-            if not player_answers:
-                logger.warning(
-                    "No player answers found for judging in room %s, song %s",
-                    room_id,
-                    song_id,
-                )
-
-            # 构建玩家描述列表
-            player_descriptions = []
+            # 构建玩家答案列表
+            player_answers_data = []
             for user_id, answer_data in player_answers.items():
-                if answer_data["description_text"]:
-                    # 获取用户名
-                    user_stmt = select(
-                        models.User.username).where(models.User.id == user_id)
-                    user_result = await db.execute(user_stmt)
-                    username = user_result.scalar_one_or_none() or f"Player {user_id}"
+                # 获取用户名
+                user_stmt = select(
+                    models.User.username).where(models.User.id == user_id)
+                user_result = await db.execute(user_stmt)
+                username = user_result.scalar_one_or_none() or f"Player {user_id}"
 
-                    player_descriptions.append({
-                        "id": user_id,
-                        "username": username,
-                        "description": answer_data["description_text"],
-                    })
-
-            # 构建歌曲信息
-            song_info = SongInfo(
-                title=song.title,
-                artist=song.artist,
-                album=song.album_name,
-                cover_url=song.cover_url,
-                platform_url=song.metadata_json.get("platform_url")
-                if song.metadata_json else None,
-            )
+                player_answers_data.append(
+                    PlayerAnswerData(
+                        player_id=user_id,
+                        username=username,
+                        selected_tags=answer_data["selected_tag_ids"],
+                        description=answer_data["description_text"],
+                    ))
 
             # 构建JUDGING事件数据
             judging_data = JudgingData(
-                song=song_info,
-                history_tag_ids=history_tag_ids,
-                reference_descriptions=reference_descriptions,
-                player_descriptions=player_descriptions,
+                tag_groups=tag_groups_data,
+                description_candidates=description_candidates,
+                answers=player_answers_data,
             )
 
             # 触发状态转换到 JUDGING
@@ -204,6 +208,10 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
         await clients.broadcast(room_id, round_end_message.model_dump())
         return
 
+    # 初始化需要用到的变量（确保在所有作用域内可用）
+    players: list[dict[str, str]] = []
+    player_scores: dict[str, int] = {}
+
     # 使用数据库会话获取数据
     try:
         async with session_scope() as db:
@@ -222,7 +230,6 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
 
             # 存储标签历史
             for tag_id in data.data.correct_tags:
-                # 检查是否已存在
                 existing_stmt = select(models.SongTagHistory).where(
                     models.SongTagHistory.song_id == song_id,
                     models.SongTagHistory.tag_id == tag_id,
@@ -231,7 +238,6 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                 existing = existing_result.scalar_one_or_none()
 
                 if not existing:
-                    # 创建新记录
                     tag_history = models.SongTagHistory(
                         song_id=song_id,
                         tag_id=tag_id,
@@ -240,28 +246,37 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                     )
                     db.add(tag_history)
 
-            # 存储描述历史
+            # 处理玩家选择的描述（增加 times_selected）
             for description_id in data.data.correct_description_ids:
-                # 获取玩家答案
-                answer_stmt = select(models.PlayerAnswer).where(
-                    models.PlayerAnswer.room_id == room_id,
-                    models.PlayerAnswer.song_id == song_id,
-                    models.PlayerAnswer.round_index == song_index,
-                    models.PlayerAnswer.user_id == description_id,
+                existing_desc_stmt = select(models.SongDescriptionHistory).where(
+                    models.SongDescriptionHistory.id == description_id,
+                    models.SongDescriptionHistory.song_id == song_id,
                 )
-                answer_result = await db.execute(answer_stmt)
-                answer = answer_result.scalar_one_or_none()
+                existing_desc_result = await db.execute(existing_desc_stmt)
+                existing_desc = existing_desc_result.scalar_one_or_none()
 
-                if answer and answer.description_text:
-                    # 创建新记录
-                    description_history = models.SongDescriptionHistory(
-                        song_id=song_id,
-                        description_text=answer.description_text,
-                        is_correct=True,
-                        judged_by_user_id=client.user.id,
-                        room_id=room_id,
+                if existing_desc:
+                    existing_desc.times_selected += 1
+                else:
+                    answer_stmt = select(models.PlayerAnswer).where(
+                        models.PlayerAnswer.room_id == room_id,
+                        models.PlayerAnswer.song_id == song_id,
+                        models.PlayerAnswer.round_index == song_index,
+                        models.PlayerAnswer.user_id == description_id,
                     )
-                    db.add(description_history)
+                    answer_result = await db.execute(answer_stmt)
+                    answer = answer_result.scalar_one_or_none()
+
+                    if answer and answer.description_text:
+                        description_history = models.SongDescriptionHistory(
+                            song_id=song_id,
+                            description_text=answer.description_text,
+                            is_correct=True,
+                            times_selected=1,
+                            judged_by_user_id=client.user.id,
+                            room_id=room_id,
+                        )
+                        db.add(description_history)
 
             # 处理新的正确描述
             for description_text in data.data.new_correct_descriptions:
@@ -270,6 +285,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                         song_id=song_id,
                         description_text=description_text.strip(),
                         is_correct=True,
+                        times_selected=1,
                         judged_by_user_id=client.user.id,
                         room_id=room_id,
                     )
@@ -281,11 +297,10 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                 "username": user.username
             } for user in room.users]
 
-            # 获取抢答队列（从Redis暂时获取，后续可能需要移到数据库）
-            answer_queue_items = await room_cache.get_answer_queue(
-                room_id)  # 已排序的 AnswerQueueItem 列表
-            answer_queue = [str(item.player_id) for item in answer_queue_items
-                            ]  # 转换为玩家ID字符串列表
+            # 获取抢答队列
+            # pylint: disable=no-value-for-parameter  # decorator adds redis internally
+            answer_queue_items = await room_cache.get_answer_queue(room_id)
+            answer_queue = [str(item.player_id) for item in answer_queue_items]
 
             if not answer_queue:
                 logger.warning("Empty answer queue for judging in room %s", room_id)
@@ -301,7 +316,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                     song_id,
                 )
 
-            # 转换格式以便与answer_queue匹配（answer_queue中的player_id是字符串）
+            # 转换格式
             player_answers = {}
             for user_id_int, answer_data in player_answers_raw.items():
                 player_id_str = str(user_id_int)
@@ -322,12 +337,13 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                 correct_tags=data.data.correct_tags.copy(),
                 correct_description_ids=data.data.correct_description_ids,
             )
+
             # 确保所有房间玩家都有得分记录（即使为0）
             for player in players:
                 if player["id"] not in player_scores:
                     player_scores[player["id"]] = 0
 
-            # 更新数据库中的抢答顺序（answer_order）
+            # 更新数据库中的抢答顺序
             updated_count = await update_player_answer_order(db, room_id, song_id,
                                                              song_index, answer_queue)
             logger.info("Updated answer_order for %d players in room %s", updated_count,
@@ -352,8 +368,17 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                                 f"Internal server error: {str(e)}")
         return
 
-    # 计分完成，清空抢答队列（Redis部分）
+    # 计分完成，清空抢答队列
+    # pylint: disable=no-value-for-parameter  # decorator adds redis internally
     await room_cache.clear_answer_queue(room_id)
+
+    # 广播正确答案（SHOW_ANSWER事件）
+    show_answer_data = ShowAnswerData(
+        tag_ids=data.data.correct_tags,
+        description_ids=data.data.correct_description_ids,
+    )
+    show_answer_message = ShowAnswerMessage(data=show_answer_data)
+    await clients.broadcast(room_id, show_answer_message.model_dump())
 
     # 构建得分更新消息
     score_entries = [
@@ -424,8 +449,6 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
             await update_room_current_song_index(session, room_id, next_index)
 
             # 触发预下载和预加载逻辑
-            # 预下载：下载 i+3 歌曲（i = next_index）
-            # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
             await preload_songs_for_round_start(
                 clients=clients,
                 session=session,
@@ -440,13 +463,14 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                                                           current_song_id)
             audio_url = get_audio_stream_url(audio_token)
 
-            # 强制新回合播放状态为 playing（避免沿用上一轮暂停状态）
+            # 强制新回合播放状态为 playing
             playback_state = cache_schemas.PlaybackState(
                 play_state="playing",
                 progress_ms=0,
                 offset_ts=0,
                 audio_url=audio_url,
             )
+            # pylint: disable=no-value-for-parameter  # decorator adds redis internally
             await room_cache.set_room_playback_state(room_id, playback_state)
 
             # 转换状态流：COMPLETED -> PENDING -> PLAYING_AUDIO

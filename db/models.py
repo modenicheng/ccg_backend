@@ -318,11 +318,13 @@ class SongDescriptionHistory(Base):
                                          nullable=False)
     description_text: Mapped[str] = mapped_column(Text, nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    judged_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id",
-                                                              ondelete="SET NULL"),
-                                                   nullable=True)
-    room_id: Mapped[str] = mapped_column(ForeignKey("rooms.id", ondelete="SET NULL"),
-                                         nullable=True)
+    times_selected: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    judged_by_user_id: Mapped[int | None] = mapped_column(ForeignKey(
+        "users.id", ondelete="SET NULL"),
+                                                          nullable=True)
+    room_id: Mapped[str | None] = mapped_column(ForeignKey("rooms.id",
+                                                           ondelete="SET NULL"),
+                                                nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
