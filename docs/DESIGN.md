@@ -8,175 +8,197 @@
 
 ## 2. 核心功能需求
 
-- **房间系统**：房主创建房间，生成唯一房间 ID；玩家通过房间 ID 和用户名加入；房主可踢人、开始游戏、结束回合。
-- **用户与会话**：无全局用户系统。玩家在创建或加入房间时输入用户名，同一房间内用户名唯一（后端自动添加随机后缀解决重名）。通过 Cookie 中的令牌（token）实现断线重连，并确保一个浏览器/设备同时只能处于一个房间。
-- **歌曲管理**：房主通过 QQ 音乐歌单 ID 导入曲目；后端爬取歌曲元数据并生成随机播放列表；支持音频预下载与缓存。
-- **标签系统**：房主可预设多个标签组，每组内标签互斥（例如“年代”组：80年代、90年代、00年代），组间不互斥；每个标签可计分。另设“精准描述”字段，玩家需手动输入短文本，房主在判分时从多个候选描述中选择正确项（可多选或不选）。
-- **游戏流程**：准备 → 倒计时 → 播放 → 抢答（可排队） → 作答（依次） → 判分 → 下一轮。
-- **抢答机制**：玩家可随时点击抢答，后端维护一个抢答队列。当有玩家抢答时，立即暂停播放，该玩家进入作答轮次；在此期间其他玩家仍可继续抢答，但会被加入队列，待当前玩家作答完毕后再依次处理。
-- **作答机制**：轮到作答的玩家从标签组中勾选标签（每组至多选一个），并填写“精准描述”。提交后该玩家状态变为“已作答”，后端广播作答内容（不含正确答案）。
-- **判分机制**：当队列为空且所有房间内玩家均已作答，或房主主动结束回合，或曲目播放完毕时，进入判分环节。房主在标准答案区勾选正确标签（考虑组互斥），并从“精准描述”候选列表（系统根据历史推荐或房主手动输入）中选择正确的一个或多个，或选择“无正确描述”。提交后系统自动计分：每个命中标签计1分，但若多名玩家同时命中同一标签，仅最先抢答的玩家得分；精准描述也计1分。支持“不计分”跳过当前回合。
-- **历史标注复用**：相同曲目的相同标签组的历史标注会被记录并推荐给房主，提高判分效率。
-- **数据持久化**：用户、房间、歌曲、标签组、标注历史、得分记录需持久化存储；房间实时状态存于缓存（Redis）。
+- **房间系统**：房主创建房间，生成唯一房间 ID（6位字母数字）；玩家通过房间 ID 和用户名加入；房主可踢人、开始游戏、结束回合。
+- **用户与会话**：无全局用户系统。玩家在创建或加入房间时输入用户名，同一房间内用户名唯一（数据库唯一约束保证）。通过 Cookie 中的令牌（token）实现断线重连，确保一个浏览器/设备同时只能处于一个房间（同一用户在同一房间只能有一个WebSocket连接）。
+- **歌曲管理**：房主通过 QQ 音乐歌单 ID 导入曲目；后端爬取歌曲元数据；歌曲按房间独立管理，支持设置播放队列顺序；支持音频预下载与缓存。
+- **标签系统**：房主可预设多个标签组，每组内标签互斥（例如"年代"组：80年代、90年代、00年代），组间不互斥；每个标签可计分。另设"精准描述"字段，玩家需手动输入短文本，房主在判分时从多个候选描述中选择正确项（可多选或不选）。
+- **游戏流程**：开始游戏 → 回合开始（倒计时） → 播放 → 抢答（可排队） → 作答（依次） → 判分 → 下一轮（或结束）。
+- **抢答机制**：玩家可随时点击抢答，后端维护一个抢答队列（Redis List）。当有玩家抢答时，立即暂停播放，该玩家进入作答轮次；在此期间其他玩家仍可继续抢答，但会被加入队列，待当前玩家作答完毕后再依次处理。
+- **作答机制**：轮到作答的玩家从标签组中勾选标签（每组至多选一个），并填写"精准描述"。提交后该玩家状态保持，后端广播作答内容（不含正确答案）。若超时未提交，视为弃权。
+- **判分机制**：房主主动进入判分环节。房主在标准答案区勾选正确标签（考虑组互斥），并从"精准描述"候选列表（系统根据历史推荐或房主手动输入）中选择正确的一个或多个，或选择"无正确描述"。提交后系统自动计分：每个命中标签计1分，但若多名玩家同时命中同一标签，仅最先抢答的玩家得分；精准描述也计1分。支持"不计分"跳过当前回合。
+- **历史标注复用**：相同曲目的历史标注会被记录并推荐给房主，提高判分效率。
+- **数据持久化**：用户、房间、歌曲、标签组、标注历史、得分记录需持久化存储（PostgreSQL/SQLite）；房间实时状态（播放状态、抢答队列）存于缓存（Redis）。
 
 ## 3. 系统架构
 
 ```plain
 ┌───────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   前端 (Vue/React)│────▶│   FastAPI 后端  │────▶│     SQLite      │
+│   前端 (Vue/React)│────▶│   FastAPI 后端  │────▶│   PostgreSQL    │
 │   WebSocket       │◀────│   WebSocket     │     │   (持久化数据)  │
 └───────────────────┘     └─────────────────┘     └─────────────────┘
-                              │       │
-                              │       └─────────────────┐
-                              │                         │
-                              ▼                         ▼
-                      ┌─────────────────┐     ┌─────────────────┐
-                      │     Redis       │     │   QQ音乐 API    │
-                      │ (实时状态/缓存) │     │  (爬虫/官方API) │
-                      └─────────────────┘     └─────────────────┘
+                               │       │
+                               │       └─────────────────┐
+                               │                         │
+                               ▼                         ▼
+                       ┌─────────────────┐     ┌─────────────────┐
+                       │     Redis       │     │   QQ音乐 API    │
+                       │ (实时状态/缓存) │     │  (爬虫/官方API) │
+                       └─────────────────┘     └─────────────────┘
+                               │
+                               ▼
+                       ┌─────────────────┐
+                       │  Huey Task Queue│
+                       │   (任务队列)    │
+                       └─────────────────┘
 ```
 
 - **前端**：单页应用（SPA），负责 UI 交互、音频播放、WebSocket 通信。
 - **后端**：FastAPI 应用，提供 HTTP API 和 WebSocket 服务，处理业务逻辑。
-- **数据库**：SQLite / pgsql 作为主数据库，存储所有持久化数据。利用 WAL 模式支持并发读，通过连接池或文件锁机制管理写操作（房间规模不大时可接受）。
-- **缓存**：Redis 存储房间实时状态（玩家列表、准备状态、当前轮次、抢答队列等），支持高并发和快速过期。
-- **任务队列**：Redis + Celery（或它的类似物）用于处理音频预处理
+- **数据库**：PostgreSQL（生产环境）或 SQLite（开发环境）作为主数据库，通过 SQLAlchemy async ORM 操作。配置 `CCG_DATABASE_URL` 指定。
+- **缓存**：Redis 存储房间实时状态（播放状态、抢答队列等），支持高并发和快速过期。
+- **任务队列**：Huey + Redis 用于处理音频预下载等异步任务。
 - **外部服务**：QQ 音乐 API（或爬虫）获取歌单歌曲元数据及播放链接；音频文件可缓存至后端本地静态目录。
 
 ## 4. 技术栈选型
 
 | 层级       | 技术                             | 说明                                                                 |
 |------------|---------------------------------- |---------------------------------------------------------------------- |
-| 前端       | Vue 3 + TypeScript + Vite        | 响应式 UI，组合式 API；WebSocket 客户端使用原生 API 或 Socket.io 兼容层 |
+| 前端       | Vue 3 + TypeScript + Vite        | 响应式 UI，组合式 API；WebSocket 客户端使用原生 API                    |
 | 后端       | Python 3.12 + FastAPI            | 高性能异步框架，原生支持 WebSocket                                   |
-| WebSocket 协议 | 二进制帧（现有框架扩展）     | 基于现有 EventType 增加游戏事件；保持低延迟                          |
-| 数据库     | SQLite 3                         | 轻量级文件数据库，支持 JSON 扩展；使用 `aiosqlite` 实现异步操作      |
-| 缓存       | Redis 7                          | 存储房间实时状态，支持发布订阅（可用于广播）                          |
-| 任务队列   | 可选：Huey/flowrra + Redis              | 用于异步爬取歌单、预下载音频（避免阻塞主线程）                        |
-| 音频缓存   | 后端本地文件，后端自行维护一个cache路由      | 预下载的音频文件作为静态资源提供，减少对外部依赖                      |
+| WebSocket 协议 | JSON 帧（游戏事件）            | 游戏事件（11-70范围）使用 JSON 格式；二进制帧用于实时音频元数据传输    |
+| 数据库     | PostgreSQL / SQLite              | 通过 `asyncpg`（PostgreSQL）或 `aiosqlite`（SQLite）实现异步操作     |
+| 缓存       | Redis 7                          | 存储房间实时状态（播放状态、抢答队列等），支持高并发和快速过期          |
+| 任务队列   | Huey + Redis                     | 用于异步爬取歌单、预下载音频（避免阻塞主线程）                        |
+| 音频缓存   | 后端本地文件，通过 API 路由提供    | 预下载的音频文件通过 `/api/songs/cache/{song_id}` 路由提供            |
 
 ## 5. 详细模块设计
 
 ### 5.1 房间管理模块
 
-- **创建房间**：房主提供用户名，后端生成唯一房间 ID（如 6 位字母数字），并在该房间内创建房主玩家记录（包含用户名，并标记为房主）。生成一个全局唯一的令牌（token）用于后续认证，将该令牌与房间 ID、玩家 ID 关联存入 Redis（可同时持久化到 SQLite 会话表），并设置过期时间。房间信息存入 Redis（过期时间 6 小时）和 SQLite（持久化记录）。
-- **加入房间**：用户提供房间 ID 和用户名，后端检查房间是否存在且未开始；若该房间内用户名已存在，则自动添加随机后缀（如 `#1234`）或提示用户修改。创建该房间内的新玩家记录，生成新令牌，关联房间和玩家，存入 Redis。同时检查该用户是否已有有效令牌（通过 Cookie 携带），若有则强制清除旧会话（实现单房间限制）。
-- **房间状态**：Redis Hash 存储房间信息，包括房主 ID、玩家列表（Set）、当前歌曲索引、各玩家准备状态、轮次状态、抢答队列（List）、当前作答玩家ID等。
-- **断线重连**：用户通过 Cookie 中的 Token 重新连接 WebSocket，后端校验令牌有效性（Redis 中存在且未过期），自动将 WebSocket 连接绑定到原玩家，恢复其在房间内的状态，并推送当前房间状态同步，确保一个浏览器/设备同时只能处于一个房间。若房间已结束，则引导用户创建新房间或加入其他房间。
+- **创建房间**：房主提供用户名和房间标题，后端生成唯一房间 ID（6位字母数字），创建 `User` 记录（标记为房主 `is_owner=True`）和 `Room` 记录。生成一个全局唯一的令牌（token，UUID）用于后续认证，通过 Set-Cookie `HttpOnly` 传递给前端。房间信息存入数据库（PostgreSQL/SQLite），状态为 `WAITING`。
+- **加入房间**：用户提供房间 ID 和用户名，后端检查房间是否存在且状态为 `WAITING`；若该房间内用户名已存在（唯一约束），返回错误。创建该房间内的新 `User` 记录，生成新令牌，关联房间和玩家。
+- **房间状态**：数据库 `Room` 表存储房间基础状态（status, current_song_index, round_state, song_start_range_percent 等）；Redis 存储播放状态（PlaybackState）和抢答队列（AnswerQueue）。
+- **断线重连**：用户通过 Cookie 中的 Token 重新连接 WebSocket，后端校验令牌有效性（数据库查询），自动将 WebSocket 连接绑定到原用户，恢复其在房间内的状态，并推送当前房间状态同步。同一用户在同一房间只能有一个 WebSocket 连接（`duplicate connection is not allowed`）。
 
 ### 5.2 用户与会话模块
 
-- **用户标识**：每个玩家在所属房间内由唯一数字 ID（`player_id`，自增，关联房间）标识，前端展示的用户名由玩家输入，同一房间内唯一。
-- **认证方式**：创建/加入房间时生成随机令牌（如 UUID），通过 Set-Cookie `HttpOnly` 传递给前端；WebSocket 连接时携带该 Cookie 进行身份验证。令牌与 `(room_id, player_id)` 的映射存储在 Redis 中，并设置过期时间（如 24 小时）。
-- **单房间限制**：当用户尝试创建或加入新房间时，后端检查其现有令牌是否有效；若存在有效令牌，则清除旧会话（从 Redis 中删除令牌映射，并通知旧连接断开，广播玩家离开，并清理相关状态），并删除旧令牌，确保同一浏览器/设备只能同时处于一个房间。
-- **重连机制**：若 WebSocket 断开，前端自动尝试重连，携带相同 Cookie；后端重新绑定连接，并推送当前房间状态同步。
+- **用户标识**：每个玩家在所属房间内由唯一数字 ID（`id`，自增，存储在 `users` 表）标识，前端展示的用户名由玩家输入，同一房间内唯一（数据库唯一约束 `uq_users_room_id_username`）。
+- **认证方式**：创建/加入房间时生成随机令牌（UUID），通过 Set-Cookie `HttpOnly; Path=/` 传递给前端；WebSocket 连接时通过 `simple_authentication` 验证 Cookie 中的 token。
+- **单房间限制**：WebSocket 连接时检查该用户是否已在该房间有活跃连接（`has_user_connection`），若有则拒绝连接（code 1008）。
+- **重连机制**：若 WebSocket 断开，前端自动重连，携带相同 Cookie；后端验证通过后恢复连接。
 
 ### 5.3 歌曲管理模块
 
-- **歌单导入**：房主提供 QQ 音乐歌单 ID，后端异步爬取歌曲列表（名称、歌手、封面、播放链接等）。可使用 `aiohttp` + 解析网页或调用第三方非官方 API（需注意合规性）。爬取结果存入 SQLite 的 `songs` 表，并与房间关联。
-- **播放列表生成**：将歌曲列表洗牌（shuffle），生成随机顺序，存储于 Redis 房间信息中的 `song_queue` 列表。
-- **音频预下载**：游戏开始前，后端根据播放列表预下载下一首音频到本地缓存目录（如 `static/audio/`），并生成静态资源 URL。下载完成通过 WebSocket 通知前端预加载。
-- **缓存策略**：已下载的音频文件保留一段时间（如 7 天，或设置永久保留），通过文件名 MD5 或歌曲 ID 去重，避免重复下载。
+- **歌单导入**：房主提供 QQ 音乐歌单 ID，后端异步爬取歌曲列表（名称、歌手、封面、播放链接等）。使用 Huey 任务队列异步执行爬取，避免阻塞主线程。爬取结果存入 `songs` 表、`songlists` 表及相关关联表。
+- **歌曲管理**：歌曲元数据独立管理（`songs` 表），通过 `room_songs` 关联表与房间关联。每个房间可有独立的歌曲队列，通过 `song_order` 字段控制顺序。
+- **音频预下载**：游戏开始前，后端根据播放列表预下载音频到本地缓存目录（`assets/audio/`），并通过 `/api/songs/cache/{song_id}` 路由提供访问。使用临时 token 验证访问权限。
+- **缓存策略**：已下载的音频文件通过 `cached_path` 字段记录路径，永久保留。通过 `platform_song_id` 去重，避免重复下载。
 
 ### 5.4 标签系统模块
 
-- **标签组定义**：房主在创建房间或游戏准备阶段可配置多个标签组。每个标签组有名称（如“年代”），组内包含若干互斥标签（如“80年代”、“90年代”）。组之间独立，不互斥。
-- **标签存储**：标签信息持久化在 SQLite 的 `tag_groups` 和 `tags` 表中。每个标签属于一个组，组内互斥由应用逻辑保证。
-- **精准描述**：额外字段，用于玩家输入自由文本。判分时，房主可从历史出现的描述或手动输入中选择正确项。历史描述存储在 `song_descriptions` 表中，与歌曲和房间关联。
+- **标签组定义**：房主在创建房间或游戏准备阶段可配置多个标签组。每个标签组有名称（如"年代"）和描述，组内包含若干互斥标签（如"80年代"、"90年代"）。组之间独立，不互斥。
+- **标签存储**：标签信息持久化在 `tag_groups` 和 `tags` 表中，通过 `tag_group_tags` 关联表实现多对多关系（一个标签可属于多个标签组）。标签组与房间通过 `tag_groups_rooms` 关联表实现多对多关系。
+- **精准描述**：额外字段，用于玩家输入自由文本。判分时，房主可从历史出现的描述或手动输入中选择正确项。历史描述存储在 `song_description_history` 表中。
 
 ### 5.5 游戏流程模块（状态机）
 
-游戏房间内维护一个有限状态机，状态流转如下：
+游戏房间内维护两个有限状态机：
 
-1. **等待准备**：房主可调整歌单、标签组、起始位置设置；玩家点击"准备"，状态存入 Redis 缓存。
-2. **倒计时**：当所有玩家准备就绪（或房主强制开始），后端广播 3 秒倒计时事件，同时通知前端预加载音频。
-3. **播放中**：倒计时结束，后端广播 `play` 事件（含音频元数据、当前轮次索引、标签组信息、随机起始位置）。前端从指定位置开始播放。
+**房间状态机 `RoomStateMachine`**：
+- `WAITING` → `RUNNING` → `ENDED`
+- `ENDED` → `WAITING`（游戏结束后可重新开始）
 
-为增加游戏趣味性和公平性，每首歌曲播放时从随机位置开始：
+**回合状态机 `RoundStateMachine`**：
+- `PENDING` → `PLAYING_AUDIO` → `ANSWERING`/`JUDGING` → `COMPLETED` → `PENDING`
 
-- **房主控制条**：房间内显示一个拖动条，仅房主可调整，范围 0% ~ 80%，所有玩家（包括观战席）可见当前设定值。
-- **随机算法**：设拖动条值为 `x%`，则播放起始位置从音频前 `x%` 的区间内均匀随机选取。例如：
-  - 拖动条设为 50%，3分钟歌曲 → 从 0~90秒 内随机选点
-  - 拖动条设为 0%，则固定从 0秒 开始
-- **实时生效**：房主调整拖动条后立即同步给所有客户端，下一首歌曲生效（当前播放中歌曲不受影响）。
-- **Redis 存储**：`room:{roomId}.start_position_percent` 存储当前设定值（默认 0）。
-4. **抢答排队**：
-   - 玩家点击抢答，前端发送 `attempt_answer` 事件，携带当前播放进度。
-   - 后端将该玩家加入抢答队列（Redis List），若队列此前为空，则立即暂停播放（广播 `pause` 事件，含播放进度），并开始处理第一个玩家作答。
-   - 若播放已暂停且有玩家正在作答，新抢答者仅入队，不重复暂停。
-5. **作答轮次**：
-   - 后端从队列中取出队首玩家，将其状态设为“作答中”，广播 `your_turn` 事件（仅该玩家收到）或 `answering_player` 通知（其他玩家可见谁在作答）。
-   - 该玩家在限定时间内（如 30 秒）提交答案，包含各组选中的标签 ID 列表及精准描述文本。提交后，后端广播 `answer_submitted` 事件（公开答案内容，不含正确性）。
-   - 若超时未提交，自动视为弃权，从队列移除，继续处理下一个玩家。
-   - 若队列非空，继续处理下一个玩家；若队列为空，则继续播放音频。
-6. **判分环节**：
-   - 触发条件：队列为空且房间内所有玩家均已作答，或房主点击“结束回合”，或歌曲播放完毕且无人抢答。
-   - 后端广播 `judging` 事件，房主界面显示标准答案区：展示所有标签组供勾选（考虑组内互斥），以及精准描述候选列表（根据历史标注或空列表），房主可手动添加新描述选项。
-   - 此时会显示当前播放的歌曲信息（名称、歌手、封面），以及当前的标签组和精准描述候选列表。
-   - 房主提交正确答案（含选中的标签 ID 列表和选中的精准描述 ID 列表，或“无描述”）。后端进行计分。
-7. **计分**：
+**游戏流程**：
+
+1. **等待开始**：房主可调整歌单、标签组、起始位置设置；玩家加入房间。
+2. **游戏开始**：房主发送 `GAME_START` 事件，后端验证歌曲已下载，完成状态转换 `WAITING` → `RUNNING`，广播 `GAME_START`。
+3. **回合开始**：后端广播 `ROUND_START` 事件（含音频 URL、轮次索引、起始位置百分比）。前端开始播放。
+4. **起始位置控制**：
+   - 房主可调整起始位置百分比 `song_start_range_percent`（0-100），存储在数据库 `Room` 表。
+   - 播放时从歌曲前 `x%` 的区间内均匀随机选取起始点。
+5. **抢答排队**：
+   - 玩家发送 `ATTEMPT_ANSWER` 事件，后端将玩家加入 Redis 抢答队列（`AnswerQueueItem`）。
+   - 若播放中，立即暂停（广播 `PAUSE` 事件），设置当前作答玩家，广播 `YOUR_TURN`。
+   - 若已暂停，新抢答者仅入队。
+6. **作答轮次**：
+   - 当前作答玩家发送 `SUBMIT_ANSWER` 事件（包含选中的标签 ID 列表和精准描述）。
+   - 后端保存答案到 `PlayerAnswer` 表，广播 `ANSWER_BROADCAST`。
+   - 若队列非空，更新下一个作答玩家；若队列为空，进入待判分状态。
+7. **判分环节**：
+   - 房主发送 `JUDGING` 事件（手动触发），后端广播 `JUDGING` 事件（含歌曲信息、历史标签 ID、玩家提交的描述候选列表）。
+   - 房主提交正确答案（`JUDGE_SUBMIT`），包含正确标签 ID 列表、正确描述 ID 列表、新描述文本，或选择跳过计分。
+8. **计分**：
    - 遍历每个抢答玩家的答案：
      - 对于每个标签，如果该标签在房主答案中，则该玩家得1分，但仅当该玩家是第一个提交包含该标签的答案的玩家（按抢答顺序）。即同一标签最多让一个玩家得分。
      - 对于精准描述，如果该描述在房主答案中，则该玩家得1分。
-   - 更新积分榜，广播 `score_update` 事件。
-   - 将房主标注的正确答案存入历史表 `song_tag_history` 和 `song_description_history`，用于未来推荐。
-8. **下一轮**：重置玩家状态（未抢答），清空抢答队列，返回步骤 2 ，进入倒计时；房主可选择结束游戏，广播 `game_over`。
+   - 更新积分榜 `Score` 表，广播 `SCORE_UPDATE` 事件。
+   - 将房主标注的正确答案存入 `song_tag_history` 和 `song_description_history` 表。
+9. **下一轮**：若还有歌曲，更新 `current_song_index`，进入下一个 `ROUND_START`；否则发送 `GAME_OVER` 事件。
 
 ### 5.6 计分与历史标注模块
 
-- **计分规则**：每个命中标签计1分，但同一标签仅最先抢答者得分。若多名玩家答案中包含同一正确标签，只有抢答顺序最先的那位得分。
+- **计分规则**：每个命中标签计1分，但同一标签仅最先抢答者得分。若多名玩家答案中包含同一正确标签，只有抢答顺序最先的那位得分。精准描述命中计1分。
 - **历史标注**：
-  - `song_tag_history` 表记录每次判分时房主选中的标签（可多条），供后续相同歌曲推荐时统计频次。
-  - `song_description_history` 表记录房主选中的精准描述文本（或标记为“不正确”），推荐时按频次排序展示。
-  - 进入判分环节时，后端查询该歌曲的历史标签和描述，按频次降序返回给房主作为候选。（方便起见，可直接简单传入每组标签的最新历史记录。）
+  - `song_tag_history` 表记录每次判分时房主选中的标签，供后续相同歌曲推荐时参考。
+  - `song_description_history` 表记录房主选中的精准描述文本，判分时随机选择1-3个参考描述展示给房主。
 
 ### 5.7 WebSocket 协议扩展
 
-在现有二进制帧基础上，增加游戏事件类型（事件值从10开始）：
-
-为了可扩展性，我们如下划分并预留一部分
+游戏事件使用 JSON 格式传输（除音频元数据使用二进制帧）。事件值分配：
 
 - `1x` 房间事件
-- `2x` 音频事件
-- `3x` 玩家操作
-- `4x` 管理操作
+- `2x` 音频/播放事件
+- `3x` 游戏流程事件
+- `4x` 判分事件
+- `5x` 客户端同步事件
+
+**房间事件（1x）**：
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `ROOM_JOIN`          | 11     | C→S      | 加入房间，附带房间ID、用户名                                 | state update      |
+| `ROOM_JOIN`          | 11     | C→S      | 加入房间（WebSocket 连接时自动处理）                         | -                |
 | `ROOM_STATE`         | 12     | S→C      | 推送完整房间状态（玩家列表、准备状态、歌曲列表、标签组等）   | broadcast         |
 | `GAME_OVER`          | 13     | S→C      | 游戏结束，展示最终排名                                       | state & broadcast |
-| `START_POS_UPDATE`   | 14     | C→S      | 房主更新起始位置百分比 (0-80)                                | state & broadcast |
+| `START_POS_UPDATE`   | 14     | C→S/S→C  | 房主更新起始位置百分比 (0-100)                               | state & broadcast |
 | `KICK_USER`          | 15     | C→S      | 房主踢人                                                     | state & broadcast |
 | `PLAYER_LEAVE`       | 16     | C→S      | 玩家离开房间                                                 | state & broadcast |
 
+**音频/播放事件（2x）**：
+
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `PLAY`               | 20     | S→C      | 开始播放，包含音频URL、歌曲元数据、轮次索引、标签组结构      | state & broadcast |
-| `PAUSE`              | 21     | S→C      | 暂停播放（由抢答或房主触发），可包含播放进度（毫秒）         | state & broadcast |
-| `SEEK`               | 22     | C→S      | 调整播放进度，但不改变播放状态                               | broadcast         |
+| `PLAY`               | 20     | C→S      | 前端播放开始，携带当前播放进度                               | state & broadcast |
+| `PAUSE`              | 21     | C→S/S→C  | 暂停播放，携带播放进度（毫秒）                               | state & broadcast |
+| `SEEK`               | 22     | C→S      | 调整播放进度，携带目标进度                                   | broadcast         |
 | `PRELOAD_AUDIO`      | 23     | S→C      | 音频预加载事件，通知客户端预加载下一首歌曲                   | state & broadcast |
 
-| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
-|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `PLAYER_READY`       | 30     | C→S      | 玩家准备/取消准备   弃用                                     | state & broadcast |
-| `GAME_START`         | 31     | S→C      | 房主开始游戏，禁止新玩家加入（断线重连可以）                 | state & broadcast |
-| `ROUND_START`        | 32     | S→C      | 回合开始，触发倒计时（3,2,1）                                | state & broadcast |
-| `ATTEMPT_ANSWER`     | 33     | C→S      | 玩家抢答，触发暂停和入队                                     | state & broadcast |
-| `YOUR_TURN`          | 34     | S→C      | 广播通知指定玩家开始作答，包含剩余时间（前端显示xxx正在作答）| state & broadcast |
-| `SUBMIT_ANSWER`      | 35     | C→S      | 玩家提交勾选的标签ID列表及精准描述文本                       | state & broadcast |
-| `ANSWER_BROADCAST`   | 36     | S→C      | 广播某玩家提交的答案（匿名或带玩家名，不含正确性）           | state & broadcast |
-| `ANSWER_QUEUE`       | 37     | S→C      | 广播当前抢答队列顺序（用于前端展示排队状态）                 | state & broadcast |
-| `ROUND_END`          | 38     | S→C      | 回合结束，准备下一轮                                         | state & broadcast |
+**游戏流程事件（3x）**：
 
 | 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
 |----------------------|--------|----------|--------------------------------------------------------------| ------------      |
-| `JUDGING`            | 40     | S→C      | 进入判分环节，房主端显示标准答案区（含标签组和描述候选）     | state & broadcast |
-| `JUDGE_SUBMIT`       | 41     | C→S      | 房主提交正确答案标签ID列表和描述ID列表（或“无描述”）         | state & broadcast |
-| `SCORE_UPDATE`       | 42     | S→C      | 更新积分榜                                                   | state & broadcast |
+| `GAME_START`         | 31     | C→S/S→C  | 房主开始游戏，验证歌曲已下载，广播游戏开始                   | state & broadcast |
+| `ROUND_START`        | 32     | S→C      | 回合开始，携带音频URL、轮次索引、起始位置百分比              | state & broadcast |
+| `ATTEMPT_ANSWER`     | 33     | C→S      | 玩家抢答，加入队列，触发暂停                                 | state & broadcast |
+| `YOUR_TURN`          | 34     | S→C      | 通知当前作答玩家                                             | broadcast         |
+| `SUBMIT_ANSWER`      | 35     | C→S      | 玩家提交答案（标签ID列表 + 精准描述）                        | state & broadcast |
+| `ANSWER_BROADCAST`   | 36     | S→C      | 广播某玩家提交的答案                                         | broadcast         |
+| `ANSWER_QUEUE`       | 37     | S→C      | 广播当前抢答队列状态                                         | broadcast         |
+| `ROUND_END`          | 38     | C→S/S→C  | 回合结束（房主手动或自动触发）                               | state & broadcast |
+
+**判分事件（4x）**：
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `JUDGING`            | 40     | C→S/S→C  | 进入判分环节，携带歌曲信息和描述候选                         | state & broadcast |
+| `JUDGE_SUBMIT`       | 41     | C→S      | 房主提交正确答案（含正确标签、描述、跳过等）                 | state & broadcast |
+| `SCORE_UPDATE`       | 42     | S→C      | 更新积分榜                                                   | broadcast         |
 | `SKIP_ROUND`         | 43     | C→S      | 房主跳过当前回合（不计分）                                   | state & broadcast |
+| `SHOW_ANSWER`        | 44     | S→C      | 显示正确答案                                                 | broadcast         |
+| `ROUND_STATE_UPDATE` | 45     | S→C      | 回合状态更新（PENDING/PLAYING_AUDIO/ANSWERING/JUDGING/COMPLETED） | broadcast |
 
-简单起见，游戏事件走 json 格式。约定通用格式：
+**客户端同步事件（5x）**：
+
+| 事件名               | 类型值 | 方向     | 说明                                                         | 服务器行为        |
+|----------------------|--------|----------|--------------------------------------------------------------| ------------      |
+| `PLAYER_ANSWER`      | 50     | S→C      | 全量玩家答案同步                                             | broadcast         |
+| `PLAYER_SELECTION_UPDATE` | 51 | C→S      | 玩家选择的增量更新                                           | state             |
+| `PLAYER_DESCRIPTION_UPDATE` | 52 | C→S   | 玩家描述的增量更新                                           | state             |
+| `CLEAR_ANSWER_QUEUE` | 53     | S→C      | 清空抢答队列                                                 | broadcast         |
+
+约定通用格式：
 
 ```json
 {
@@ -188,391 +210,90 @@
 
 ### 5.8 HTTP API 设计
 
-> 约定：所有 API 接口以 `/api` 为前缀，`/ws/` 前缀用于 ws 连接
+> 约定：所有 API 接口以 `/api` 为前缀，`/ws/` 前缀用于 WebSocket 连接
 
-| 端点                 | 方法   | 说明                                   | 请求体/参数                                | 返回                                |
-|----------------------|--------|----------------------------------------|--------------------------------------------| ----------------------------------- |
-| `/api/room/create`   | POST   | 创建房间                               | `{ username: string, tagGroups?: [...] }`  | `{ roomId: string, token: string }` |
-| `/api/room/:roomId`  | POST   | 加入房间                               | `{ roomId: string, username: string }`     | `{ token: string, roomState: ... }` |
-| `/api/room/:roomId`  | GET    | 获取房间公开信息（用于展示）           | -                                          | 房间基本信息                        |
-| `/api/room/:roomId`  | PATCH  | 更新房间设置                           | `{ title?: string, description?: string, songQueue?: string[], tagGroups?: object }` | 房间信息                            |
-| `/api/song/search`   | GET    | 搜索歌曲（备用）                       | `q: string`                                | 歌曲列表                            |
-| `/api/song/playlist` | POST   | 导入QQ音乐歌单                         | `{ playlistId: string }`                   | 歌曲列表                            |
-| `/api/user/reconnect`| POST   | 通过Cookie重连（获取最新状态）         | Cookie中包含token                          | 房间状态                            |
-| `/api/tags/suggest`  | GET    | 根据歌曲ID获取历史标签和描述推荐       | `songId: int`                              | 标签频次列表、描述频次列表          |
+| 端点                       | 方法   | 说明                                   | 请求体/参数                                | 返回                                |
+|----------------------------|--------|----------------------------------------|--------------------------------------------| ----------------------------------- |
+| `/api/room/`               | POST   | 创建房间                               | `{ title: string, host_name: string }`      | `{ room_id, host: {...} }`        |
+| `/api/room/{roomId}`       | POST   | 加入房间                               | `{ username: string }`                     | `{ room_id, user: {...} }`         |
+| `/api/room/{roomId}`       | GET    | 获取房间公开信息                       | -                                          | 房间基本信息                        |
+| `/api/room/{roomId}`       | PATCH  | 更新房间设置                           | `{ title?, tag_group_ids?, tag_groups? }` | 房间信息                            |
+| `/api/songs/`              | GET    | 获取歌曲列表（分页）                   | `offset, limit, kw`                        | 歌曲列表                            |
+| `/api/songs/`              | POST   | 创建歌曲                               | 歌曲信息                                   | 歌曲信息                            |
+| `/api/songs/{songId}`       | GET    | 获取歌曲详情                           | -                                          | 歌曲信息                            |
+| `/api/songs/cache/{songId}` | GET    | 获取缓存的音频文件                     | -                                          | 音频流                              |
+| `/api/songs/cache/{songId}` | POST   | 触发音频预下载                         | -                                          | 任务开始                            |
+| `/api/tags/`               | GET    | 获取标签列表（分页）                   | `limit, offset`                           | 标签列表                            |
+| `/api/tags/`               | POST   | 创建标签                               | `{ tags: [...] }`                          | 标签列表                            |
+| `/api/tags/groups/`        | GET    | 获取标签组列表                         | `limit, offset`                           | 标签组列表                          |
+| `/api/tags/groups/`        | POST   | 创建标签组                             | `{ name, description?, tags?, existing_tag_ids? }` | 标签组信息                  |
+| `/api/tags/groups/`        | PATCH  | 更新标签组                             | 标签组更新                                 | 标签组信息                          |
 
 ## 6. 数据模型设计
 
-**以下 sql 语句内容仅供数据结构参考**。
+实现上，使用 SQLAlchemy 2.0 style ORM 作为数据库交互接口；数据校验采用"边界优先"策略：
 
-实现上，使用 sqlalchemy orm 作为数据库交互接口；数据校验采用“边界优先”策略：
-
-- HTTP/WS 输入边界可使用 pydantic（或等价校验器）做反序列化与约束；
-- ORM 模型仅负责持久化，不承担输入校验职责；
-- 二进制数据继续由现有的 frame 基类和相关类处理。
+- HTTP/WS 输入边界使用 Pydantic 做反序列化与约束；
+- ORM 模型仅负责持久化，不承担输入校验职责。
 
 数据库访问约定（当前实现）：
 
+- `db/session.py` 提供 `session_scope` 异步上下文管理器用于事务管理；
 - `db/crud.py` 中的写入函数只负责 `add/update + flush`，不在函数内部 `commit`；
-- 事务提交与回滚由上层业务边界统一管理（例如 handler/service 一次请求或一次任务批次）；
-- 多个 CRUD 调用可组合在同一事务中，保证原子性。
+- 事务提交与回滚由上层业务边界统一管理。
 
-### 6.1 SQLite 表结构
+### 6.1 数据库表结构
 
-使用 SQLite，启用外键约束（`PRAGMA foreign_keys = ON`），并采用 WAL 模式提高并发。
+> 详细表结构请参考 `db/models.py`，以下是核心表概览：
 
 **用户表 `users`**
-
-```sql
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    display_suffix TEXT,  -- 用于显示的唯一后缀
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+- 用户属于房间（`room_id` 外键）
+- `token`: UUID 令牌用于 WebSocket 认证
+- `is_owner`: 是否为房主
+- `online`: 当前是否在线
 
 **房间表 `rooms`**
+- `id`: 房间 ID（6位字母数字）
+- `status`: 状态（WAITING=0, RUNNING=1, ENDED=2）
+- `current_song_index`: 当前播放歌曲索引
+- `round_state`: 回合状态（PENDING=0, PLAYING_AUDIO=1, ANSWERING=2, JUDGING=3, COMPLETED=4）
+- `song_start_range_percent`: 起始位置百分比（0-100）
 
-```sql
-CREATE TABLE rooms (
-    id TEXT PRIMARY KEY,  -- 房间ID，如 "ABC123"
-    host_player_id INTEGER NOT NULL,  -- 房主玩家ID，关联 room_players.id
-    playlist_id TEXT,     -- QQ音乐歌单ID
-    tag_groups_json TEXT, -- 标签组配置的JSON序列化
-    status INTEGER DEFAULT 0,   -- 0:等待中,1:游戏中,2:已结束
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    ended_at TIMESTAMP
-);
-```
+**歌曲表 `songs`**、**歌单表 `songlists`**
+- 支持多平台（QQ音乐等）
+- `cached_path`: 本地缓存路径
 
-**房间玩家表 `room_players`**
+**标签组表 `tag_groups`**、**标签表 `tags`**
+- 通过 `tag_group_tags` 关联表实现多对多关系
+- 标签可跨多个标签组使用
 
-```sql
-CREATE TABLE room_players (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-    username TEXT NOT NULL,
-    is_host BOOLEAN DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(room_id, username)  -- 同一房间内用户名唯一
-);
-```
+**历史标注表 `song_tag_history`**、**`song_description_history`**
+- 记录房主判分时选择的标签和描述
 
-**歌曲表 `songs`**
+**积分表 `scores`**
+- 记录每轮得分变化和累计得分
 
-```sql
-CREATE TABLE songs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    platform TEXT,                -- 如 qqmusic
-    platform_song_id TEXT,
-    title TEXT,
-    artist TEXT,
-    cover_url TEXT,
-    audio_url TEXT,               -- 原始播放链接
-    cached_path TEXT,             -- 本地缓存路径
-    metadata_json TEXT,           -- 额外元数据（JSON）
-    UNIQUE(platform_song_id)
-);
-```
+**玩家答案表 `player_answers`**
+- 记录玩家提交的标签和精准描述
 
-**房间歌曲关联表 `room_songs`**
+**任务表 `tasks`**
+- 存储 Huey 异步任务状态
 
-```sql
-CREATE TABLE room_songs (
-    room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE,
-    song_id INTEGER REFERENCES songs(id),
-    song_order INTEGER,           -- 播放顺序
-    PRIMARY KEY (room_id, song_id)
-);
-```
-
-**标签组表 `tag_groups`**
-
-```sql
-CREATE TABLE tag_groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE,  -- 可为空，表示全局模板
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**标签表 `tags`**
-
-```sql
-CREATE TABLE tags (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER REFERENCES tag_groups(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    UNIQUE(group_id, name)
-);
-```
-
-**歌曲标签历史表 `song_tag_history`**
-
-```sql
-CREATE TABLE song_tag_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    song_id INTEGER REFERENCES songs(id),
-    tag_id INTEGER REFERENCES tags(id),
-    judged_by_player_id INTEGER REFERENCES room_players(id),
-    room_id TEXT REFERENCES rooms(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**精准描述历史表 `song_description_history`**
-
-```sql
-CREATE TABLE song_description_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    song_id INTEGER REFERENCES songs(id),
-    description_text TEXT NOT NULL,
-    is_correct BOOLEAN DEFAULT 1,   -- 房主是否标记为正确
-    judged_by_player_id INTEGER REFERENCES room_players(id),
-    room_id TEXT REFERENCES rooms(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**积分记录表 `scores`**
-
-```sql
-CREATE TABLE scores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id TEXT REFERENCES rooms(id),
-    player_id INTEGER REFERENCES room_players(id),
-    round_index INTEGER,
-    score_delta INTEGER,            -- 本轮得分变化
-    total_score INTEGER,             -- 累计得分（可冗余）
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**玩家答案记录表 `player_answers`**（可选，用于审计和重放）
-
-```sql
-CREATE TABLE player_answers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id TEXT REFERENCES rooms(id),
-    player_id INTEGER REFERENCES room_players(id),
-    song_id INTEGER REFERENCES songs(id),
-    round_index INTEGER,
-    selected_tag_ids TEXT,          -- JSON数组
-    description_text TEXT,
-    answer_order INTEGER,           -- 该轮抢答顺序
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-以下是对应的 ORM 模型
-
-```python
-# 文件: models.py
-from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Text, JSON,
-    ForeignKey, UniqueConstraint, PrimaryKeyConstraint, func
-)
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-
-Base = declarative_base()
-
-class Room(Base):
-    """房间表 rooms"""
-    __tablename__ = 'rooms'
-
-    id = Column(String, primary_key=True)
-    host_player_id = Column(Integer, ForeignKey('room_players.id'), nullable=False)  # 房主玩家ID
-    playlist_id = Column(String)
-    tag_groups_json = Column(JSON)
-    status = Column(Integer, default=0)
-    created_at = Column(DateTime, default=func.current_timestamp())
-    ended_at = Column(DateTime, nullable=True)
-
-    # 关系
-    host_player = relationship('RoomPlayer', foreign_keys=[host_player_id])
-    players = relationship('RoomPlayer', back_populates='room', foreign_keys='RoomPlayer.room_id')
-    room_songs = relationship('RoomSong', back_populates='room')
-    tag_groups = relationship('TagGroup', back_populates='room')
-    scores = relationship('Score', back_populates='room')
-    player_answers = relationship('PlayerAnswer', back_populates='room')
-    song_tag_history = relationship('SongTagHistory', back_populates='room')
-    song_description_history = relationship('SongDescriptionHistory', back_populates='room')
-
-
-class RoomPlayer(Base):
-    """房间玩家表 room_players"""
-    __tablename__ = 'room_players'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    room_id = Column(String, ForeignKey('rooms.id', ondelete='CASCADE'), nullable=False)
-    username = Column(String, nullable=False)
-    is_host = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    __table_args__ = (
-        UniqueConstraint('room_id', 'username', name='uq_room_player_username'),
-    )
-
-    # 关系
-    room = relationship('Room', back_populates='players', foreign_keys=[room_id])
-    scores = relationship('Score', back_populates='player')
-    player_answers = relationship('PlayerAnswer', back_populates='player')
-    song_tag_judgements = relationship('SongTagHistory', back_populates='judged_by_player')
-    song_description_judgements = relationship('SongDescriptionHistory', back_populates='judged_by_player')
-
-
-class Song(Base):
-    """歌曲表 songs"""
-    __tablename__ = 'songs'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    platform = Column(String)
-    platform_song_id = Column(String)
-    title = Column(String)
-    artist = Column(String)
-    cover_url = Column(String)
-    audio_url = Column(String)
-    cached_path = Column(String)
-    metadata_json = Column(JSON)
-
-    __table_args__ = (
-        UniqueConstraint('platform_song_id', name='uq_song_platform_id'),
-    )
-
-    rooms = relationship('RoomSong', back_populates='song')
-
-
-class RoomSong(Base):
-    """房间歌曲关联表 room_songs"""
-    __tablename__ = 'room_songs'
-
-    room_id = Column(String, ForeignKey('rooms.id', ondelete='CASCADE'), primary_key=True)
-    song_id = Column(Integer, ForeignKey('songs.id'), primary_key=True)
-    song_order = Column(Integer)
-
-    room = relationship('Room', back_populates='room_songs')
-    song = relationship('Song', back_populates='rooms')
-
-
-class TagGroup(Base):
-    """标签组表 tag_groups"""
-    __tablename__ = 'tag_groups'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    room_id = Column(String, ForeignKey('rooms.id', ondelete='CASCADE'), nullable=True)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    room = relationship('Room', back_populates='tag_groups')
-    tags = relationship('Tag', back_populates='group', cascade='all, delete-orphan')
-
-
-class Tag(Base):
-    """标签表 tags"""
-    __tablename__ = 'tags'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    group_id = Column(Integer, ForeignKey('tag_groups.id', ondelete='CASCADE'), nullable=False)
-    name = Column(String, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint('group_id', 'name', name='uq_tag_group_name'),
-    )
-
-    group = relationship('TagGroup', back_populates='tags')
-    song_history = relationship('SongTagHistory', back_populates='tag')
-
-
-class SongTagHistory(Base):
-    """歌曲标签历史表 song_tag_history"""
-    __tablename__ = 'song_tag_history'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
-    tag_id = Column(Integer, ForeignKey('tags.id'), nullable=False)
-    judged_by_player_id = Column(Integer, ForeignKey('room_players.id'), nullable=False)
-    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    song = relationship('Song')
-    tag = relationship('Tag', back_populates='song_history')
-    judged_by_player = relationship('RoomPlayer', foreign_keys=[judged_by_player_id], back_populates='song_tag_judgements')
-    room = relationship('Room', back_populates='song_tag_history')
-
-
-class SongDescriptionHistory(Base):
-    """精准描述历史表 song_description_history"""
-    __tablename__ = 'song_description_history'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
-    description_text = Column(Text, nullable=False)
-    is_correct = Column(Boolean, default=True)
-    judged_by_player_id = Column(Integer, ForeignKey('room_players.id'), nullable=False)
-    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    song = relationship('Song')
-    judged_by_player = relationship('RoomPlayer', foreign_keys=[judged_by_player_id], back_populates='song_description_judgements')
-    room = relationship('Room', back_populates='song_description_history')
-
-
-class Score(Base):
-    """积分记录表 scores"""
-    __tablename__ = 'scores'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
-    player_id = Column(Integer, ForeignKey('room_players.id'), nullable=False)
-    round_index = Column(Integer)
-    score_delta = Column(Integer)
-    total_score = Column(Integer)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    room = relationship('Room', back_populates='scores')
-    player = relationship('RoomPlayer', back_populates='scores')
-
-
-class PlayerAnswer(Base):
-    """玩家答案记录表 player_answers"""
-    __tablename__ = 'player_answers'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    room_id = Column(String, ForeignKey('rooms.id'), nullable=False)
-    player_id = Column(Integer, ForeignKey('room_players.id'), nullable=False)
-    song_id = Column(Integer, ForeignKey('songs.id'), nullable=False)
-    round_index = Column(Integer)
-    selected_tag_ids = Column(JSON)
-    description_text = Column(Text)
-    answer_order = Column(Integer)
-    created_at = Column(DateTime, default=func.current_timestamp())
-
-    room = relationship('Room', back_populates='player_answers')
-    player = relationship('RoomPlayer', back_populates='player_answers')
-    song = relationship('Song')
-```
+详细 ORM 模型定义请参考 `db/models.py`。
 
 ### 6.2 Redis 数据结构
 
-- **房间实时状态** `room:{roomId}` (Hash)
-  - `host_player_id`: 房主玩家ID
-  - `status`: waiting/playing/ended
-  - `current_song_index`: 当前播放歌曲索引
-  - `current_round_state`: 轮次状态 (playing/paused/judging)
-  - `play_progress`: 当前播放进度（毫秒）
-  - `start_position_percent`: 起始位置百分比 (0-80)，控制从歌曲前 x% 中随机选点
-  - `tag_groups`: 标签组配置（JSON，与数据库同步）
-  - `answer_queue`: 抢答队列（List，存储玩家ID顺序）
-  - `current_answerer`: 当前正在作答的玩家ID
-  - `answers`: 已提交的答案（Hash，玩家ID -> JSON {tags:[], description:""}）
-- **玩家集合** `room:{roomId}:players` (Set) 存储玩家ID
-- **玩家准备状态** `room:{roomId}:ready` (Hash) 玩家ID -> boolean
-- **玩家连接映射** `player:{playerId}:ws` (String) 存储WebSocket连接ID（用于单播）
-- **歌曲队列** `room:{roomId}:song_queue` (List) 存储歌曲ID列表
-- **会话映射** `session:{token}` (String) 存储 `room_id:player_id`，并设置过期时间
+- **播放状态** `room:{roomId}:playback` (Hash)
+  - `play_state`: "playing" | "paused"
+  - `progress_ms`: 当前播放进度（毫秒）
+  - `offset_ts`: 播放偏移时间戳
+  - `audio_url`: 音频访问 URL（含临时 token）
+- **抢答队列** `room:{roomId}:answer_queue` (List)
+  - 存储 `AnswerQueueItem` JSON：`{player_id, offset_ts, server_ts, order, is_answering}`
+- **当前作答玩家** `room:{roomId}:current_answerer` (String)
+  - 当前正在作答的玩家 ID
+
+其他状态（房间基础状态、玩家状态、歌曲队列）存储在 PostgreSQL 数据库中，通过 SQLAlchemy ORM 管理。
 
 ---
 
@@ -752,55 +473,46 @@ class PlayerAnswer(Base):
 #### **创建房间**
 
 ```json
-POST /api/room/create
+POST /api/room/
 Content-Type: application/json
 
 {
-  "username": "alice",
-  "tagGroups": [
-    { "name": "年代", "tags": ["80年代", "90年代", "00年代"] },
-    { "name": "曲风", "tags": ["摇滚", "流行", "民谣"] }
-  ]
+  "title": "我的房间",
+  "host_name": "alice"
 }
 
 响应 200:
 {
-  "roomId": "ABC123",
-  "playerId": 1,
-  "token": "eyJhbGci...",
-  "expires_in": 7200
+  "room_id": "ABC123",
+  "host": {
+    "id": 1,
+    "username": "alice",
+    "is_owner": true,
+    "token": "uuid-token-string"
+  }
 }
-Set-Cookie: token=eyJhbGci...; HttpOnly; Path=/; Max-Age=7200
+Set-Cookie: token=uuid-token-string; HttpOnly; Path=/
 ```
 
 #### **加入房间**
 
 ```json
-POST /api/room/join
+POST /api/room/ABC123
 Content-Type: application/json
 
-{"roomId": "ABC123", "username": "bob"}
+{"username": "bob"}
 
 响应 200:
 {
-  "token": "eyJhbGci...",
-  "playerId": 2,
-  "roomState": {
-    "host": "alice",
-    "players": [
-      {"playerId": 1, "username": "alice"},
-      {"playerId": 2, "username": "bob"}
-    ],
-    "songCount": 10,
-    "currentRound": 0,
-    "status": "waiting",
-    "tagGroups": [
-      { "name": "年代", "tags": ["80年代", "90年代", "00年代"] },
-      { "name": "曲风", "tags": ["摇滚", "流行", "民谣"] }
-    ]
+  "room_id": "ABC123",
+  "user": {
+    "id": 2,
+    "username": "bob",
+    "is_owner": false,
+    "token": "uuid-token-string"
   }
 }
-Set-Cookie: token=...; HttpOnly; ...
+Set-Cookie: token=uuid-token-string; HttpOnly; Path=/
 ```
 
 #### **获取房间公开信息**
@@ -810,43 +522,88 @@ GET /api/room/ABC123
 
 响应 200:
 {
-  "roomId": "ABC123",
-  "host": "alice",
-  "playerCount": 2,
-  "songCount": 10,
-  "status": "waiting"
+  "room_id": "ABC123",
+  "host_player_id": "1",
+  "status": 0,
+  "title": "我的房间",
+  "players": [
+    {"id": 1, "username": "alice", "is_owner": true, "online": true},
+    {"id": 2, "username": "bob", "is_owner": false, "online": true}
+  ],
+  "tag_groups": [...]
 }
 ```
 
-#### **导入QQ音乐歌单**
+#### **更新房间设置**
 
 ```json
-POST /api/song/playlist
+PATCH /api/room/ABC123
 Content-Type: application/json
 
-{"playlistId": "123456789"}
+{
+  "title": "新标题",
+  "tag_group_ids": [1, 2, 3]
+}
+
+响应 200: 房间信息（同上）
+```
+
+#### **获取歌曲列表**
+
+```json
+GET /api/songs/?offset=0&limit=20&kw=周杰伦
 
 响应 200:
 {
-  "songs": [
-    {"songId": 101, "title": "歌曲1", "artist": "歌手1"},
-    {"songId": 102, "title": "歌曲2", "artist": "歌手2"}
+  "total": 100,
+  "list": [
+    {"id": 1, "title": "晴天", "artist": "周杰伦", "cover_url": "...", ...}
   ]
 }
 ```
 
-#### **重连**
+#### **触发音频预下载**
 
 ```json
-POST /api/player/reconnect
-Cookie: token=eyJhbGci...
+POST /api/songs/cache/123
 
 响应 200:
+{"message": "Caching task started"}
+```
+
+#### **获取标签组列表**
+
+```json
+GET /api/tags/groups/
+
+响应 200:
+[
+  {
+    "id": 1,
+    "name": "年代",
+    "description": "歌曲发布年代",
+    "tags": [
+      {"id": 1, "name": "80年代"},
+      {"id": 2, "name": "90年代"}
+    ]
+  }
+]
+```
+
+#### **创建标签组**
+
+```json
+POST /api/tags/groups/
+Content-Type: application/json
+
 {
-  "roomId": "ABC123",
-  "playerId": 2,
-  "roomState": { ... }  // 同加入房间返回的roomState
+  "name": "曲风",
+  "description": "音乐风格",
+  "tags": ["摇滚", "流行", "民谣"],
+  "existing_tag_ids": [1, 2]
 }
+
+响应 200: 标签组信息（同上格式）
 ```
 
 ## 8. 前端要点
@@ -865,59 +622,36 @@ Cookie: token=eyJhbGci...
 
 ## 9. 部署方案
 
-放过我吧别用docker
+**环境要求**：
+- Python 3.12+
+- Redis 7+
+- PostgreSQL 14+（生产环境）或 SQLite（开发环境）
 
-使用 Docker Compose 编排服务，确保易部署：
+**启动步骤**：
 
-```yaml
-version: '3.8'
-services:
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    depends_on:
-      - redis
-    environment:
-      REDIS_URL: redis://redis:6379
-      DATABASE_PATH: /app/data/game.db   # SQLite 文件路径
-      AUDIO_CACHE_DIR: /app/static/audio
-    volumes:
-      - ./backend/data:/app/data          # 持久化 SQLite 文件
-      - ./backend/static/audio:/app/static/audio
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./frontend/dist:/usr/share/nginx/html
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-    depends_on:
-      - backend
-volumes:
-  redis_data:
-```
+1. 复制 `.env.template` → `.env`，配置环境变量
+2. 可选：复制 `config.template.yaml` → `config.yaml`
+3. 运行数据库迁移：`uv run alembic upgrade head`
+4. 启动后端：`uv run uvicorn main:app --reload --port 8000`
+5. 启动 Huey 任务队列（可选）：`uv run huey_consumer.py mq.tasks.huey`
 
-**说明**：
+**环境变量说明**：
 
-- SQLite 数据库文件 `game.db` 存放在宿主机的 `./backend/data` 目录，通过 volume 挂载到容器 `/app/data`，实现数据持久化。
-- 音频缓存目录同样挂载，避免容器重启丢失。
-- Redis 使用 AOF 持久化，数据保存在 `redis_data` volume。
-- 前端静态文件通过 Nginx 提供服务，API 和 WebSocket 反向代理到后端。
+| 变量                    | 说明                        | 默认值                        |
+|------------------------|----------------------------|------------------------------|
+| `CCG_DATABASE_URL`     | 数据库连接 URL              | `sqlite+aiosqlite:///data/game.db` |
+| `CCG_REDIS_URL`        | Redis 连接 URL              | `redis://localhost:6379/0`  |
+| `CCG_QQ_MUSIC_COOKIE`  | QQ 音乐 Cookie（爬虫用）    | -                            |
+| `CCG_AUDIO_DOWNLOAD_DIR` | 音频缓存目录                | `assets/audio`               |
+| `CCG_LOG_LEVEL`        | 日志级别                    | `INFO`                      |
 
-**易部署性**：只需安装 Docker 和 Docker Compose，运行 `docker-compose up -d` 即可启动整个系统。SQLite 无需额外数据库服务，适合小型部署和开发测试。
+**前端部署**：前端构建产物位于 `ccg_frontend/dist/`，由 FastAPI 自动托管。
 
 ## 10. 后续优化方向
 
-- **防作弊**：限制抢答后必须等待一定时间才能再次抢答；播放进度同步时考虑网络延迟；可引入音频指纹技术防止外放录音。
+- **防作弊**：限制抢答后必须等待一定时间才能再次抢答；播放进度同步时考虑网络延迟。
 - **标签组模板库**：允许用户保存常用标签组配置，供以后快速选用。
 - **音频来源扩展**：支持网易云、Spotify 等其他平台。
-- **观战模式**：允许游客进入房间观看，不参与游戏。
+- **观战模式**：已实现 `/ws/{roomid}/watch` 端点。
 - **数据统计**：记录玩家胜率、常用标签、精准描述词云，形成个人报告。
-- **性能优化**：若房间并发增加，可考虑将 SQLite 替换为 PostgreSQL 或使用读写分离；但当前设计已预留扩展空间，只需修改数据库连接层。
-- **微服务拆分**：若未来需要，可将房间管理、游戏逻辑拆分为独立服务，但当前单体架构足够满足需求且易于维护。
+- **性能优化**：当前使用 PostgreSQL + Redis，已具备良好的扩展性。
