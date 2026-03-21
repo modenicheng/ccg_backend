@@ -40,8 +40,6 @@ from schemas.ws_messages.judge_schemas import SkipRoundMessage
 from utils import get_audio_stream_url, get_logger
 from utils.enumerations import ErrorEventType, GameEventType, RoundState
 from utils.ts import get_ts_ms
-from .round_state_events import handle_round_state_transition
-from .registe_manager import regist
 
 logger = get_logger(__name__)
 
@@ -378,58 +376,8 @@ async def handle_attempt_answer(
         server_ts,
     )
 
-    # 在基础校验完成后再向客户端广播（转发原始事件）共前端维护抢答队列状态，避免后端全量广播队列导致性能问题
-    # 此时前端可以先自主暂停，然后在后续收到 PAUSE 事件时再进一步调整播放状态
-    await clients.broadcast(
-        room_id,
-        data.model_dump(),
-        excluded_clients={client},
-    )
-
-    if playback_state := await room_cache.get_room_playback_state(room_id):
-        logger.debug(
-            "Current playback state for room %s: %s",
-            room_id,
-            playback_state,
-        )
-        if playback_state.play_state == "playing":
-            paused_progress_ms = playback_state.progress_ms
-            if playback_state.offset_ts and playback_state.offset_ts > 0:
-                paused_progress_ms = max(
-                    0,
-                    playback_state.progress_ms +
-                    max(0, server_ts - playback_state.offset_ts),
-                )
-
-            new_playback_state = playback_state.model_copy(
-                update={
-                    "play_state": "paused",
-                    "progress_ms": paused_progress_ms,
-                    "offset_ts": server_ts,
-                })
-            await room_cache.set_room_playback_state(room_id, new_playback_state)
-            await handle_round_state_transition(clients, client, room_id,
-                                                RoundState.ANSWERING)
-
-            pause_message = PauseMessage(data=PlayControlData(
-                progress_ms=paused_progress_ms,
-                offset_ts=server_ts,
-                audio_url=new_playback_state.audio_url,
-            ))
-            await clients.broadcast(room_id, pause_message.model_dump())
-        else:
-            logger.info(
-                "Playback already paused in room %s when player %s attempted to answer",
-                room_id,
-                player_id,
-            )
-
-        # 尝试让前端自己依据抢答时间戳和当前播放状态来计算抢答队列，避免后端大量全量广播
-        # # new_queue = await room_cache.get_answer_queue(room_id)
-        # await clients.broadcast(
-        #     room_id,
-        #     AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
-    else:
+    playback_state = await room_cache.get_room_playback_state(room_id)
+    if not playback_state:
         logger.warning(
             "No playback state found for room %s when player %s attempted to answer",
             room_id,
@@ -440,6 +388,57 @@ async def handle_attempt_answer(
             "Failed to join answer queue: No playback state",
         )
         return
+
+    # 在基础校验完成后再向客户端广播（转发原始事件）共前端维护抢答队列状态，避免后端全量广播队列导致性能问题
+    # 此时前端可以先自主暂停，然后在后续收到 PAUSE 事件时再进一步调整播放状态
+    await clients.broadcast(
+        room_id,
+        data.model_dump(),
+        excluded_clients={client},
+    )
+
+    logger.debug(
+        "Current playback state for room %s: %s",
+        room_id,
+        playback_state,
+    )
+    if playback_state.play_state == "playing":
+        paused_progress_ms = playback_state.progress_ms
+        if playback_state.offset_ts and playback_state.offset_ts > 0:
+            paused_progress_ms = max(
+                0,
+                playback_state.progress_ms +
+                max(0, server_ts - playback_state.offset_ts),
+            )
+
+        new_playback_state = playback_state.model_copy(
+            update={
+                "play_state": "paused",
+                "progress_ms": paused_progress_ms,
+                "offset_ts": server_ts,
+            })
+        await room_cache.set_room_playback_state(room_id, new_playback_state)
+        await handle_round_state_transition(clients, client, room_id,
+                                            RoundState.ANSWERING)
+
+        pause_message = PauseMessage(data=PlayControlData(
+            progress_ms=paused_progress_ms,
+            offset_ts=server_ts,
+            audio_url=new_playback_state.audio_url,
+        ))
+        await clients.broadcast(room_id, pause_message.model_dump())
+    else:
+        logger.info(
+            "Playback already paused in room %s when player %s attempted to answer",
+            room_id,
+            player_id,
+        )
+
+        # 尝试让前端自己依据抢答时间戳和当前播放状态来计算抢答队列，避免后端大量全量广播
+        # # new_queue = await room_cache.get_answer_queue(room_id)
+        # await clients.broadcast(
+        #     room_id,
+        #     AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
 
     # 设置当前作答玩家
     await room_cache.set_room_current_answerer(room_id, player_id)

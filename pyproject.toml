@@ -47,11 +47,7 @@ ignore_patterns = [
     "alembic/**/*",
 ]
 
-[tool.pylint.TYPECHECK]
-generated-members =["sqlalchemy.sql.func.*", "func.*"]
-
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
-    "pylint>=4.0.5",
 ]
