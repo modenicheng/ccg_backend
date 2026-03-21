@@ -6,6 +6,7 @@ from utils.enumerations import GameEventType
 from . import (
     heartbeats,
     audio_events_2x,
+    audio_error_handler,
     round_events_3x,
     judge_events_4x,
     round_state_events,
