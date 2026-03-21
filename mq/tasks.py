@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydub import AudioSegment
 
 # Local application imports
+from cache import cookie_rotation
 from config import app_config
 from db import models
 from db.crud import (
@@ -31,7 +32,9 @@ from db.crud import (
     create_task_record,
 )
 from db.session import session_scope, engine
+from mq import cookie_refresh_service
 from utils import parse_cookie_string
+from utils.cookie_pool import CookieEntry, CookiePoolManager
 
 logger = logging.getLogger("huey")
 
@@ -215,19 +218,79 @@ def _resolve_audio_download_path(mid: str,
     return os.path.join(target_dir, f"{safe_mid}{ext}")  # pylint: disable=line-too-long
 
 
-if QQ_MUSIC_COOKIE:
-    cookies = parse_cookie_string(QQ_MUSIC_COOKIE)
-    if cookies:
-        credential = qapi.Credential.from_cookies_dict(cookies)
-        qapi.get_session().credential = credential
-    else:
-        logger.warning(
-            "CCG_QQ_MUSIC_COOKIE is set but failed to parse; using default qqmusic_api session without credential"  # pylint: disable=line-too-long
+# 初始化 Cookie 池和轮换管理器
+COOKIE_POOL_MANAGER = CookiePoolManager()
+COOKIE_ROTATION_MANAGER: cookie_rotation.CookieRotationManager | None = None
+COOKIE_REFRESH_SERVICE: cookie_refresh_service.CookieRefreshService | None = None
+
+
+async def _initialize_cookie_system() -> None:
+    """Initialize cookie pool, rotation, and refresh systems."""
+    global COOKIE_POOL_MANAGER, COOKIE_ROTATION_MANAGER, COOKIE_REFRESH_SERVICE
+
+    try:
+        # 从多个源加载 Cookies
+        cookie_list = []
+        try:
+            # 尝试从配置加载
+            if hasattr(app_config, "qq_music_cookies"):
+                cookie_list = app_config.qq_music_cookies or []
+        except Exception:
+            pass
+
+        await COOKIE_POOL_MANAGER.load_from_sources(
+            single_cookie=QQ_MUSIC_COOKIE if QQ_MUSIC_COOKIE else None,
+            cookie_list=cookie_list,
         )
+
+        if COOKIE_POOL_MANAGER.pool:
+            # 初始化轮换管理器
+            rotation_strategy = cookie_rotation.RotationStrategy.ROUND_ROBIN
+            failure_policy = cookie_rotation.FailurePolicy.MARK_AND_ROTATE
+
+            COOKIE_ROTATION_MANAGER = cookie_rotation.CookieRotationManager(
+                pool=COOKIE_POOL_MANAGER,
+                strategy=rotation_strategy,
+                failure_policy=failure_policy,
+            )
+
+            # 初始化刷新服务
+            COOKIE_REFRESH_SERVICE = cookie_refresh_service.CookieRefreshService(
+                pool=COOKIE_POOL_MANAGER)
+
+            # 设置全局会话凭证为主 Cookie
+            primary = COOKIE_POOL_MANAGER.get_primary()
+            if primary:
+                qapi.get_session().credential = primary.credential
+                logger.info("Initialized cookie rotation system with primary cookie")
+        else:
+            logger.warning("No cookies loaded; using default qqmusic_api session")
+    except Exception as e:
+        logger.error(f"Failed to initialize cookie system: {e}")
+
+
+# 启动时初始化 Cookie 系统
+if QQ_MUSIC_COOKIE or hasattr(app_config, "qq_music_cookies"):
+    try:
+        loop = _ensure_background_event_loop()
+        future = asyncio.run_coroutine_threadsafe(_initialize_cookie_system(), loop)
+        future.result(timeout=10)
+    except Exception as e:
+        logger.error(f"Failed to initialize cookie system at startup: {e}")
 else:
-    logger.warning(
-        "CCG_QQ_MUSIC_COOKIE is not set; using default qqmusic_api session without credential"
-    )
+    logger.warning("No QQ Music cookies configured; using default session")
+
+
+async def get_current_cookie_entry() -> CookieEntry | None:
+    """Get current active cookie entry."""
+    if COOKIE_ROTATION_MANAGER:
+        return COOKIE_ROTATION_MANAGER.get_current()
+
+    primary = COOKIE_POOL_MANAGER.get_primary()
+    if primary:
+        return primary
+
+    return None
 
 
 @huey.task()
@@ -589,6 +652,16 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
             "Using custom credential from provided cookie string for fetching songlist %s",
             songlist_id,  # pylint: disable=line-too-long
         )
+    elif COOKIE_ROTATION_MANAGER:
+        current = COOKIE_ROTATION_MANAGER.get_current()
+        if current:
+            qapi.get_session().credential = current.credential
+            current.mark_used()
+            logger.info(
+                "Using rotated cookie %s for fetching songlist %s",
+                current.cookie_id,
+                songlist_id,
+            )
 
     try:
         first_songlist = await _with_retry(
@@ -694,7 +767,17 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
         return None
     except KeyError as e:
         logger.error("KeyError fetching songlist: %s", e, exc_info=True)
+        # Mark current cookie as failed and try rotation if available
+        if COOKIE_ROTATION_MANAGER and not cookie_str:
+            COOKIE_ROTATION_MANAGER.mark_current_failed(str(e))
+            if COOKIE_ROTATION_MANAGER.should_rotate_on_failure():
+                COOKIE_ROTATION_MANAGER.rotate(reason="keyerror")
         return None
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error fetching songlist: %s", e, exc_info=True)
+        # Mark current cookie as failed and try rotation if available
+        if COOKIE_ROTATION_MANAGER and not cookie_str:
+            COOKIE_ROTATION_MANAGER.mark_current_failed(str(e))
+            if COOKIE_ROTATION_MANAGER.should_rotate_on_failure():
+                COOKIE_ROTATION_MANAGER.rotate(reason="api_error")
         return None

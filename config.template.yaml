@@ -8,6 +8,17 @@ ccg:
 
   qq_music:
     cookie: ""
+    # Cookie list for rotation (optional, can be from env or here)
+    # - "cookie_string_1"
+    # - "cookie_string_2"
+    # - "cookie_string_3"
+    rotation:
+      enabled: true
+      strategy: round_robin  # Options: round_robin, primary_first
+      failure_max_retries: 3  # Mark cookie unhealthy after 3 failures
+    refresh:
+      enabled: true
+      check_interval_seconds: 1800  # Check and refresh every 30 minutes
 
   songlist:
     fetch:

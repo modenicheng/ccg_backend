@@ -394,3 +394,53 @@ class Tasks(Base):
         DateTime,
         server_default=func.current_timestamp(),
         onupdate=func.current_timestamp())
+
+
+class CookieConfig(Base):
+    """Cookie configuration storage for dynamic management."""
+
+    __tablename__ = "cookie_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cookie_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    cookie_content: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String, default="manual",
+                                        nullable=False)  # "yaml", "env", "manual"
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+
+class CookieRotationLog(Base):
+    """Audit log for cookie rotation events."""
+
+    __tablename__ = "cookie_rotation_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime,
+                                                server_default=func.current_timestamp())
+    from_cookie_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    to_cookie_id: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(
+        String, nullable=False)  # "expiry", "failure", "manual", "startup"
+    context_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class CookieRefreshLog(Base):
+    """Log for cookie refresh attempts."""
+
+    __tablename__ = "cookie_refresh_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime,
+                                                server_default=func.current_timestamp())
+    cookie_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)  # "success", "failed"
+    old_expired_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_expired_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

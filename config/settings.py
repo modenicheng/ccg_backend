@@ -27,6 +27,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     database_echo: bool
     redis_url: str
     qq_music_cookie: str
+    qq_music_cookies: list[str]
+    cookie_rotation_enabled: bool
+    cookie_rotation_strategy: str
+    cookie_failure_max_retries: int
+    cookie_refresh_enabled: bool
+    cookie_refresh_check_interval: int
     songlist_fetch_concurrency: int
     songlist_fetch_retries: int
     songlist_fetch_backoff_seconds: float
@@ -117,6 +123,25 @@ def _normalize_database_url(raw_url: str | None) -> str:
     return url
 
 
+def _parse_cookie_list(value: Any, key: str) -> list[str]:
+    """Parse cookie list from various formats."""
+    if isinstance(value, list):
+        return [str(c).strip() for c in value if c]
+    if isinstance(value, str):
+        if not value.strip():
+            return []
+        # Try to parse as JSON array
+        import json
+
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(c).strip() for c in parsed if c]
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
 def _flatten_yaml_paths(
     values: dict[str, Any], parent: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
     result: dict[tuple[str, ...], Any] = {}
@@ -198,6 +223,33 @@ def _build_from_values(values: dict[str, Any]) -> AppConfig:
         ),
         qq_music_cookie=_to_str(_pick_value(values, "CCG_QQ_MUSIC_COOKIE", ""),
                                 "CCG_QQ_MUSIC_COOKIE"),
+        qq_music_cookies=_parse_cookie_list(
+            _pick_value(values, "CCG_QQ_MUSIC_COOKIES", []),
+            "CCG_QQ_MUSIC_COOKIES",
+        ),
+        cookie_rotation_enabled=_to_bool(
+            _pick_value(values, "CCG_COOKIE_ROTATION_ENABLED", "true"),
+            "CCG_COOKIE_ROTATION_ENABLED",
+        ),
+        cookie_rotation_strategy=_to_str(
+            _pick_value(values, "CCG_COOKIE_ROTATION_STRATEGY", "round_robin"),
+            "CCG_COOKIE_ROTATION_STRATEGY",
+            allow_empty=False,
+        ).lower(),
+        cookie_failure_max_retries=_to_int(
+            _pick_value(values, "CCG_COOKIE_FAILURE_MAX_RETRIES", 3),
+            "CCG_COOKIE_FAILURE_MAX_RETRIES",
+            minimum=1,
+        ),
+        cookie_refresh_enabled=_to_bool(
+            _pick_value(values, "CCG_COOKIE_REFRESH_ENABLED", "true"),
+            "CCG_COOKIE_REFRESH_ENABLED",
+        ),
+        cookie_refresh_check_interval=_to_int(
+            _pick_value(values, "CCG_COOKIE_REFRESH_CHECK_INTERVAL", 1800),
+            "CCG_COOKIE_REFRESH_CHECK_INTERVAL",
+            minimum=60,
+        ),
         songlist_fetch_concurrency=_to_int(
             _pick_value(values, "CCG_SONGLIST_FETCH_CONCURRENCY", 8),
             "CCG_SONGLIST_FETCH_CONCURRENCY",
