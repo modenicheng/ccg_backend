@@ -30,13 +30,13 @@ uv run alembic downgrade -1
 ### Formatting and Linting
 ```bash
 uv run yapf -i $(git ls-files '*.py')     # format all Python files
-pylint $(git ls-files '*.py')     # lint all tracked Python files (excludes tests, alembic)
-pylint --ignore=tests,alembic .   # alternative
-# CI: GitHub Actions workflow (.github/workflows/pylint.yml) runs pylint on push
+pylint $(git ls-files '*.py')              # lint all tracked Python files
+pylint --ignore=tests,alembic .            # alternative
 ```
 - YAPF configuration in `pyproject.toml`: based on Google style, 4‑space indent, 88‑column limit
 - Linting excludes `tests/` and `alembic/` directories by default
 - Run `uv run yapf -i path/to/file.py` to format a single file
+- CI: GitHub Actions workflow (`.github/workflows/pylint.yml`) runs pylint on push
 
 ### Testing
 ```bash
@@ -45,17 +45,14 @@ uv run pytest tests/test_db_crud.py  # specific file
 uv run pytest tests/test_db_crud.py::test_create_user  # single test
 uv run pytest -v                     # verbose
 uv run pytest --cov=.                # coverage
-uv run pytest tests/test_playback_message_ws.py  # WebSocket tests (needs Redis)
+uv run pytest -k "pattern" -v        # filter tests by pattern
+uv run pytest -v --log-level=DEBUG   # debug logs
 ```
 - `tests/ws_conn.py` helper for real WebSocket connections (see `tests/test_playback_message_ws.py`)
 - Use `@pytest.mark.asyncio` for async tests (some with `loop_scope="session"` or `"module"`)
 - Redis required for some tests; ensure `CCG_REDIS_URL` points to a running instance
-- `pytest.ini` configuration in `pyproject.toml` sets `testpaths = ["tests"]` and `pythonpath = ["."]`
 - Database fixtures in `tests/conftest.py` provide `db_session` for SQLite in‑memory testing
 - WebSocket tests require Redis; use `tests/ws_conn.py` factory for real connections
-- Run a single test with `uv run pytest tests/path/to/test.py::test_function -v`
-- Filter tests with `uv run pytest -k "pattern" -v`
-- Debug logs with `uv run pytest -v --log-level=DEBUG`
 
 ### Task Queue (Huey)
 ```bash
@@ -66,7 +63,7 @@ uv run huey_consumer.py mq.tasks.huey
 
 ### Imports
 - Absolute imports from project root: `from db import crud`
-- Group: stdlib → third‑party → local
+- Group order: stdlib → third‑party → local
 - `from __future__ import annotations` in every Python file
 - Use `|` for unions, `list[str]` etc. (Python 3.10+)
 - Import typing constructs from `typing` (`Any`, `Optional` etc.)
@@ -128,11 +125,24 @@ uv run huey_consumer.py mq.tasks.huey
 
 ### Comments
 - Use docstrings for public modules, classes, and functions (Google style or one‑line)
-- Inline comments should explain “why” rather than “what”
+- Inline comments should explain "why" rather than "what"
 - Avoid unnecessary comments when code is self‑explanatory
 
 ## Project Structure
-Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `schemas/` Pydantic; `handlers/` WebSocket events; `router/` HTTP endpoints; `utils/` utilities; `mq/` task queue; `client_manager/` WebSocket clients; `tests/` pytest.
+```
+main.py              # FastAPI entry point
+config/              # Configuration (settings.py, yaml loading)
+db/                  # SQLAlchemy models, session, crud
+cache/               # Redis connection and utilities
+schemas/             # Pydantic schemas (HTTP API and WebSocket messages)
+handlers/            # WebSocket event handlers
+router/              # HTTP API endpoints
+utils/               # Utilities (enumerations, memory_monitor, etc.)
+mq/                  # Task queue (huey tasks)
+client_manager/      # WebSocket client management
+tests/               # pytest tests
+```
+Standard FastAPI layout with async SQLAlchemy, Redis caching, and WebSocket support.
 
 ## Common Tasks
 
@@ -153,7 +163,7 @@ Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `s
 1. Add class to `db/models.py` (SQLAlchemy 2.0 style)
 2. Define relationships, constraints
 3. `uv run alembic revision --autogenerate -m "add_model"`
-4. After autogeneration, you must double check the migration file and modify it to adopt both SQLite and PostgreSQL traits
+4. After autogeneration, double check the migration file and modify it to adopt both SQLite and PostgreSQL traits
 5. `uv run alembic upgrade head`
 6. Add CRUD helpers in `db/crud.py` if needed
 
@@ -175,7 +185,17 @@ Standard FastAPI layout: `main.py` entry point; `db/` models; `cache/` Redis; `s
 - **Configuration loading order**: Config values are merged as `os.environ > .env > config.yaml`. Environment variables override YAML. Invalid config blocks startup; validation occurs in `config/settings.py`.
 
 ## Environment Variables (CCG_*)
-Key environment variables (prefixed `CCG_`): `CCG_DATABASE_URL`, `CCG_REDIS_URL`, `CCG_QQ_MUSIC_COOKIE`, `CCG_AUDIO_DOWNLOAD_DIR`, `CCG_AUDIO_TOKEN_TTL`, `CCG_LOG_LEVEL`, `CCG_ASSET_CACHE_MAX_ITEMS`, `CCG_CONFIG_YAML_PATH`.
+Key environment variables (prefixed `CCG_`):
+- `CCG_DATABASE_URL` - Database connection (PostgreSQL recommended for production)
+- `CCG_REDIS_URL` - Redis connection (required for real‑time features)
+- `CCG_QQ_MUSIC_COOKIE` - QQ Music API authentication
+- `CCG_AUDIO_DOWNLOAD_DIR` - Audio file storage directory
+- `CCG_AUDIO_TOKEN_TTL` - Audio token TTL in seconds
+- `CCG_LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
+- `CCG_ASSET_CACHE_MAX_ITEMS` - LRU cache size for assets
+- `CCG_CONFIG_YAML_PATH` - Override path for config.yaml
+- `CCG_SONGLIST_FETCH_CONCURRENCY` - Songlist fetch parallelism
+- `CCG_DATABASE_ECHO` - Enable SQL query logging
 
 Config is centralized in `config/settings.py` and validated at import time. `config.yaml` should use semantic module‑based hierarchy (e.g., `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys. Invalid config should fail fast and block startup for both `uv run python main.py` and `uv run uvicorn main:app`.
 See `.env.template` and `config.template.yaml` for defaults/examples.
@@ -184,71 +204,35 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
 - **Database**: Check `CCG_DATABASE_URL` in `.env`; PostgreSQL required for production features
 - **Redis**: Check `CCG_REDIS_URL`; Redis required for real‑time features
 - **WebSocket tests**: Use `tests/ws_conn.py` factory; ensure Redis running if the test needs
-- **Migrations**: review generated script; keep the data integrity as possible as you can
-- **MemoryMonitor**: logs memory usage every 30s; adjust `interval` and `report_threshold_mb` if too verbose
+- **Migrations**: Review generated script; keep data integrity as much as possible
+- **MemoryMonitor**: Logs memory usage every 30s; adjust `interval` and `report_threshold_mb` if too verbose
 
 ---
 
-## Coding Style Manual
+## Quick Reference
 
-1. **Formatting**: Use yapf (`uv run yapf -i path/to/file.py`). Do NOT use `.` - venv will be included.
-2. **Linting**: Use pylint (`pylint --ignore=tests,alembic .`). Excludes tests/ and alembic/ directories.
+```bash
+# Install dependencies
+uv sync
+
+# Run application
+uv run uvicorn main:app --reload --port 8000
+
+# Run tests
+uv run pytest tests/path/to/test.py::test_function -v
+
+# Format code
+uv run yapf -i path/to/file.py
+
+# Lint code
+pylint --ignore=tests,alembic .
+
+# Run migrations
+uv run alembic revision --autogenerate -m "message"
+uv run alembic upgrade head
+
+# Run task queue
+uv run huey_consumer.py mq.tasks.huey
+```
 
 *Last updated: March 2026*
-
-<skills_system priority="1">
-
-## Available Skills
-
-<!-- SKILLS_TABLE_START -->
-<usage>
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
-
-How to use skills:
-- Invoke: `npx openskills read <skill-name>` (run in your shell)
-  - For multiple: `npx openskills read skill-one,skill-two`
-- The skill content will load with detailed instructions on how to complete the task
-- Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
-
-Usage notes:
-- Only use skills listed in <available_skills> below
-- Do not invoke a skill that is already loaded in your context
-- Each skill invocation is stateless
-</usage>
-
-<available_skills>
-
-<skill>
-<name>dev-browser</name>
-<description>Browser automation with persistent page state. Use when users ask to navigate websites, fill forms, take screenshots, extract web data, test web apps, or automate browser workflows. Trigger phrases include "go to [url]", "click on", "fill out the form", "take a screenshot", "scrape", "automate", "test the website", "log into", or any browser interaction request.</description>
-<location>project</location>
-</skill>
-
-<skill>
-<name>gastown</name>
-<description>Multi-agent orchestrator for Claude Code. Use when user mentions gastown, gas town, gt commands, bd commands, convoys, polecats, crew, rigs, slinging work, multi-agent coordination, beads, hooks, molecules, workflows, the witness, the mayor, the refinery, the deacon, dogs, escalation, or wants to run multiple AI agents on projects simultaneously. Handles installation, workspace setup, work tracking, agent lifecycle, crash recovery, and all gt/bd CLI operations.</description>
-<location>project</location>
-</skill>
-
-<skill>
-<name>open-source-maintainer</name>
-<description>End-to-end GitHub repository maintenance for open-source projects. Use when asked to triage issues, review PRs, analyze contributor activity, generate maintenance reports, or maintain a repository. Triggers include "triage", "maintain", "review PRs", "analyze issues", "repo maintenance", "what needs attention", "open source maintenance", or any request to understand and act on GitHub issues/PRs. Supports human-in-the-loop workflows with persistent memory across sessions.</description>
-<location>project</location>
-</skill>
-
-<skill>
-<name>orchestration</name>
-<description>Multi-agent orchestration for complex tasks. Use when tasks require parallel work, multiple agents, or sophisticated coordination. Triggers include requests for features, reviews, refactoring, testing, documentation, or any work that benefits from decomposition into parallel subtasks. This skill defines how to orchestrate work using cc-mirror tasks for persistent dependency tracking and TodoWrite for real-time session visibility.</description>
-<location>project</location>
-</skill>
-
-<skill>
-<name>zai-cli</name>
-<description>|</description>
-<location>project</location>
-</skill>
-
-</available_skills>
-<!-- SKILLS_TABLE_END -->
-
-</skills_system>
