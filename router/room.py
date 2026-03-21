@@ -5,7 +5,7 @@ import secrets
 import string
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from db.models import Room, User, TagGroup, RoomStatusORM
 from db.session import get_db
 from cache.connection import get_redis
 from schemas.room import JoinRoomRequest, JoinRoomResponse
+from schemas.ws_messages import room_schemas as WsRoomSchema
 from schemas.user import UserLogin, BaseUser
 from schemas.tag import TagGroupResponse
 from schemas import (
@@ -128,7 +129,9 @@ async def room_info(
 
 @room_router.patch("/{roomid}", response_model=RoomInfoResponse)
 async def room_setting(
-    roomid: str, payload: PatchRoomRequest,
+    roomid: str,
+    payload: PatchRoomRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
     """Update room settings."""
     stmt = (select(Room).where(Room.id == roomid).options(
@@ -177,4 +180,19 @@ async def room_setting(
     refreshed_room = refreshed_result.scalar_one_or_none()
     if not refreshed_room:
         raise HTTPException(status_code=404, detail="Room not found")
+
+    # 仅在房间 taggroup 选择配置变更时推送 TAG_GROUP 专用事件（不发送全量 ROOM_STATE）
+    if payload.tag_group_ids is not None or payload.tag_groups is not None:
+        try:
+            message = WsRoomSchema.TagGroupMessage(data=WsRoomSchema.TagGroupData(
+                room_id=roomid,
+                tag_groups=[
+                    WsRoomSchema.RoomStateTagGroupItem.model_validate(group)
+                    for group in refreshed_room.tag_groups
+                ],
+            ))
+            await request.app.state.clients.broadcast(roomid, message.model_dump())
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to broadcast TAG_GROUP for room %s: %s", roomid, exc)
+
     return _to_room_info_response(refreshed_room)

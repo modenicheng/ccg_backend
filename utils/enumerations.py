@@ -66,6 +66,10 @@ class GameEventType(Enum):
     PLAYER_DESCRIPTION_UPDATE = 52  # 用于玩家描述的增量更新，减少网络传输
     CLEAR_ANSWER_QUEUE = 53  # 清空抢答队列
 
+    TAGS_UPDATE = 60  # 标签增量更新
+    TAG_GROUPS_UPDATE = 61  # 标签组增量更新
+    TAG_GROUP = 62  # 房间已选标签组同步（非全量ROOM_STATE）
+
 
 class AudioEncoding(Enum):
     """音频编码格式枚举"""

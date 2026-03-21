@@ -8,6 +8,7 @@ from utils.enumerations import GameEventType
 from db.models import RoomStatusORM
 from schemas.base_message import MessageBase
 from schemas.common import (RoomStateTagGroupItem, RoomStatePlayerItem)
+from schemas.tag import TagResponse, TagGroupResponse
 
 
 class AnswerQueueItem(BaseModel):
@@ -131,3 +132,53 @@ class ClearAnswerQueueMessage(BaseModel):
     event: Literal[53] = GameEventType.CLEAR_ANSWER_QUEUE.value
     ts: int = Field(default_factory=lambda: int(time() * 1000))
     data: ClearAnswerQueueData
+
+
+class TagsUpdateData(BaseModel):
+    """标签增量更新数据"""
+    added_tags: list[TagResponse] = Field(default_factory=list, description="新增的标签")
+    updated_tags: list[TagResponse] = Field(default_factory=list, description="更新的标签")
+    deleted_tag_ids: list[int] = Field(default_factory=list, description="删除的标签ID")
+
+
+class TagsUpdateMessage(BaseModel):
+    """标签增量更新消息"""
+    event: Literal[60] = GameEventType.TAGS_UPDATE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: TagsUpdateData
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagGroupsUpdateData(BaseModel):
+    """标签组增量更新数据"""
+    added_tag_groups: list[TagGroupResponse] = Field(default_factory=list,
+                                                     description="新增的标签组")
+    updated_tag_groups: list[TagGroupResponse] = Field(default_factory=list,
+                                                       description="更新的标签组")
+    deleted_tag_group_ids: list[int] = Field(default_factory=list,
+                                             description="删除的标签组ID")
+
+
+class TagGroupsUpdateMessage(BaseModel):
+    """标签组增量更新消息"""
+    event: Literal[61] = GameEventType.TAG_GROUPS_UPDATE.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: TagGroupsUpdateData
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagGroupData(BaseModel):
+    """房间维度标签组同步数据"""
+    room_id: str
+    tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
+
+
+class TagGroupMessage(BaseModel):
+    """房间维度标签组同步消息（避免发送全量 ROOM_STATE）"""
+    event: Literal[62] = GameEventType.TAG_GROUP.value
+    ts: int = Field(default_factory=lambda: int(time() * 1000))
+    data: TagGroupData
+
+    model_config = ConfigDict(from_attributes=True)
