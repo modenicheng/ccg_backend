@@ -81,10 +81,11 @@ async def on_connect(  # pylint: disable=too-many-statements
 
     # 更新玩家在线状态
     try:
+        # 先设置online为True，避免None值在验证时出错
+        cl.user.online = True
+
         player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
         player_item.online = True
-
-        cl.user.online = True
 
         # 确保数据库中的在线状态在当前 session 内被持久化
         user_stmt = select(models.User).where(models.User.id == cl.user.id)
