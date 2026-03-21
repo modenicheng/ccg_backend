@@ -9,6 +9,7 @@
 3. **重新广播消息** - 向所有客户端重新发送 PRELOAD_AUDIO 消息，包含新的URL和令牌
 
 这能有效处理以下场景：
+
 - 后端音频缓存被清理或损坏
 - 网络波动导致前端无法加载
 - 令牌过期等临时问题
@@ -28,10 +29,12 @@
 ### 代码质量检查结果
 
 ✅ **Python语法检查**: 通过
+
 - `handlers/audio_error_handler.py`: 10.00/10
 - `schemas/ws_messages/playback_schemas.py`: 10.00/10
 
 ✅ **导入验证**: 成功
+
 - `handlers/__init__.py`: 正确导入新模块无错误
 
 ## 📡 通信流程
@@ -88,6 +91,7 @@ class AudioErrorData(BaseModel):
 ```
 
 **error_type 说明：**
+
 - `load_failed`: 音频加载失败（网络问题、文件不存在等）
 - `sync_failed`: 前后端音频同步状态不一致
 
@@ -131,6 +135,7 @@ async def handle_audio_preload_error(...)
 | `test_event_type_error_value` | 验证事件类型值 |
 
 **运行测试：**
+
 ```bash
 uv run pytest tests/test_audio_error_handler.py -v
 ```
@@ -150,6 +155,7 @@ uv run huey_consumer mq.tasks.huey
 ### 2. 前端自动集成
 
 前端已实现 `reportAudioError` 函数，会在以下情况自动调用：
+
 - 3次重试加载失败
 - 音频元素发生错误事件
 - 前后端音频状态不同步
@@ -159,6 +165,7 @@ uv run huey_consumer mq.tasks.huey
 ### 3. 验证功能
 
 观察后端日志验证：
+
 ```
 ✓ 收到错误事件
 ✓ 触发重新下载任务
@@ -185,7 +192,7 @@ uv run huey_consumer mq.tasks.huey
 
 | 问题 | 原因 | 解决方案 |
 |------|------|--------|
-| 错误事件未被处理 | 模块未导入 | 检查 handlers/__init__.py |
+| 错误事件未被处理 | 模块未导入 | 检查 handlers/**init**.py |
 | 下载任务未执行 | 任务队列未运行 | 启动 huey 消费者 |
 | PRELOAD_AUDIO未广播 | Redis不可用 | 检查Redis连接 |
 | 只有某些歌曲失败 | 非QQ平台 | 确认歌曲平台 |
@@ -200,12 +207,14 @@ uv run huey_consumer mq.tasks.huey
 ## 🔄 与前端的同步状态
 
 前端实现了：
+
 - ✅ 自动重试机制（3次）
 - ✅ 错误上报函数 (`reportAudioError`)
 - ✅ 支持多种错误类型
 - ✅ 详细的日志记录
 
 后端实现了：
+
 - ✅ 错误事件处理
 - ✅ 自动重新下载
 - ✅ 令牌刷新
@@ -236,6 +245,7 @@ uv run huey_consumer mq.tasks.huey
 该功能提供了一个完整的错误恢复机制，当前端音频预加载失败时，后端能够自动检测、诊断并恢复。这大大提高了系统的可靠性和用户体验。
 
 通过与前端的3次自动重试机制结合，形成了一个强大的多层次错误处理系统：
+
 1. **前端第1层**: 客户端3次重试
 2. **后端第2层**: 服务端重新下载和刷新
 3. **自动恢复**: 无需用户干预

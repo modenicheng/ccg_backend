@@ -81,10 +81,17 @@ class CookieRotationManager:
     def _init_state(self) -> None:
         """Initialize state based on pool."""
         self.state.cookies = [e.cookie_id for e in self.pool.list_all()]
+        logger.debug("Initialized rotation state with %d cookies",
+                     len(self.state.cookies))
 
         if self.state.cookies:
             self.state.current_index = 0
             self.state.current_cookie_id = self.state.cookies[0]
+            logger.info(
+                "Set initial primary cookie: %s (index: 0/%d)",
+                self.state.current_cookie_id,
+                len(self.state.cookies),
+            )
 
     def get_current(self) -> CookieEntry | None:
         """Get current cookie."""
@@ -98,6 +105,9 @@ class CookieRotationManager:
             logger.warning("No cookies available for rotation")
             return None
 
+        old_cookie_id = self.state.current_cookie_id
+        old_index = self.state.current_index
+
         # 轮流策略
         if self.strategy == RotationStrategy.ROUND_ROBIN:
             self.state.current_index = (self.state.current_index + 1) % len(
@@ -108,29 +118,60 @@ class CookieRotationManager:
         self.state.rotation_count += 1
 
         logger.info(
-            f"Rotated cookie to {self.state.current_cookie_id} (reason: {reason})")
+            "Rotated cookie: %s (index %d) -> %s (index %d), reason=%s, total_rotations=%d",
+            old_cookie_id,
+            old_index,
+            self.state.current_cookie_id,
+            self.state.current_index,
+            reason,
+            self.state.rotation_count,
+        )
 
         current = self.get_current()
         if current:
             current.mark_used()
+            logger.debug("Marked new current cookie as used: %s", current.cookie_id)
         return current
 
     def mark_current_failed(self, error_msg: str | None = None) -> None:
         """Mark current cookie as failed."""
         current = self.get_current()
         if current:
+            old_is_healthy = current.is_healthy
+            old_fail_count = current.failed_count
+
             current.mark_failed(error_msg)
-            logger.warning(f"Marked cookie {current.cookie_id} as failed: {error_msg}")
+
+            logger.warning(
+                "Marked cookie %s as failed: %s (failed_count: %d -> %d, healthy: %s -> %s)",
+                current.cookie_id,
+                error_msg,
+                old_fail_count,
+                current.failed_count,
+                old_is_healthy,
+                current.is_healthy,
+            )
+        else:
+            logger.warning("No current cookie available to mark as failed")
 
     def should_rotate_on_failure(self) -> bool:
         """Determine if should rotate based on failure policy."""
         if self.failure_policy == FailurePolicy.IMMEDIATE_ROTATE:
+            logger.debug("Should rotate: IMMEDIATE_ROTATE policy active")
             return True
 
         if self.failure_policy == FailurePolicy.MARK_AND_ROTATE:
             current = self.get_current()
             if current and not current.is_healthy:
+                logger.debug(
+                    "Should rotate: MARK_AND_ROTATE policy and cookie %s is unhealthy",
+                    current.cookie_id,
+                )
                 return True
+            logger.debug(
+                "Should not rotate: MARK_AND_ROTATE policy but cookie %s is still healthy",
+                current.cookie_id if current else "unknown",
+            )
 
         return False
 

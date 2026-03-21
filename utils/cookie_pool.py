@@ -117,18 +117,34 @@ class CookiePoolManager:
         db_cookies: list[dict[str, Any]] | None = None,
     ) -> None:
         """Load cookies from multiple sources with priority: db > list > single."""
+        logger.debug(
+            "load_from_sources called: db_cookies=%d, cookie_list=%d, single_cookie=%s",
+            len(db_cookies or []),
+            len(cookie_list or []),
+            "present" if single_cookie else "absent",
+        )
+
         # 优先级：db > list > single
         cookie_strings: list[str] = []
+        source_map: dict[str, str] = {}  # cookie_hash -> source for logging
 
         if db_cookies:
-            cookie_strings.extend(
-                [c.get("cookie") for c in db_cookies if c.get("cookie")])
+            for c in db_cookies:
+                cookie_str = c.get("cookie")
+                if cookie_str:
+                    cookie_strings.append(cookie_str)
+                    source_map[CookieEntry.generate_id(cookie_str)] = (
+                        f"db (source={c.get('source')})")
 
         if cookie_list:
-            cookie_strings.extend([c for c in cookie_list if c])
+            for c in cookie_list:
+                if c:
+                    cookie_strings.append(c)
+                    source_map[CookieEntry.generate_id(c)] = "config"
 
         if single_cookie:
             cookie_strings.append(single_cookie)
+            source_map[CookieEntry.generate_id(single_cookie)] = "env"
 
         if not cookie_strings:
             logger.warning("No cookies loaded from any source")
@@ -136,6 +152,7 @@ class CookiePoolManager:
 
         # 去重并加载
         seen: set[str] = set()
+        loaded_count = 0
         for cookie_str in cookie_strings:
             if cookie_str in seen or not cookie_str.strip():
                 continue
@@ -152,15 +169,29 @@ class CookiePoolManager:
                         credential=credential,
                     )
                     self.pool[cookie_id] = entry
+                    loaded_count += 1
 
                     if self.primary_cookie_id is None:
                         self.primary_cookie_id = cookie_id
-
-                    logger.info(f"Loaded cookie: {cookie_id}")
+                        logger.info(
+                            "Set primary cookie: %s (from %s)",
+                            cookie_id,
+                            source_map.get(cookie_id, "unknown"),
+                        )
+                    else:
+                        logger.info(
+                            "Loaded cookie: %s (from %s)",
+                            cookie_id,
+                            source_map.get(cookie_id, "unknown"),
+                        )
             except Exception as e:
-                logger.error(f"Failed to parse cookie: {e}")
+                logger.error(f"Failed to parse cookie: {e}", exc_info=True)
 
-        logger.info(f"Loaded {len(self.pool)} cookies into pool")
+        logger.info(
+            "Successfully loaded %d/%d unique cookies into pool",
+            loaded_count,
+            len(seen),
+        )
 
     def get_primary(self) -> CookieEntry | None:
         """Get primary (first) cookie."""
@@ -187,6 +218,47 @@ class CookiePoolManager:
             if not await entry.is_expired():
                 result.append(entry)
         return result
+
+    async def persist_new_cookies_to_db(self, session: "AsyncSession") -> int:
+        """
+        Persist any cookies that are not yet in the database.
+
+        This is called after loading cookies to ensure they are persisted,
+        which is particularly important for the single-cookie case.
+
+        Args:
+            session: Database session
+
+        Returns:
+            Number of new cookies persisted
+        """
+        from db.crud.cookie_crud import add_or_update_cookie
+
+        logger.debug("Persisting cookies to database...")
+        persisted_count = 0
+
+        for entry in self.pool.values():
+            try:
+                # Always use add_or_update to ensure idempotency
+                _, cookie_hash = await add_or_update_cookie(
+                    session,
+                    entry.cookie_str,
+                    source="system",  # Loaded from environment/config
+                )
+                logger.debug("Persisted cookie to database: %s", cookie_hash)
+                persisted_count += 1
+            except Exception as e:
+                logger.error(
+                    "Failed to persist cookie %s to database: %s",
+                    entry.cookie_id,
+                    e,
+                    exc_info=True,
+                )
+
+        if persisted_count > 0:
+            logger.info("Persisted %d new/updated cookies to database", persisted_count)
+
+        return persisted_count
 
     def to_dict(self) -> dict[str, Any]:
         """Convert pool to dictionary."""
