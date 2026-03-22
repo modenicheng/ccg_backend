@@ -899,7 +899,7 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
         return None
 
 
-@huey.periodic_task(crontab(minute='*/1'))
+@huey.periodic_task(crontab(minute='*/60'))
 def refresh_credentials_periodic():
     """
     Periodic task to check and refresh credentials every 30 minutes.
