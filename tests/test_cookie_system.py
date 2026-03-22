@@ -31,9 +31,10 @@ async def test_cookie_system():
     # Test 2: Check rotation manager
     logger.info("\n[Test 2] Cookie Rotation Manager")
     if COOKIE_ROTATION_MANAGER:
-        logger.info(f"  - Manager initialized: True")
+        logger.info("  - Manager initialized: True")
+        current_cookie = COOKIE_ROTATION_MANAGER.get_current()
         logger.info(
-            f"  - Current cookie: {COOKIE_ROTATION_MANAGER.get_current().cookie_id if COOKIE_ROTATION_MANAGER.get_current() else None}"
+            f"  - Current cookie: {current_cookie.cookie_id if current_cookie else None}"
         )
         logger.info(f"  - Rotation state: {COOKIE_ROTATION_MANAGER.get_state_dict()}")
     else:

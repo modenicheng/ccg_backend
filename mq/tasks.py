@@ -29,7 +29,6 @@ from db import models
 from db.crud import (
     create_or_update_songlist,
     create_or_update_songs,
-    update_song_cached_path,
     create_task_record,
 )
 from db.session import session_scope, engine
@@ -860,8 +859,8 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     "Cookie rotation triggered due to failure threshold reached")
                 COOKIE_ROTATION_MANAGER.rotate(reason="keyerror")
             else:
-                current_fail_count = COOKIE_ROTATION_MANAGER.get_current(
-                ).failed_count if COOKIE_ROTATION_MANAGER.get_current() else 0
+                current = COOKIE_ROTATION_MANAGER.get_current()
+                current_fail_count = current.failed_count if current else 0
                 logger.debug(
                     "Cookie failure count: %d/%d, no rotation yet",
                     current_fail_count,
@@ -890,8 +889,8 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     "Cookie rotation triggered due to failure threshold reached")
                 COOKIE_ROTATION_MANAGER.rotate(reason="api_error")
             else:
-                current_fail_count = COOKIE_ROTATION_MANAGER.get_current(
-                ).failed_count if COOKIE_ROTATION_MANAGER.get_current() else 0
+                current = COOKIE_ROTATION_MANAGER.get_current()
+                current_fail_count = current.failed_count if current else 0
                 logger.debug(
                     "Cookie failure count: %d/%d, no rotation yet",
                     current_fail_count,

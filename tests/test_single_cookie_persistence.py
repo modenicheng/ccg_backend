@@ -66,7 +66,7 @@ async def demonstrates_persistence_flow():
 
     if COOKIE_ROTATION_MANAGER:
         current = COOKIE_ROTATION_MANAGER.get_current()
-        logger.info(f"\n[步骤3结果] Cookie轮换系统已初始化")
+        logger.info("\n[步骤3结果] Cookie轮换系统已初始化")
         logger.info(f"  - 当前Cookie: {current.cookie_id if current else '无'}")
         logger.info(f"  - 轮换策略: {COOKIE_ROTATION_MANAGER.strategy.value}")
         logger.info(f"  - 故障策略: {COOKIE_ROTATION_MANAGER.failure_policy.value}")
