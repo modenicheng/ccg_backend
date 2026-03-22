@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 from urllib.parse import urlparse
 
 # Third-party imports
-from huey import RedisHuey
+from huey import RedisHuey, crontab
 import httpx
 import qqmusic_api as qapi
 from sqlalchemy import select
@@ -897,3 +897,94 @@ async def _fetch_songlist_impl(songlist_id: int, cookie_str: str | None = None):
                     3,
                 )
         return None
+
+
+@huey.periodic_task(crontab(minute='*/1'))
+def refresh_credentials_periodic():
+    """
+    Periodic task to check and refresh credentials every 30 minutes.
+    Uses Credential.refresh() method from qqmusic_api to refresh expired cookies.
+    """
+    logger.info("Starting periodic credential refresh task")
+    _run_async(_refresh_credentials_impl())
+
+
+async def _refresh_credentials_impl():
+    """
+    Implementation of credential refresh.
+    Checks expiry and calls credential.refresh() for each cookie in the pool.
+    """
+    if not COOKIE_POOL_MANAGER or not COOKIE_POOL_MANAGER.pool:
+        logger.warning("No cookies in pool, skipping refresh")
+        return
+
+    logger.info("Checking %d credentials for expiry", len(COOKIE_POOL_MANAGER.pool))
+
+    refreshed_count = 0
+    failed_count = 0
+
+    for cookie_id, entry in COOKIE_POOL_MANAGER.pool.items():
+        try:
+            # Check if credential is expired
+            is_expired = await entry.credential.is_expired()
+            if not is_expired:
+                logger.debug("Credential %s still valid", cookie_id)
+                continue
+
+            logger.info("Credential %s is expired, attempting refresh", cookie_id)
+
+            # Check if refresh is possible
+            can_refresh = await entry.credential.can_refresh()
+            if not can_refresh:
+                logger.warning("Credential %s cannot be refreshed", cookie_id)
+                failed_count += 1
+                continue
+
+            # Perform refresh using credential.refresh() method
+            old_expiry = entry.credential.expired_at
+            success = await entry.credential.refresh()
+
+            if success:
+                new_expiry = entry.credential.expired_at
+                entry.reset_health()  # Mark as healthy after successful refresh
+                logger.info(
+                    "✓ Refreshed credential %s (expiry: %s -> %s)",
+                    cookie_id,
+                    old_expiry,
+                    new_expiry,
+                )
+
+                # Log to database
+                try:
+                    async with session_scope() as db_session:
+                        from db.crud.cookie_crud import log_refresh_event
+                        await log_refresh_event(
+                            db_session,
+                            cookie_id=cookie_id,
+                            status="success",
+                            old_expired_at=old_expiry,
+                            new_expired_at=new_expiry,
+                        )
+                        await db_session.commit()
+                except Exception as db_err:
+                    logger.warning("Failed to log refresh event: %s", db_err)
+
+                refreshed_count += 1
+            else:
+                logger.warning("✗ Failed to refresh credential %s", cookie_id)
+                failed_count += 1
+
+        except Exception as err:
+            logger.error(
+                "Error refreshing credential %s: %s",
+                cookie_id,
+                err,
+                exc_info=True,
+            )
+            failed_count += 1
+
+    logger.info(
+        "Credential refresh completed: %d refreshed, %d failed",
+        refreshed_count,
+        failed_count,
+    )
