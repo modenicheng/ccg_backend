@@ -176,3 +176,27 @@ class ShowAnswerMessage(MessageBase):
     """
     event: int = GameEventType.SHOW_ANSWER.value
     data: ShowAnswerData
+
+
+class ShowSongRequestData(BaseModel):
+    """ShowSongRequestData for client-triggered show song event."""
+
+
+class ShowSongRequestMessage(MessageBase):
+    """WebSocket message schema for requesting to show current song info."""
+    event: int = GameEventType.SHOW_SONG.value
+    data: ShowSongRequestData = Field(default_factory=ShowSongRequestData)
+
+
+class ShowSongData(BaseModel):
+    """ShowSongData contains current song metadata for all clients."""
+    title: str | None = Field(default=None, description="歌曲名")
+    album: str | None = Field(default=None, description="专辑")
+    author: str | None = Field(default=None, description="作者")
+    cover: str | None = Field(default=None, description="封面")
+
+
+class ShowSongMessage(MessageBase):
+    """WebSocket message schema for broadcasting current song info."""
+    event: int = GameEventType.SHOW_SONG.value
+    data: ShowSongData

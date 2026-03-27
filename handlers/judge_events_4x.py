@@ -6,7 +6,6 @@ import random
 
 from sqlalchemy import select
 
-import cache.schemas as cache_schemas
 from cache import room_cache
 from cache.room_state_manager import RoundStateManager
 from client_manager import ClientManager, Client
@@ -14,16 +13,12 @@ from db import models
 from db.crud import (
     fetch_room_object,
     get_current_song_info,
-    get_or_create_audio_token,
     get_player_answers_for_judging,
-    get_room_song_queue,
     get_tag_group_map,
     save_score_record,
     update_player_answer_order,
-    update_room_current_song_index,
 )
 from db.session import session_scope
-from handlers.audio_common import preload_songs_for_round_start
 from handlers.registe_manager import regist
 from handlers.round_state_events import build_round_state_update_message
 from schemas.ws_messages.judge_schemas import (
@@ -37,20 +32,59 @@ from schemas.ws_messages.judge_schemas import (
     ScoreUpdateMessage,
     ShowAnswerData,
     ShowAnswerMessage,
+    ShowSongData,
+    ShowSongMessage,
+    ShowSongRequestMessage,
     TagData,
     TagGroupData,
 )
 from schemas.ws_messages.round_event_schemas import (
-    RoundEndMessage,
-    RoundStartData,
-    RoundStartMessage,
-)
+    RoundEndMessage,)
 from utils import get_logger
-from utils.audio_token import get_audio_stream_url
 from utils.calculate import calculate_player_scores
 from utils.enumerations import GameEventType, RoundState
 
 logger = get_logger(__name__)
+
+
+@regist(GameEventType.SHOW_SONG, ShowSongRequestMessage)
+async def handle_show_song(
+    data: ShowSongRequestMessage,
+    clients: ClientManager,
+    client: Client,
+    room_id: str,
+    **kwargs,
+) -> None:
+    """Handle SHOW_SONG event: broadcast current song metadata to all clients."""
+    # pylint: disable=unused-argument
+    if not client.user.is_owner:
+        await client.send_error(GameEventType.SHOW_SONG,
+                                "Only owner can show current song")
+        return
+
+    async with session_scope() as session:
+        song_id, _ = await get_current_song_info(session, room_id)
+        if song_id is None:
+            await client.send_error(GameEventType.SHOW_SONG,
+                                    "Cannot determine current song")
+            return
+
+        song_stmt = select(models.Song).where(models.Song.id == song_id)
+        song_result = await session.execute(song_stmt)
+        song = song_result.scalar_one_or_none()
+        if not song:
+            await client.send_error(GameEventType.SHOW_SONG, "Song not found")
+            return
+
+        show_song_message = ShowSongMessage(data=ShowSongData(
+            title=song.title,
+            album=song.album_name,
+            author=song.artist,
+            cover=song.cover_url,
+        ))
+        await clients.broadcast(room_id, show_song_message.model_dump())
+
+        logger.info("Broadcast SHOW_SONG for room %s, song_id=%s", room_id, song_id)
 
 
 @regist(GameEventType.JUDGING, JudgingMessage)
@@ -419,95 +453,4 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     round_end_message = RoundEndMessage()
     await clients.broadcast(room_id, round_end_message.model_dump())
 
-    # 检查并开始下一轮
-    try:
-        async with session_scope() as session:
-            # 获取房间和歌曲队列
-            room_stmt = select(models.Room).where(models.Room.id == room_id)
-            room_result = await session.execute(room_stmt)
-            room = room_result.scalar_one_or_none()
-
-            if not room:
-                logger.warning("Cannot start next round: room %s not found", room_id)
-                return
-
-            # 获取歌曲队列
-            song_queue = await get_room_song_queue(session, room_id)
-            if not song_queue:
-                logger.info("No songs in room %s, game ended", room_id)
-                return
-
-            current_index = room.current_song_index or 0
-            next_index = current_index + 1
-
-            # 检查是否还有更多歌曲
-            if next_index >= len(song_queue):
-                logger.info("No more songs in room %s, game completed", room_id)
-                return
-
-            # 更新当前歌曲索引
-            await update_room_current_song_index(session, room_id, next_index)
-
-            # 触发预下载和预加载逻辑
-            await preload_songs_for_round_start(
-                clients=clients,
-                session=session,
-                room_id=room_id,
-                song_queue=song_queue,
-                current_index=next_index,
-            )
-
-            # 为当前轮次歌曲获取或创建token
-            current_song_id = song_queue[next_index]
-            audio_token = await get_or_create_audio_token(session, room_id,
-                                                          current_song_id)
-            audio_url = get_audio_stream_url(audio_token)
-
-            # 强制新回合播放状态为 playing
-            playback_state = cache_schemas.PlaybackState(
-                play_state="playing",
-                progress_ms=0,
-                offset_ts=0,
-                audio_url=audio_url,
-            )
-            # pylint: disable=no-value-for-parameter  # decorator adds redis internally
-            await room_cache.set_room_playback_state(room_id, playback_state)
-
-            # 转换状态流：COMPLETED -> PENDING -> PLAYING_AUDIO
-            reset_success = await RoundStateManager.transition_round_state(
-                room_id=room_id,
-                target=RoundState.PENDING,
-                session=session,
-            )
-            if reset_success:
-                await clients.broadcast(
-                    room_id,
-                    build_round_state_update_message(RoundState.PENDING).model_dump(),
-                )
-
-            playing_success = await RoundStateManager.transition_round_state(
-                room_id=room_id,
-                target=RoundState.PLAYING_AUDIO,
-                session=session,
-            )
-            if playing_success:
-                await clients.broadcast(
-                    room_id,
-                    build_round_state_update_message(
-                        RoundState.PLAYING_AUDIO).model_dump(),
-                )
-
-            # 广播新一轮开始事件
-            round_start_data = RoundStartData(
-                round_index=next_index,
-                audio_url=audio_url,
-                start_percent=0.0,
-            )
-            round_start_message = RoundStartMessage(data=round_start_data)
-            await clients.broadcast(room_id, round_start_message.model_dump())
-
-            logger.info("Started next round %s in room %s", next_index, room_id)
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Failed to start next round for room %s: %s", room_id, e)
-
-    logger.info("Scoring completed for room %s", room_id)
+    logger.info("Scoring completed for room %s and round marked as COMPLETED", room_id)

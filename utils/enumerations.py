@@ -59,6 +59,7 @@ class GameEventType(Enum):
     SKIP_ROUND = 43
     SHOW_ANSWER = 44
     ROUND_STATE_UPDATE = 45
+    SHOW_SONG = 46
 
     # 全量的玩家答案，用于房间内所有客户端的同步显示与断线重连恢复
     PLAYER_ANSWER = 50

@@ -397,6 +397,30 @@ async def handle_attempt_answer(
         excluded_clients={client},
     )
 
+    current_answerer = await room_cache.get_room_current_answerer(room_id)
+
+    # 若已有当前作答者，新抢答只入队，不抢占当前作答权
+    if current_answerer is not None:
+        logger.info(
+            "Player %s queued in room %s while player %s is answering",
+            player_id,
+            room_id,
+            current_answerer,
+        )
+        return
+
+    # 当前无人作答：从队列头选出本轮作答者，开始作答阶段
+    answer_queue = await room_cache.get_answer_queue(room_id)
+    if not answer_queue:
+        logger.warning(
+            "Answer queue is empty right after enqueue in room %s, player %s",
+            room_id,
+            player_id,
+        )
+        return
+
+    next_answerer = answer_queue[0].player_id
+
     logger.debug(
         "Current playback state for room %s: %s",
         room_id,
@@ -429,26 +453,20 @@ async def handle_attempt_answer(
         await clients.broadcast(room_id, pause_message.model_dump())
     else:
         logger.info(
-            "Playback already paused in room %s when player %s attempted to answer",
+            "Playback already paused in room %s when first answerer %s is selected",
             room_id,
-            player_id,
+            next_answerer,
         )
 
-        # 尝试让前端自己依据抢答时间戳和当前播放状态来计算抢答队列，避免后端大量全量广播
-        # # new_queue = await room_cache.get_answer_queue(room_id)
-        # await clients.broadcast(
-        #     room_id,
-        #     AnswerQueueMessage(data=AnswerQueueData(queue=new_queue)).model_dump())
-
     # 设置当前作答玩家
-    await room_cache.set_room_current_answerer(room_id, player_id)
-    await room_cache.sync_answer_queue_is_answering(room_id, player_id)
+    await room_cache.set_room_current_answerer(room_id, next_answerer)
+    await room_cache.sync_answer_queue_is_answering(room_id, next_answerer)
 
     # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
-    your_turn_data = YourTurnData(user_id=int(player_id))
+    your_turn_data = YourTurnData(user_id=int(next_answerer))
     your_turn_message = YourTurnMessage(data=your_turn_data)
     await clients.broadcast(room_id, your_turn_message.model_dump())
-    logger.info("Broadcast YOUR_TURN for player %s in room %s", player_id, room_id)
+    logger.info("Broadcast YOUR_TURN for player %s in room %s", next_answerer, room_id)
 
     # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
     # sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
@@ -490,7 +508,7 @@ async def handle_submit_answer(
     # 验证当前玩家是否为当前作答者
     player_id = str(client.user.id)
     current_answerer = await room_cache.get_room_current_answerer(room_id)
-    if current_answerer != player_id:
+    if current_answerer is None or str(current_answerer) != player_id:
         await client.send_error(GameEventType.SUBMIT_ANSWER, "Not your turn to answer")
         return
 
