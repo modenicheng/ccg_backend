@@ -622,6 +622,11 @@ async def handle_submit_answer(
             "Answering phase finished in room %s, keep playback paused by default",
             room_id,
         )
+        # 所有玩家回答完成后，自动进入 JUDGING 环节
+        # 导入这里避免循环引用
+        from handlers.judge_events_4x import broadcast_judging_event
+        async with session_scope() as db_session:
+            await broadcast_judging_event(clients, room_id, db_session)
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
     # 注意：这里重新读取，确保包含最新 is_answering 状态

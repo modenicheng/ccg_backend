@@ -88,132 +88,164 @@ async def handle_show_song(
         logger.info("Broadcast SHOW_SONG for room %s, song_id=%s", room_id, song_id)
 
 
+async def broadcast_judging_event(  # pylint: disable=too-many-locals
+    clients: ClientManager,
+    room_id: str,
+    db_session,
+) -> None:
+    """广播 JUDGING 事件给所有客户端
+    
+    这个函数可以在多种情况下被调用：
+    1. 房主手动触发
+    2. 曲目播放完成
+    3. 所有玩家回答完成
+    
+    Args:
+        clients: 客户端管理器
+        room_id: 房间 ID
+        db_session: 数据库会话
+    """
+    # 获取房间对象（包含标签组信息）
+    room = await fetch_room_object(db_session, room_id)
+    if not room:
+        logger.error("Room %s not found for judging", room_id)
+        return
+
+    # 获取当前歌曲信息
+    song_id, song_index = await get_current_song_info(db_session, room_id)
+    if song_id is None or song_index is None:
+        logger.error("Cannot determine current song for room %s", room_id)
+        return
+
+    # 获取当前歌曲
+    song_stmt = select(models.Song).where(models.Song.id == song_id)
+    song_result = await db_session.execute(song_stmt)
+    song = song_result.scalar_one_or_none()
+    if not song:
+        logger.error("Song %s not found for room %s", song_id, room_id)
+        return
+
+    # 构建标签组数据
+    tag_groups_data = []
+    for tag_group in room.tag_groups:
+        tags = [TagData(id=tag.id, name=tag.name) for tag in tag_group.tags]
+        tag_groups_data.append(
+            TagGroupData(
+                group_id=tag_group.id,
+                name=tag_group.name,
+                tags=tags,
+            ))
+
+    # 获取历史正确描述（用于展示候选）
+    # 按 times_selected 降序排序，最多取 10 条
+    description_history_stmt = select(models.SongDescriptionHistory).where(
+        models.SongDescriptionHistory.song_id == song_id,
+        models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
+    ).order_by(models.SongDescriptionHistory.times_selected.desc()).limit(10)
+    description_history_result = await db_session.execute(description_history_stmt)
+    description_history_records = description_history_result.scalars().all()
+
+    # 随机选择 1-3 条参考描述
+    description_candidates = []
+    if description_history_records:
+        # 随机打乱并取 1-3 条
+        shuffled = list(description_history_records)
+        random.shuffle(shuffled)
+        selected = shuffled[:min(random.randint(1, 3), len(shuffled))]
+        description_candidates = [
+            DescriptionCandidate(
+                id=record.id,
+                text=record.description_text,
+                count=record.times_selected,
+            ) for record in selected
+        ]
+
+    # 获取玩家答案（用于显示）
+    player_answers = await get_player_answers_for_judging(
+        db_session, room_id, song_id, song_index)
+
+    logger.info("Player answers for judging: %s", player_answers)
+
+    # 构建玩家答案列表
+    player_answers_data = []
+    player_descriptions_data = []  # 用于房主选择正确答案的描述列表
+    
+    for user_id, answer_data in player_answers.items():
+        # 获取用户名
+        user_stmt = select(
+            models.User.username).where(models.User.id == user_id)
+        user_result = await db_session.execute(user_stmt)
+        username = user_result.scalar_one_or_none() or f"Player {user_id}"
+
+        player_answers_data.append(
+            PlayerAnswerData(
+                player_id=user_id,
+                username=username,
+                selected_tags=answer_data["selected_tag_ids"],
+                description=answer_data["description_text"],
+            ))
+        
+        # 如果玩家有提交描述，加入 player_descriptions
+        if answer_data.get("description_text"):
+            logger.info("Adding player description from user %s: %s", username, answer_data["description_text"])
+            player_descriptions_data.append(
+                PlayerDescriptionData(
+                    id=user_id,  # 使用玩家 ID 作为描述的唯一标识
+                    username=username,
+                    description=answer_data["description_text"],
+                ))
+        else:
+            logger.info("Player %s has no description text", username)
+
+    logger.info("Built %d player descriptions", len(player_descriptions_data))
+
+    # 构建 JUDGING 事件数据
+    judging_data = JudgingData(
+        tag_groups=tag_groups_data,
+        description_candidates=description_candidates,
+        answers=player_answers_data,
+        player_descriptions=player_descriptions_data,
+    )
+
+    # 触发状态转换到 JUDGING
+    success = await RoundStateManager.transition_round_state(
+        room_id=room_id,
+        target=RoundState.JUDGING,
+        session=db_session,
+    )
+    if success:
+        await clients.broadcast(
+            room_id,
+            build_round_state_update_message(RoundState.JUDGING).model_dump(),
+        )
+        logger.info("Room %s round state transitioned to JUDGING", room_id)
+
+    # 广播 JUDGING 事件给所有客户端
+    judging_message = JudgingMessage(data=judging_data)
+    message_dict = judging_message.model_dump()
+    
+    logger.info("Sending JUDGING event with %d player answers and %d player descriptions",
+               len(player_answers_data), len(player_descriptions_data))
+    logger.info("Player descriptions data: %s", player_descriptions_data)
+    
+    await clients.broadcast(room_id, message_dict)
+
+    logger.info("Sent JUDGING event for room %s, song %s", room_id, song.title)
+
+
 @regist(GameEventType.JUDGING, JudgingMessage)
 async def handle_judging(data: JudgingMessage, clients: ClientManager, client: Client,
                          room_id: str, **kwargs) -> None:
-    """处理进入判分环节事件"""
-    # pylint: disable=unused-argument,too-many-locals
+    """处理进入判分环节事件（房主手动触发）"""
+    # pylint: disable=unused-argument
     try:
         async with session_scope() as db:
-            # 获取房间对象（包含标签组信息）
-            room = await fetch_room_object(db, room_id)
-            if not room:
-                await client.send_error(GameEventType.JUDGING, "Room not found")
-                return
-
-            # 获取当前歌曲信息
-            song_id, song_index = await get_current_song_info(db, room_id)
-            if song_id is None or song_index is None:
-                await client.send_error(GameEventType.JUDGING,
-                                        "Cannot determine current song")
-                return
-
-            # 获取当前歌曲
-            song_stmt = select(models.Song).where(models.Song.id == song_id)
-            song_result = await db.execute(song_stmt)
-            song = song_result.scalar_one_or_none()
-            if not song:
-                await client.send_error(GameEventType.JUDGING, "Song not found")
-                return
-
-            # 构建标签组数据
-            tag_groups_data = []
-            for tag_group in room.tag_groups:
-                tags = [TagData(id=tag.id, name=tag.name) for tag in tag_group.tags]
-                tag_groups_data.append(
-                    TagGroupData(
-                        group_id=tag_group.id,
-                        name=tag_group.name,
-                        tags=tags,
-                    ))
-
-            # 获取历史正确描述（用于展示候选）
-            # 按 times_selected 降序排序，最多取10条
-            description_history_stmt = select(models.SongDescriptionHistory).where(
-                models.SongDescriptionHistory.song_id == song_id,
-                models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
-            ).order_by(models.SongDescriptionHistory.times_selected.desc()).limit(10)
-            description_history_result = await db.execute(description_history_stmt)
-            description_history_records = description_history_result.scalars().all()
-
-            # 随机选择1-3条参考描述
-            description_candidates = []
-            if description_history_records:
-                # 随机打乱并取1-3条
-                shuffled = list(description_history_records)
-                random.shuffle(shuffled)
-                selected = shuffled[:min(random.randint(1, 3), len(shuffled))]
-                description_candidates = [
-                    DescriptionCandidate(
-                        id=record.id,
-                        text=record.description_text,
-                        count=record.times_selected,
-                    ) for record in selected
-                ]
-
-            # 获取玩家答案（用于显示）
-            player_answers = await get_player_answers_for_judging(
-                db, room_id, song_id, song_index)
-
-            # 构建玩家答案列表
-            player_answers_data = []
-            player_descriptions_data = []  # 用于房主选择正确答案的描述列表
-            
-            for user_id, answer_data in player_answers.items():
-                # 获取用户名
-                user_stmt = select(
-                    models.User.username).where(models.User.id == user_id)
-                user_result = await db.execute(user_stmt)
-                username = user_result.scalar_one_or_none() or f"Player {user_id}"
-
-                player_answers_data.append(
-                    PlayerAnswerData(
-                        player_id=user_id,
-                        username=username,
-                        selected_tags=answer_data["selected_tag_ids"],
-                        description=answer_data["description_text"],
-                    ))
-                
-                # 如果玩家有提交描述，加入 player_descriptions
-                if answer_data.get("description_text"):
-                    player_descriptions_data.append(
-                        PlayerDescriptionData(
-                            id=user_id,  # 使用玩家 ID 作为描述的唯一标识
-                            username=username,
-                            description=answer_data["description_text"],
-                        ))
-
-            # 构建 JUDGING 事件数据
-            judging_data = JudgingData(
-                tag_groups=tag_groups_data,
-                description_candidates=description_candidates,
-                answers=player_answers_data,
-                player_descriptions=player_descriptions_data,
-            )
-
-            # 触发状态转换到 JUDGING
-            success = await RoundStateManager.transition_round_state(
-                room_id=room_id,
-                target=RoundState.JUDGING,
-                session=db,
-            )
-            if success:
-                await clients.broadcast(
-                    room_id,
-                    build_round_state_update_message(RoundState.JUDGING).model_dump(),
-                )
-                logger.info("Room %s round state transitioned to JUDGING", room_id)
-
-            # 广播JUDGING事件给所有客户端
-            judging_message = JudgingMessage(data=judging_data)
-            await clients.broadcast(room_id, judging_message.model_dump())
-
-            logger.info("Sent JUDGING event for room %s, song %s", room_id, song.title)
-
+            await broadcast_judging_event(clients, room_id, db)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during JUDGING event: %s", e)
-        await client.send_error(GameEventType.JUDGING,
-                                f"Internal server error: {str(e)}")
+        if client:
+            await client.send_error(GameEventType.JUDGING,
+                                    f"Internal server error: {str(e)}")
 
 
 @regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessage)
