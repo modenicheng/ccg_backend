@@ -27,6 +27,7 @@ from schemas.ws_messages.judge_schemas import (
     JudgingData,
     JudgingMessage,
     PlayerAnswerData,
+    PlayerDescriptionData,
     ScoreEntry,
     ScoreUpdateData,
     ScoreUpdateMessage,
@@ -156,6 +157,8 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
 
             # 构建玩家答案列表
             player_answers_data = []
+            player_descriptions_data = []  # 用于房主选择正确答案的描述列表
+            
             for user_id, answer_data in player_answers.items():
                 # 获取用户名
                 user_stmt = select(
@@ -170,12 +173,22 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
                         selected_tags=answer_data["selected_tag_ids"],
                         description=answer_data["description_text"],
                     ))
+                
+                # 如果玩家有提交描述，加入 player_descriptions
+                if answer_data.get("description_text"):
+                    player_descriptions_data.append(
+                        PlayerDescriptionData(
+                            id=user_id,  # 使用玩家 ID 作为描述的唯一标识
+                            username=username,
+                            description=answer_data["description_text"],
+                        ))
 
-            # 构建JUDGING事件数据
+            # 构建 JUDGING 事件数据
             judging_data = JudgingData(
                 tag_groups=tag_groups_data,
                 description_candidates=description_candidates,
                 answers=player_answers_data,
+                player_descriptions=player_descriptions_data,
             )
 
             # 触发状态转换到 JUDGING

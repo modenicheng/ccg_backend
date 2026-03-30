@@ -56,10 +56,17 @@ class DescriptionCandidate(BaseModel):
 
 class PlayerAnswerData(BaseModel):
     """玩家答案数据"""
-    player_id: int = Field(..., description="玩家ID")
+    player_id: int = Field(..., description="玩家 ID")
     username: str = Field(..., description="玩家用户名")
-    selected_tags: list[int] = Field(default_factory=list, description="选择的标签ID列表")
+    selected_tags: list[int] = Field(default_factory=list, description="选择的标签 ID 列表")
     description: str | None = Field(default=None, description="精准描述文本")
+
+
+class PlayerDescriptionData(BaseModel):
+    """玩家精准描述数据（用于判分页面展示）"""
+    id: int = Field(..., description="玩家 ID（用作描述的唯一标识）")
+    username: str = Field(..., description="玩家用户名")
+    description: str = Field(..., description="精准描述文本")
 
 
 class JudgingData(BaseModel):
@@ -70,10 +77,12 @@ class JudgingData(BaseModel):
         tag_groups (list[TagGroupData]): 房间的标签组列表
         description_candidates (list[DescriptionCandidate]): 精准描述候选列表
         answers (list[PlayerAnswerData]): 本轮所有玩家提交的答案
+        player_descriptions (list[PlayerDescriptionData]): 本轮所有玩家的精准描述（用于房主选择正确答案）
     """
     tag_groups: list[TagGroupData] = Field(default_factory=list)
     description_candidates: list[DescriptionCandidate] = Field(default_factory=list)
     answers: list[PlayerAnswerData] = Field(default_factory=list)
+    player_descriptions: list[PlayerDescriptionData] = Field(default_factory=list)
 
 
 class JudgingMessage(MessageBase):

@@ -15,17 +15,15 @@ def calculate_player_scores(
     """Calculate player scores based on answer queue and correct answers.
 
     计分规则：
-    - 每个命中标签组计1分（需精确匹配该组所有标签）
-    - 同一标签组仅最先抢答者得分
-    - 同一玩家在标签组上最多得1分（即使匹配多个标签组）
-    - 精准描述命中计1分
+    - 每个正确答案标签独立计分：按抢答顺序遍历玩家，第一个包含该标签的玩家得 1 分
+    - 精准描述：按抢答顺序遍历玩家，第一个描述 ID 匹配正确答案的玩家得 1 分（即使后面还有其他玩家也答对）
 
     Args:
         answer_queue: List of player IDs in answer order (strings)
         player_answers: Dict mapping player_id to answer data
         tag_group_map: Dict mapping tag_group_id to list of tag IDs
         correct_tags: List of correct tag IDs
-        correct_description_ids: List of player IDs with correct descriptions
+        correct_description_ids: List of correct description IDs (from player answer IDs)
 
     Returns:
         Dict mapping player_id to score delta for this round
@@ -34,39 +32,20 @@ def calculate_player_scores(
     for player_id in answer_queue:
         player_scores[player_id] = 0
 
-    awarded_tags: set[int] = set()
-    player_awarded_tag: set[str] = set()
-
-    for player_id in answer_queue:
-        if player_id in player_awarded_tag:
-            continue
-
-        if player_id not in player_answers:
-            continue
-
-        player_answer = player_answers[player_id]
-        selected_tags = set(player_answer.get("selected_tag_ids", []))
-
-        for group_tags in tag_group_map.values():
-            group_tag_set = set(group_tags)
-            required_tags = set(correct_tags) & group_tag_set
-
-            if not required_tags:
+    # 标签计分：对每个正确答案标签，按抢答顺序遍历玩家
+    for correct_tag_id in correct_tags:
+        for player_id in answer_queue:
+            if player_id not in player_answers:
                 continue
 
-            if selected_tags >= required_tags:
-                can_score = True
-                for tag in required_tags:
-                    if tag in awarded_tags:
-                        can_score = False
-                        break
+            player_answer = player_answers[player_id]
+            selected_tags = player_answer.get("selected_tag_ids", [])
 
-                if can_score:
-                    player_scores[player_id] += 1
-                    awarded_tags.update(required_tags)
-                    player_awarded_tag.add(player_id)
-                    break
+            if correct_tag_id in selected_tags:
+                player_scores[player_id] += 1
+                break  # 该标签已计分，继续处理下一个正确答案标签
 
+    # 描述计分：按抢答顺序遍历玩家，第一个匹配的玩家得分
     if correct_description_ids:
         correct_desc_set = set(correct_description_ids)
 
@@ -76,6 +55,6 @@ def calculate_player_scores(
 
             if int(player_id) in correct_desc_set:
                 player_scores[player_id] += 1
-                break
+                break  # 只给第一个匹配的玩家加分
 
     return player_scores
