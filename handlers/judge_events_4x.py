@@ -7,7 +7,7 @@ import random
 from sqlalchemy import select
 
 from cache import room_cache
-from cache.room_state_manager import RoundStateManager
+from cache.room_state_manager import RoundStateManager, RoomStateManager
 from client_manager import ClientManager, Client
 from db import models
 from db.crud import (
@@ -17,6 +17,7 @@ from db.crud import (
     get_tag_group_map,
     save_score_record,
     update_player_answer_order,
+    get_room_song_queue,
 )
 from db.session import session_scope
 from handlers.registe_manager import regist
@@ -41,6 +42,7 @@ from schemas.ws_messages.judge_schemas import (
 )
 from schemas.ws_messages.round_event_schemas import (
     RoundEndMessage,)
+from schemas.ws_messages import room_schemas as RoomSchema
 from utils import get_logger
 from utils.calculate import calculate_player_scores
 from utils.enumerations import GameEventType, RoundState
@@ -499,3 +501,39 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     await clients.broadcast(room_id, round_end_message.model_dump())
 
     logger.info("Scoring completed for room %s and round marked as COMPLETED", room_id)
+
+    # 检查是否所有歌曲都已播放完毕，如果是则自动结束游戏
+    try:
+        async with session_scope() as session:
+            room = await fetch_room_object(session, room_id)
+            if not room:
+                logger.error("Room %s not found when checking game end", room_id)
+                return
+
+            song_queue = await get_room_song_queue(session, room_id)
+            if not song_queue:
+                logger.warning("Room %s has no songs when checking game end", room_id)
+                return
+
+            current_index = room.current_song_index or 0
+            # 如果当前索引已经是最后一首歌，则游戏结束
+            if current_index >= len(song_queue) - 1:
+                logger.info(
+                    "All songs completed for room %s (current_index=%d, total=%d), auto-ending game",
+                    room_id,
+                    current_index,
+                    len(song_queue),
+                )
+                # 使用 RoomStateManager 结束游戏
+                result = await RoomStateManager.end_game(room_id, session)
+                if result["success"]:
+                    game_over_data = RoomSchema.GameOverData(
+                        manual=False, final_scores=result["final_scores"])
+                    message = RoomSchema.GameOverMessage(data=game_over_data)
+                    await clients.broadcast(room_id, message.model_dump())
+                    logger.info("Game auto-ended for room %s", room_id)
+                else:
+                    logger.error("Failed to auto-end game for room %s: %s", room_id,
+                                 result.get("error"))
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error checking game end: %s", e)

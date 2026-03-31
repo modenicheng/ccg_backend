@@ -693,3 +693,76 @@ async def auto_setup_test_audio(
         "title": song.title,
         "message": "Test audio auto-setup completed",
     }
+
+
+@room_router.delete("/{roomid}/dissolve")
+async def dissolve_room(
+    roomid: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+):
+    """解散房间：记录日志并从数据库删除房间
+    
+    逻辑：
+    1. 验证房间是否存在
+    2. 记录房间日志（玩家信息、游戏状态等）
+    3. 删除房间（级联删除相关数据）
+    4. 通知所有客户端房间已解散
+    """
+    # 获取房间
+    room_stmt = select(Room).where(Room.id == roomid)
+    room_result = await session.execute(room_stmt)
+    room = room_result.scalar_one_or_none()
+    
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # 记录房间日志（在删除之前）
+    player_list = [
+        {
+            "id": user.id,
+            "username": user.username,
+            "is_owner": user.is_owner,
+        }
+        for user in room.users
+    ]
+    
+    logger.info(
+        "Dissolving room %s: title=%s, status=%s, players=%s, tag_groups=%s",
+        roomid,
+        room.title,
+        room.status,
+        player_list,
+        len(room.tag_groups),
+    )
+    
+    try:
+        # 通知所有客户端房间已解散（使用通用错误消息）
+        try:
+            from schemas.ws_messages.error_schemas import WebSocketErrorEvent
+            from utils.enumerations import ErrorEventType
+            
+            error_message = WebSocketErrorEvent(
+                error_event=ErrorEventType.HANDLER_EXCEPTION,
+                message="Room has been dissolved",
+            )
+            await request.app.state.clients.broadcast(roomid, error_message.model_dump())
+            logger.info("Broadcasted room dissolved message to room %s", roomid)
+        except Exception as broadcast_error:
+            logger.error("Failed to broadcast room dissolved message: %s", broadcast_error)
+        
+        # 删除房间（级联删除相关数据）
+        await session.delete(room)
+        await session.commit()
+        
+        logger.info("Room %s dissolved successfully", roomid)
+        
+        return {
+            "success": True,
+            "message": "Room dissolved successfully",
+            "room_id": roomid,
+        }
+    except Exception as e:
+        logger.error("Failed to dissolve room %s: %s", roomid, e, exc_info=True)
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to dissolve room: {str(e)}") from e
