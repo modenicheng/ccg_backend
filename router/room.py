@@ -64,24 +64,26 @@ async def auto_setup_after_commit(room_id: str) -> None:
         from unittest.mock import Mock
         from fastapi import Request
         
-        # 创建 mock request（需要一个 app 对象）
-        # 注意：这里需要从全局获取 app，或者通过其他方式传递
-        # 简单做法：直接从 main 导入 app
-        from main import app
+        # 延迟导入 app，避免循环导入
+        import main
         mock_request = Mock()
-        mock_request.app = app
+        mock_request.app = main.app
         
-        # 创建一个新的 session
-        from db.session import async_session
-        async with async_session() as new_session:
-            await auto_setup_test_audio(
+        # 使用 session_scope 创建新的 session
+        from db.session import session_scope
+        async with session_scope() as new_session:
+            result = await auto_setup_test_audio(
                 roomid=room_id,
                 request=mock_request,
                 session=new_session,
             )
-            logger.info("Auto-setup-test-audio completed for room %s", room_id)
+            logger.info(
+                "Auto-setup-test-audio completed for room %s, result: %s",
+                room_id,
+                result,
+            )
     except Exception as e:
-        logger.error("Auto-setup-test-audio failed for room %s: %s", room_id, e)
+        logger.error("Auto-setup-test-audio failed for room %s: %s", room_id, e, exc_info=True)
 
 
 @room_router.post("/", response_model=CreateRoomResponse)
@@ -109,13 +111,14 @@ async def create_room(
     await session.commit()
     
     # 房间创建成功后，异步触发 auto-setup-test-audio（不阻塞响应）
-    logger.info("Room created, scheduling auto-setup-test-audio for room %s", room_id)
+    logger.info("Room created successfully, scheduling auto-setup-test-audio for room %s", room_id)
     
     # 使用 BackgroundTasks 确保任务会执行
     background_tasks.add_task(
         auto_setup_after_commit,
         room_id,
     )
+    logger.info("Background task scheduled for room %s", room_id)
 
     return CreateRoomResponse(
         room_id=room_id,
