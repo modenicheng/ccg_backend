@@ -69,7 +69,7 @@ class GameEventType(Enum):
 
     TAGS_UPDATE = 60  # 标签增量更新
     TAG_GROUPS_UPDATE = 61  # 标签组增量更新
-    TAG_GROUP = 62  # 房间已选标签组同步（非全量ROOM_STATE）
+    TAG_GROUP = 62  # 房间已选标签组同步（非全量 ROOM_STATE）
 
 
 class AudioEncoding(Enum):

@@ -78,9 +78,10 @@ async def stream_audio(
 @audio_stream_router.get("/file/{song_id}")
 async def get_audio_file(
         song_id: int,
+        request: Request,
         db: AsyncSession = Depends(get_db),
 ):
-    """Get audio file path for a song (requires ownership check)."""
+    """Stream audio file for a song (compatible with audio tag)."""
     logger.debug("Audio file request for song id: %s", song_id)
 
     song = await db.get(models.Song, song_id)
@@ -96,8 +97,15 @@ async def get_audio_file(
         logger.warning("Audio file missing on disk: %s", song.cached_path)
         raise HTTPException(status_code=404, detail="Audio file not found")
 
-    return {
-        "song_id": song.id,
-        "file_path": song.cached_path,
-        "file_exists": True,
-    }
+    try:
+        content, media_type = await load_song_asset_with_cache(song.cached_path)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error loading audio file for streaming: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to load audio") from e
+
+    range_header = request.headers.get("range")
+    response = build_range_response(content, media_type, range_header)
+    response.headers["Content-Disposition"] = (
+        f'inline; filename="{os.path.basename(song.cached_path)}"'
+    )
+    return response
