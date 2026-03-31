@@ -289,6 +289,49 @@ async def set_test_audio(
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
     
+    # 如果歌曲未缓存，先下载
+    if not song.cached_path or not os.path.exists(song.cached_path if song.cached_path else ""):
+        try:
+            if song.platform_song_id:
+                logger.info(
+                    "Song %s not cached, downloading before broadcast...",
+                    song.id,
+                )
+                from mq.tasks import _download_and_cache_song_impl
+                downloaded_path = await _download_and_cache_song_impl(song.platform_song_id)
+                
+                if downloaded_path and os.path.exists(downloaded_path):
+                    logger.info(
+                        "Successfully downloaded song: %s (%s)",
+                        song.id,
+                        downloaded_path,
+                    )
+                    # 重新加载歌曲记录以获取最新的 cached_path
+                    await session.refresh(song)
+                else:
+                    logger.error(
+                        "Failed to download song %s, downloaded_path: %s",
+                        song.id,
+                        downloaded_path,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to download audio file for song {song.id}",
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to download song %s: %s",
+                song.id,
+                e,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Exception occurred while downloading song: {str(e)}",
+            ) from e
+    
     # 广播 PRELOAD_AUDIO 和 PLAY 事件
     audio_url = f"/api/songs/file/{payload.song_id}"
     current_ts = int(__import__('time').time() * 1000)
@@ -449,7 +492,7 @@ async def auto_setup_test_audio(
             )
             session.add(song)
             await session.flush()  # 获取 song.id
-            await session.commit()
+            await session.commit()  # 立即 commit，确保歌曲记录对其他 session 可见
             await session.refresh(song)
 
             logger.info(
@@ -463,25 +506,63 @@ async def auto_setup_test_audio(
                 detail=f"Failed to create song: {str(e)}",
             ) from e
 
-    # 如果歌已经存在，但未缓存则触发缓存任务
+    # 如果歌已经存在，但未缓存则触发缓存任务并等待下载完成
     if song and (
         not song.cached_path
         or not os.path.exists(song.cached_path if song.cached_path else "")
     ):
         try:
             if song.platform_song_id:
-                tasks.download_and_cache_song(song.platform_song_id)
                 logger.info(
-                    "Triggered cache task for song_id %s (%s)",
+                    "Triggering cache task for song_id %s (%s), waiting for download...",
                     song.id,
                     song.platform_song_id,
                 )
+                # 同步等待下载完成（最多等待 60 秒）
+                from mq.tasks import _download_and_cache_song_impl
+                downloaded_path = await _download_and_cache_song_impl(song.platform_song_id)
+                
+                if downloaded_path and os.path.exists(downloaded_path):
+                    logger.info(
+                        "Successfully downloaded and cached song: %s (%s)",
+                        song.id,
+                        downloaded_path,
+                    )
+                    # 重新加载歌曲记录以获取最新的 cached_path
+                    await session.refresh(song)
+                else:
+                    logger.error(
+                        "Song download completed but file not found: %s, downloaded_path: %s",
+                        song.id,
+                        downloaded_path,
+                    )
+                    # 下载失败，返回错误
+                    return {
+                        "success": False,
+                        "error": f"Failed to download audio file for song {song.id}",
+                    }
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "Failed to trigger download task for default test audio %s: %s",
+            logger.error(
+                "Failed to download and cache song %s: %s",
                 song.id,
                 e,
+                exc_info=True,
             )
+            return {
+                "success": False,
+                "error": f"Exception occurred while downloading song: {str(e)}",
+            }
+    
+    # 检查最终歌曲是否已缓存（双重检查）
+    if not song or not song.cached_path or not os.path.exists(song.cached_path):
+        logger.error(
+            "Song %s is not cached after download attempt, cannot proceed with broadcast",
+            song.id if song else "N/A",
+        )
+        return {
+            "success": False,
+            "error": "Failed to download and cache audio file",
+        }
 
     # 4. 将歌曲添加到房间歌单第一首
     # 先检查是否已经在房间歌单中（但不是第一首）

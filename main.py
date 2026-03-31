@@ -257,12 +257,17 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 try:
                     event = GameEventType(event_value)
                 except ValueError:
-                    await client.ws.send_json(
-                        WebSocketErrorEvent(
-                            error_event=ErrorEventType.UNSUPPORTED_EVENT,
-                            message=f"Unsupported game event: {event_value}",
-                        ).model_dump())
-                    continue
+                    # 尝试转换为 EventType（用于系统级事件如 ERROR）
+                    try:
+                        event = EventType(event_value)
+                        logger.debug("Received system event: %s", event.name)
+                    except ValueError:
+                        await client.ws.send_json(
+                            WebSocketErrorEvent(
+                                error_event=ErrorEventType.UNSUPPORTED_EVENT,
+                                message=f"Unsupported game event: {event_value}",
+                            ).model_dump())
+                        continue
 
             elif "bytes" in data:
                 parsed_data = data["bytes"]
