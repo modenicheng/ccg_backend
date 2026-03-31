@@ -57,7 +57,7 @@ def generate_room_id(length: int = 6) -> str:
 
 async def auto_setup_after_commit(room_id: str) -> None:
     """在房间创建后异步执行 auto-setup-test-audio"""
-    await asyncio.sleep(1)  # 等待 1 秒，确保 WebSocket 已连接
+    await asyncio.sleep(2)  # 等待 2 秒，确保 WebSocket 已连接和房间初始化完成
     try:
         logger.info("Executing auto-setup-test-audio for room %s", room_id)
         # 直接调用 auto_setup_test_audio 函数
@@ -317,9 +317,9 @@ async def set_test_audio(
             payload.song_id,
         )
         
-        # 等待短暂延迟确保预下载开始（至少 2 秒，确保音频文件已下载）
-        logger.info("Waiting 2000ms before broadcasting PLAY event (waiting for preload)...")
-        await asyncio.sleep(2.0)
+        # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
+        logger.info("Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
+        await asyncio.sleep(3.0)
         
         # 广播 PLAY 事件
         logger.info(
@@ -544,9 +544,9 @@ async def auto_setup_test_audio(
             song.id,
         )
         
-        # 等待短暂延迟确保预下载开始（至少 2 秒，确保音频文件已下载）
-        logger.info("Waiting 2000ms before broadcasting PLAY event (waiting for preload)...")
-        await asyncio.sleep(2.0)
+        # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
+        logger.info("Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
+        await asyncio.sleep(3.0)
         
         # 广播 PLAY 事件
         logger.info(
