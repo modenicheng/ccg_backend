@@ -1,13 +1,12 @@
 """WebSocket event handler for audio preload errors reported by the frontend."""
 from __future__ import annotations
 
-import asyncio
 from sqlalchemy import select
 
 from client_manager import ClientManager, Client
 from db import models
 from db.session import session_scope
-from handlers.audio_common import download_song_at_index, broadcast_preload_audio_for_index
+from handlers.audio_common import broadcast_preload_audio_for_index
 from mq import tasks
 from schemas.ws_messages.playback_schemas import AudioErrorMessage
 from utils import get_logger

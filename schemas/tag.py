@@ -1,6 +1,6 @@
 from __future__ import annotations
-from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------- Tag 相关 ----------

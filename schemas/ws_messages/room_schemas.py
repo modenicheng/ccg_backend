@@ -41,6 +41,15 @@ class ScoreItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RoundAnswerItem(BaseModel):
+    player_id: int
+    username: str
+    answers: dict[int, int] = Field(default_factory=dict,
+                                    description="tagGroupId -> tagId")
+    description: str | None = None
+    order: int = Field(default=0, ge=0)
+
+
 class ClientRoomState(BaseModel):
     room_id: str = Field(alias="id")
     title: str | None = None
@@ -53,6 +62,9 @@ class ClientRoomState(BaseModel):
     players: list[RoomStatePlayerItem] = Field(default_factory=list, alias="users")
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
     answer_queue: list[AnswerQueueItem] = Field(default_factory=list)
+    round_scored: bool = Field(default=False, description="当前轮次是否已判分")
+    round_answers: list[RoundAnswerItem] = Field(default_factory=list,
+                                                 description="当前轮次玩家答题详情")
     playback_status: PlaybackState | None = Field(default=None, description="当前播放状态")
     scores: list[ScoreItem] = Field(default_factory=list)
 

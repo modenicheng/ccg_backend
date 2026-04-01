@@ -1,6 +1,4 @@
-from __future__ import annotations
-"""
-Task queue request/response schemas.
+"""Task queue request/response schemas.
 
 Handles:
 - Download and cache task requests
@@ -8,9 +6,11 @@ Handles:
 - Task status/error reporting
 """
 
-from typing import Any, Optional, List
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
 from enum import Enum
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
 
 class TaskStatusEnum(str, Enum):

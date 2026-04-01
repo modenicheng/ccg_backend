@@ -1,12 +1,12 @@
-from __future__ import annotations
-"""
-Songlist request/response schemas.
+"""Songlist request/response schemas.
 
 Handles:
 - Songlist import/creation requests
 - Songlist fetch operations
 - Songlist API responses
 """
+
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Optional, List
@@ -34,7 +34,6 @@ class SonglistBase(BaseModel):
 
 class SonglistCreate(SonglistBase):
     """Schema for creating a new songlist."""
-    pass
 
 
 class SonglistFetchRequest(BaseModel):

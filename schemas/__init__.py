@@ -1,12 +1,12 @@
-from __future__ import annotations
-"""
-Data schemas for request/response validation and serialization.
+"""Data schemas for request/response validation and serialization.
 
 This module provides Pydantic models for:
 - Request validation (HTTP endpoints, task inputs)
 - Response serialization (API responses)
 - Type hints across the application
 """
+
+from __future__ import annotations
 
 from .songlist import (
     SonglistCreateRequest,

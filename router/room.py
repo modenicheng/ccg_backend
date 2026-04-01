@@ -63,12 +63,12 @@ async def auto_setup_after_commit(room_id: str) -> None:
         # 直接调用 auto_setup_test_audio 函数
         from unittest.mock import Mock
         from fastapi import Request
-        
+
         # 延迟导入 app，避免循环导入
         import main
         mock_request = Mock()
         mock_request.app = main.app
-        
+
         # 使用 session_scope 创建新的 session
         from db.session import session_scope
         async with session_scope() as new_session:
@@ -83,14 +83,18 @@ async def auto_setup_after_commit(room_id: str) -> None:
                 result,
             )
     except Exception as e:
-        logger.error("Auto-setup-test-audio failed for room %s: %s", room_id, e, exc_info=True)
+        logger.error("Auto-setup-test-audio failed for room %s: %s",
+                     room_id,
+                     e,
+                     exc_info=True)
 
 
 @room_router.post("/", response_model=CreateRoomResponse)
 async def create_room(
     info: CreateRoomRequest,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db)) -> CreateRoomResponse:
+    session: AsyncSession = Depends(get_db)
+) -> CreateRoomResponse:
     """Create a new room."""
     room_id = generate_room_id()
     logger.info("Creating room with ID: %s", room_id)
@@ -109,10 +113,12 @@ async def create_room(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Redis unavailable") from exc
     await session.commit()
-    
+
     # 房间创建成功后，异步触发 auto-setup-test-audio（不阻塞响应）
-    logger.info("Room created successfully, scheduling auto-setup-test-audio for room %s", room_id)
-    
+    logger.info(
+        "Room created successfully, scheduling auto-setup-test-audio for room %s",
+        room_id)
+
     # 使用 BackgroundTasks 确保任务会执行
     background_tasks.add_task(
         auto_setup_after_commit,
@@ -250,13 +256,13 @@ class SetTestAudioRequest(BaseModel):
 
 @room_router.post("/{roomid}/set-test-audio")
 async def set_test_audio(
-    roomid: str,
-    payload: SetTestAudioRequest,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
+        roomid: str,
+        payload: SetTestAudioRequest,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
 ):
     """手动设置房间 test_audio，触发预下载和播放
-    
+
     逻辑：
     1. 验证歌曲是否在房间歌单中
     2. 广播 PRELOAD_AUDIO 事件
@@ -269,7 +275,7 @@ async def set_test_audio(
     room = room_result.scalar_one_or_none()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    
+
     # 验证歌曲是否在房间歌单中
     room_song_stmt = select(RoomSong).where(
         RoomSong.room_id == roomid,
@@ -277,23 +283,24 @@ async def set_test_audio(
     )
     room_song_result = await session.execute(room_song_stmt)
     room_song = room_song_result.scalar_one_or_none()
-    
+
     if not room_song:
         raise HTTPException(
             status_code=400,
             detail="Song not in room playlist, please add song to room first",
         )
-    
+
     # 获取歌曲信息
     song_stmt = select(Song).where(Song.id == payload.song_id)
     song_result = await session.execute(song_stmt)
     song = song_result.scalar_one_or_none()
-    
+
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
-    
+
     # 如果歌曲未缓存，先下载
-    if not song.cached_path or not os.path.exists(song.cached_path if song.cached_path else ""):
+    if not song.cached_path or not os.path.exists(
+            song.cached_path if song.cached_path else ""):
         try:
             if song.platform_song_id:
                 logger.info(
@@ -301,8 +308,9 @@ async def set_test_audio(
                     song.id,
                 )
                 from mq.tasks import _download_and_cache_song_impl
-                downloaded_path = await _download_and_cache_song_impl(song.platform_song_id)
-                
+                downloaded_path = await _download_and_cache_song_impl(
+                    song.platform_song_id)
+
                 if downloaded_path and os.path.exists(downloaded_path):
                     logger.info(
                         "Successfully downloaded song: %s (%s)",
@@ -334,11 +342,11 @@ async def set_test_audio(
                 status_code=500,
                 detail=f"Exception occurred while downloading song: {str(e)}",
             ) from e
-    
+
     # 广播 PRELOAD_AUDIO 和 PLAY 事件
     audio_url = f"/api/songs/file/{payload.song_id}"
     current_ts = int(__import__('time').time() * 1000)
-    
+
     try:
         logger.info(
             "Starting to broadcast PRELOAD_AUDIO for room %s, song_id: %s, audio_url: %s",
@@ -362,11 +370,12 @@ async def set_test_audio(
             audio_url,
             payload.song_id,
         )
-        
+
         # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
-        logger.info("Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
+        logger.info(
+            "Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
         await asyncio.sleep(3.0)
-        
+
         # 广播 PLAY 事件
         logger.info(
             "Starting to broadcast PLAY for room %s, song_id: %s, audio_url: %s",
@@ -389,11 +398,11 @@ async def set_test_audio(
             audio_url,
             payload.song_id,
         )
-        
+
         # 持久化播放状态到 Redis
         from cache.room_cache import set_room_playback_state
         from cache.schemas import PlaybackState
-        
+
         playback_state = PlaybackState(
             audio_url=audio_url,
             progress_ms=0,
@@ -414,7 +423,7 @@ async def set_test_audio(
             exc,
         )
         raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
-    
+
     return {
         "success": True,
         "song_id": payload.song_id,
@@ -425,12 +434,12 @@ async def set_test_audio(
 
 @room_router.post("/{roomid}/auto-setup-test-audio")
 async def auto_setup_test_audio(
-    roomid: str,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
+        roomid: str,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
 ):
     """自动设置房间 test_audio
-    
+
     逻辑：
     1. 检查默认歌曲（platform_song_id: "001gQVVQ0WD3Al"）是否在房间歌单中
     2. 如果不在，检查是否在数据库总歌曲库中
@@ -449,9 +458,7 @@ async def auto_setup_test_audio(
     default_platform_song_id = "001gQVVQ0WD3Al"
 
     # 1. 检查是否已在房间歌单中（一次性加载关联 song 避免懒加载引发 async 问题）
-    room_song_stmt = select(RoomSong).options(
-        selectinload(RoomSong.song)
-    ).where(
+    room_song_stmt = select(RoomSong).options(selectinload(RoomSong.song)).where(
         RoomSong.room_id == roomid,
         RoomSong.song_order == 0  # 第一首
     )
@@ -473,9 +480,7 @@ async def auto_setup_test_audio(
             }
 
     # 2. 检查是否在数据库总歌曲库中
-    song_stmt = select(Song).where(
-        Song.platform_song_id == default_platform_song_id
-    )
+    song_stmt = select(Song).where(Song.platform_song_id == default_platform_song_id)
     song_result = await session.execute(song_stmt)
     song = song_result.scalar_one_or_none()
 
@@ -510,10 +515,8 @@ async def auto_setup_test_audio(
             ) from e
 
     # 如果歌已经存在，但未缓存则触发缓存任务并等待下载完成
-    if song and (
-        not song.cached_path
-        or not os.path.exists(song.cached_path if song.cached_path else "")
-    ):
+    if song and (not song.cached_path or
+                 not os.path.exists(song.cached_path if song.cached_path else "")):
         try:
             if song.platform_song_id:
                 logger.info(
@@ -523,8 +526,9 @@ async def auto_setup_test_audio(
                 )
                 # 同步等待下载完成（最多等待 60 秒）
                 from mq.tasks import _download_and_cache_song_impl
-                downloaded_path = await _download_and_cache_song_impl(song.platform_song_id)
-                
+                downloaded_path = await _download_and_cache_song_impl(
+                    song.platform_song_id)
+
                 if downloaded_path and os.path.exists(downloaded_path):
                     logger.info(
                         "Successfully downloaded and cached song: %s (%s)",
@@ -555,7 +559,7 @@ async def auto_setup_test_audio(
                 "success": False,
                 "error": f"Exception occurred while downloading song: {str(e)}",
             }
-    
+
     # 检查最终歌曲是否已缓存（双重检查）
     if not song or not song.cached_path or not os.path.exists(song.cached_path):
         logger.error(
@@ -595,15 +599,14 @@ async def auto_setup_test_audio(
         update(RoomSong).where(
             RoomSong.room_id == roomid,
             RoomSong.song_id != song.id,
-        ).values(song_order=RoomSong.song_order + 1)
-    )
+        ).values(song_order=RoomSong.song_order + 1))
 
     await session.commit()
-    
+
     # 5. 广播 PRELOAD_AUDIO 和 PLAY 事件，触发所有客户端预下载并播放
     audio_url = f"/api/songs/file/{song.id}"
     current_ts = int(__import__('time').time() * 1000)
-    
+
     try:
         logger.info(
             "Starting auto-setup broadcast for room %s, song_id: %s, audio_url: %s",
@@ -627,11 +630,12 @@ async def auto_setup_test_audio(
             audio_url,
             song.id,
         )
-        
+
         # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
-        logger.info("Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
+        logger.info(
+            "Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
         await asyncio.sleep(3.0)
-        
+
         # 广播 PLAY 事件
         logger.info(
             "Starting to broadcast PLAY for room %s, song_id: %s, audio_url: %s",
@@ -654,11 +658,11 @@ async def auto_setup_test_audio(
             audio_url,
             song.id,
         )
-        
+
         # 持久化播放状态到 Redis
         from cache.room_cache import set_room_playback_state
         from cache.schemas import PlaybackState
-        
+
         playback_state = PlaybackState(
             audio_url=audio_url,
             progress_ms=0,
@@ -679,7 +683,7 @@ async def auto_setup_test_audio(
             exc,
         )
         # 不抛出异常，因为 auto-setup 已经完成，广播失败不影响核心功能
-    
+
     # 6. 返回歌曲信息
     logger.info(
         "Auto-setup test audio completed: %s (DB ID: %s)",
@@ -697,12 +701,12 @@ async def auto_setup_test_audio(
 
 @room_router.delete("/{roomid}/dissolve")
 async def dissolve_room(
-    roomid: str,
-    request: Request,
-    session: AsyncSession = Depends(get_db),
+        roomid: str,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
 ):
     """解散房间：记录日志并从数据库删除房间
-    
+
     逻辑：
     1. 验证房间是否存在
     2. 记录房间日志（玩家信息、游戏状态等）
@@ -713,20 +717,17 @@ async def dissolve_room(
     room_stmt = select(Room).where(Room.id == roomid)
     room_result = await session.execute(room_stmt)
     room = room_result.scalar_one_or_none()
-    
+
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    
+
     # 记录房间日志（在删除之前）
-    player_list = [
-        {
-            "id": user.id,
-            "username": user.username,
-            "is_owner": user.is_owner,
-        }
-        for user in room.users
-    ]
-    
+    player_list = [{
+        "id": user.id,
+        "username": user.username,
+        "is_owner": user.is_owner,
+    } for user in room.users]
+
     logger.info(
         "Dissolving room %s: title=%s, status=%s, players=%s, tag_groups=%s",
         roomid,
@@ -735,28 +736,30 @@ async def dissolve_room(
         player_list,
         len(room.tag_groups),
     )
-    
+
     try:
         # 通知所有客户端房间已解散（使用通用错误消息）
         try:
             from schemas.ws_messages.error_schemas import WebSocketErrorEvent
             from utils.enumerations import ErrorEventType
-            
+
             error_message = WebSocketErrorEvent(
                 error_event=ErrorEventType.HANDLER_EXCEPTION,
                 message="Room has been dissolved",
             )
-            await request.app.state.clients.broadcast(roomid, error_message.model_dump())
+            await request.app.state.clients.broadcast(roomid,
+                                                      error_message.model_dump())
             logger.info("Broadcasted room dissolved message to room %s", roomid)
         except Exception as broadcast_error:
-            logger.error("Failed to broadcast room dissolved message: %s", broadcast_error)
-        
+            logger.error("Failed to broadcast room dissolved message: %s",
+                         broadcast_error)
+
         # 删除房间（级联删除相关数据）
         await session.delete(room)
         await session.commit()
-        
+
         logger.info("Room %s dissolved successfully", roomid)
-        
+
         return {
             "success": True,
             "message": "Room dissolved successfully",
@@ -765,4 +768,5 @@ async def dissolve_room(
     except Exception as e:
         logger.error("Failed to dissolve room %s: %s", roomid, e, exc_info=True)
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to dissolve room: {str(e)}") from e
+        raise HTTPException(status_code=500,
+                            detail=f"Failed to dissolve room: {str(e)}") from e

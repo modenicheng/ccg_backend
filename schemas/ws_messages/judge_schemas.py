@@ -126,11 +126,11 @@ class ScoreEntry(BaseModel):
     ScoreEntry represents a single score record for a player.
 
     Attributes:
-        player_id (str): 玩家ID (Player ID).
+        player_id (int): 玩家ID (Player ID).
         score (int): 分数值 (Score value).
         username (Optional[str]): 玩家用户名 (Player username), optional.
     """
-    player_id: str = Field(..., description="玩家ID")
+    player_id: int = Field(..., description="玩家ID")
     score: int = Field(..., description="分数值")
     username: str | None = Field(default=None, description="玩家用户名")
 

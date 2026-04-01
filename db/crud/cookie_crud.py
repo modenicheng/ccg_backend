@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from typing import Any
 
@@ -58,7 +57,7 @@ async def add_or_update_cookie(
 
 async def get_all_active_cookies(session: AsyncSession) -> list[dict[str, Any]]:
     """Get all active cookies from database."""
-    stmt = select(CookieConfig).where(CookieConfig.is_active == True)
+    stmt = select(CookieConfig).where(CookieConfig.is_active is True)
     results = await session.scalars(stmt)
 
     cookies = []

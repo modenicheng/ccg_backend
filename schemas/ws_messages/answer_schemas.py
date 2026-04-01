@@ -16,7 +16,7 @@ class DescriptionData(BaseModel):
 
 class AnswerItem(SelectionData, DescriptionData):
     """抢答队列条目"""
-    player_id: str = Field(..., description="玩家ID")
+    player_id: int = Field(..., description="玩家ID")
 
 
 class AnswerFullMessage(MessageBase):

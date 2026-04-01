@@ -11,7 +11,8 @@ from .audio_preload_and_token import (get_or_create_audio_token, prepare_preload
                                       update_room_current_song_index)
 from .judge_related import (get_room_song_queue, get_current_song_info,
                             get_player_answers_for_judging, update_player_answer_order,
-                            get_tag_group_map, save_score_record)
+                            get_tag_group_map, save_score_record,
+                            get_round_answers_for_room_state)
 from .task_related import (create_task_record, get_task_record_by_task_id,
                            update_task_record)
 from .room_song_related import (get_room_songs, shuffle_room_songs, add_songs_to_room,
@@ -55,6 +56,7 @@ __all__ = [
     "update_player_answer_order",
     "get_tag_group_map",
     "save_score_record",
+    "get_round_answers_for_room_state",
     # Task related
     "create_task_record",
     "get_task_record_by_task_id",

@@ -117,7 +117,7 @@ async def update_player_answer_order(
     room_id: str,
     song_id: int,
     round_index: int,
-    answer_queue: list[str],
+    answer_queue: list[int],
 ) -> int:
     """更新玩家答案的抢答顺序
 
@@ -133,12 +133,7 @@ async def update_player_answer_order(
     """
     updated_count = 0
 
-    for order, player_id_str in enumerate(answer_queue, start=1):
-        try:
-            user_id = int(player_id_str)
-        except ValueError:
-            continue
-
+    for order, user_id in enumerate(answer_queue, start=1):
         # 查找该玩家的答案记录（最新的）
         stmt = (select(models.PlayerAnswer).where(
             models.PlayerAnswer.room_id == room_id,
@@ -198,3 +193,54 @@ async def save_score_record(  # pylint: disable=too-many-arguments,too-many-posi
     session.add(score)
     await session.flush()
     return score
+
+
+async def get_round_answers_for_room_state(
+    session: AsyncSession,
+    room_id: str,
+    song_id: int,
+    round_index: int,
+) -> list[dict[str, Any]]:
+    """获取 ROOM_STATE 需要的当前轮次玩家答题详情。"""
+    tag_group_map = await get_tag_group_map(session, room_id)
+
+    tag_id_to_group_id: dict[int, int] = {}
+    for group_id, tag_ids in tag_group_map.items():
+        for tag_id in tag_ids:
+            tag_id_to_group_id[tag_id] = group_id
+
+    stmt = (select(models.PlayerAnswer).where(
+        models.PlayerAnswer.room_id == room_id,
+        models.PlayerAnswer.song_id == song_id,
+        models.PlayerAnswer.round_index == round_index,
+    ).options(selectinload(models.PlayerAnswer.user)).order_by(
+        models.PlayerAnswer.answer_order.is_(None),
+        models.PlayerAnswer.answer_order.asc(),
+        models.PlayerAnswer.created_at.asc(),
+    ))
+    result = await session.execute(stmt)
+    answers = result.scalars().all()
+
+    round_answers: list[dict[str, Any]] = []
+    for index, answer in enumerate(answers, start=1):
+        selected_tag_ids = answer.selected_tag_ids or []
+        answers_by_group: dict[int, int] = {}
+        for tag_id in selected_tag_ids:
+            group_id = tag_id_to_group_id.get(tag_id)
+            if group_id is not None and group_id not in answers_by_group:
+                answers_by_group[group_id] = tag_id
+
+        round_answers.append({
+            "player_id":
+                answer.user_id,
+            "username":
+                answer.user.username if answer.user else f"Player {answer.user_id}",
+            "answers":
+                answers_by_group,
+            "description":
+                answer.description_text,
+            "order":
+                answer.answer_order or index,
+        })
+
+    return round_answers

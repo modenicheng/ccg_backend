@@ -96,7 +96,8 @@ async def handle_seek(
             )
 
 
-@regist(GameEventType.PRELOAD_AUDIO, data_validator=playback_schemas.PreloadAudioMessage)
+@regist(GameEventType.PRELOAD_AUDIO,
+        data_validator=playback_schemas.PreloadAudioMessage)
 async def handle_preload_audio(
     data: playback_schemas.PreloadAudioMessage,
     clients: ClientManager,

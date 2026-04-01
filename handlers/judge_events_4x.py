@@ -297,8 +297,8 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
         return
 
     # 初始化需要用到的变量（确保在所有作用域内可用）
-    players: list[dict[str, str]] = []
-    player_scores: dict[str, int] = {}
+    players: list[dict[str, int | str]] = []
+    player_scores: dict[int, int] = {}
 
     # 使用数据库会话获取数据
     try:
@@ -381,14 +381,14 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
 
             # 获取房间玩家
             players = [{
-                "id": str(user.id),
+                "id": user.id,
                 "username": user.username
             } for user in room.users]
 
             # 获取抢答队列
             # pylint: disable=no-value-for-parameter  # decorator adds redis internally
             answer_queue_items = await room_cache.get_answer_queue(room_id)
-            answer_queue = [str(item.player_id) for item in answer_queue_items]
+            answer_queue = [item.player_id for item in answer_queue_items]
 
             if not answer_queue:
                 logger.warning("Empty answer queue for judging in room %s", room_id)
@@ -406,9 +406,8 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
 
             # 转换格式
             player_answers = {}
-            for user_id_int, answer_data in player_answers_raw.items():
-                player_id_str = str(user_id_int)
-                player_answers[player_id_str] = {
+            for user_id, answer_data in player_answers_raw.items():
+                player_answers[user_id] = {
                     "selected_tag_ids": answer_data["selected_tag_ids"],
                     "description_text": answer_data["description_text"],
                     "answer_order": answer_data["answer_order"],
@@ -428,8 +427,9 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
 
             # 确保所有房间玩家都有得分记录（即使为0）
             for player in players:
-                if player["id"] not in player_scores:
-                    player_scores[player["id"]] = 0
+                player_id = int(player["id"])
+                if player_id not in player_scores:
+                    player_scores[player_id] = 0
 
             # 更新数据库中的抢答顺序
             updated_count = await update_player_answer_order(db, room_id, song_id,
@@ -438,15 +438,14 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                         room_id)
 
             # 保存得分记录到数据库
-            for player_id_str, score_delta in player_scores.items():
+            for player_id, score_delta in player_scores.items():
                 if score_delta > 0:
                     try:
-                        user_id = int(player_id_str)
-                        await save_score_record(db, room_id, user_id, song_index,
+                        await save_score_record(db, room_id, player_id, song_index,
                                                 score_delta)
                     except (ValueError, Exception) as e:  # pylint: disable=broad-exception-caught
                         logger.error("Failed to save score for player %s: %s",
-                                     player_id_str, e)
+                                     player_id, e)
 
             logger.info("Saved scoring results to database for room %s", room_id)
 
@@ -473,7 +472,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
         ScoreEntry(
             player_id=player_id,
             username=next(
-                (p["username"] for p in players if p["id"] == player_id),
+                (str(p["username"]) for p in players if p["id"] == player_id),
                 f"Player {player_id}",
             ),
             score=player_scores.get(player_id, 0),
@@ -486,7 +485,9 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     # 广播得分更新事件
     await clients.broadcast(room_id, score_update_message.model_dump())
 
-    # 触发状态转换到 COMPLETED
+    logger.info("Scoring completed for room %s", room_id)
+
+    # 判分完成后，回合状态转移到 COMPLETED
     try:
         async with session_scope() as session:
             success = await RoundStateManager.transition_round_state(
@@ -501,13 +502,11 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                 )
                 logger.info("Room %s round state transitioned to COMPLETED", room_id)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Failed to transition to COMPLETED: %s", e)
-
-    # 广播回合结束事件
-    round_end_message = RoundEndMessage()
-    await clients.broadcast(room_id, round_end_message.model_dump())
-
-    logger.info("Scoring completed for room %s and round marked as COMPLETED", room_id)
+        logger.error(
+            "Failed to transition to COMPLETED after scoring for room %s: %s",
+            room_id,
+            e,
+        )
 
     # 检查是否所有歌曲都已播放完毕，如果是则自动结束游戏
     try:
@@ -526,7 +525,8 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
             # 如果当前索引已经是最后一首歌，则游戏结束
             if current_index >= len(song_queue) - 1:
                 logger.info(
-                    "All songs completed for room %s (current_index=%d, total=%d), auto-ending game",
+                    "All songs completed for room %s (current=%d, total=%d), "
+                    "auto-ending game",
                     room_id,
                     current_index,
                     len(song_queue),

@@ -2,6 +2,7 @@
 """Audio error handling integration verification script."""
 
 import sys
+from utils.enumerations import EventType
 
 print("=" * 60)
 print("🔍 后端音频错误处理功能 - 完整集成验证")
@@ -28,8 +29,6 @@ except ImportError as e:
 
 # 3. 验证枚举值
 print("\n3️⃣  验证枚举定义...")
-from utils.enumerations import EventType
-
 print(f"   ✓ EventType.ERROR = {EventType.ERROR.value}")
 assert EventType.ERROR.value == 255, "事件ID应为255"
 print("   ✓ 事件ID验证通过")
@@ -65,10 +64,10 @@ except ImportError as e:
 print("\n7️⃣  验证处理器注册...")
 try:
     from handlers.registe_manager import _handlers
-    handler_key = "ERROR"
-    if handler_key in _handlers:
-        print(f"   ✓ '{handler_key}' 处理器已注册")
-        func, validator = _handlers[handler_key]
+    HANDLER_KEY = "ERROR"
+    if HANDLER_KEY in _handlers:
+        print(f"   ✓ '{HANDLER_KEY}' 处理器已注册")
+        func, validator = _handlers[HANDLER_KEY]
         print(f"   ✓ 处理器函数: {func.__name__}")
         print(f"   ✓ 验证器: {validator.__name__}")
     else:

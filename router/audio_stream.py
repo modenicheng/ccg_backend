@@ -106,6 +106,5 @@ async def get_audio_file(
     range_header = request.headers.get("range")
     response = build_range_response(content, media_type, range_header)
     response.headers["Content-Disposition"] = (
-        f'inline; filename="{os.path.basename(song.cached_path)}"'
-    )
+        f'inline; filename="{os.path.basename(song.cached_path)}"')
     return response

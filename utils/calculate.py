@@ -6,12 +6,12 @@ from __future__ import annotations
 
 
 def calculate_player_scores(
-    answer_queue: list[str],
-    player_answers: dict[str, dict[str, list]],
+    answer_queue: list[int],
+    player_answers: dict[int, dict[str, list]],
     tag_group_map: dict[int, list[int]],
     correct_tags: list[int],
     correct_description_ids: list[int],
-) -> dict[str, int]:
+) -> dict[int, int]:
     """Calculate player scores based on answer queue and correct answers.
 
     计分规则：
@@ -19,7 +19,7 @@ def calculate_player_scores(
     - 精准描述：按抢答顺序遍历玩家，第一个描述 ID 匹配正确答案的玩家得 1 分（即使后面还有其他玩家也答对）
 
     Args:
-        answer_queue: List of player IDs in answer order (strings)
+        answer_queue: List of player IDs in answer order (integers)
         player_answers: Dict mapping player_id to answer data
         tag_group_map: Dict mapping tag_group_id to list of tag IDs
         correct_tags: List of correct tag IDs
@@ -28,7 +28,7 @@ def calculate_player_scores(
     Returns:
         Dict mapping player_id to score delta for this round
     """
-    player_scores: dict[str, int] = {}
+    player_scores: dict[int, int] = {}
     for player_id in answer_queue:
         player_scores[player_id] = 0
 
@@ -53,7 +53,7 @@ def calculate_player_scores(
             if player_id not in player_answers:
                 continue
 
-            if int(player_id) in correct_desc_set:
+            if player_id in correct_desc_set:
                 player_scores[player_id] += 1
                 break  # 只给第一个匹配的玩家加分
 

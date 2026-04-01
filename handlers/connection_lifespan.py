@@ -114,6 +114,34 @@ async def on_connect(  # pylint: disable=too-many-statements
     queue: list[AnswerQueueItem] = await room_cache.get_answer_queue(room_id)
     message.answer_queue = queue
 
+    try:
+        song_id, song_index = await crud.get_current_song_info(session, room_id)
+        if song_id is not None and song_index is not None:
+            message.round_answers = await crud.get_round_answers_for_room_state(
+                session=session,
+                room_id=room_id,
+                song_id=song_id,
+                round_index=song_index,
+            )
+
+            score_stmt = (select(models.Score.id).where(
+                models.Score.room_id == room_id,
+                models.Score.round_index == song_index,
+            ).limit(1))
+            score_result = await session.execute(score_stmt)
+            message.round_scored = score_result.scalar_one_or_none() is not None
+        else:
+            message.round_answers = []
+            message.round_scored = False
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "Failed to build round_scored/round_answers in ROOM_STATE for room %s: %s",
+            room_id,
+            e,
+        )
+        message.round_answers = []
+        message.round_scored = False
+
     room_state_message = RoomSchema.RoomStateMessage(data=message)
 
     reconnect_song_message: ShowSongMessage | None = None
