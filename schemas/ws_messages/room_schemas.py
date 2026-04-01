@@ -48,6 +48,7 @@ class ClientRoomState(BaseModel):
     round_state: Literal[0, 1, 2, 3, 4] = (
         0  # 0=PENDING, 1=PLAYING_AUDIO, 2=ANSWERING, 3=JUDGING, 4=COMPLETED
     )
+    show_answer: bool = False
     song_start_range_percent: float | None = Field(default=0, ge=0, le=100)
     players: list[RoomStatePlayerItem] = Field(default_factory=list, alias="users")
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)

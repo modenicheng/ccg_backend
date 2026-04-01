@@ -124,6 +124,8 @@ async def handle_game_start(  # pylint: disable=too-many-locals
             await client.send_error(GameEventType.GAME_START, "Failed to start game")
             return
 
+        room.show_answer = False
+
         # 广播游戏开始消息
         await clients.broadcast(room_id, data.model_dump())
 
@@ -257,6 +259,7 @@ async def handle_skip_round(
 
         # 1) 优先维护播放列表：推进当前歌曲索引
         await crud.update_room_current_song_index(session, room_id, next_index)
+        room.show_answer = False
 
         # 清理上一轮的作答状态
         await room_cache.clear_answer_queue(room_id)

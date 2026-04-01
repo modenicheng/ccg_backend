@@ -187,6 +187,11 @@ class Room(Base):
     round_state: Mapped[int | None] = mapped_column(Integer, nullable=True,
                                                     default=0)  # 0 for PENDING
 
+    show_answer: Mapped[bool] = mapped_column(Boolean,
+                                              default=False,
+                                              nullable=False,
+                                              server_default="false")
+
     playback_state_json: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, comment="持久化播放状态快照，cache miss 时用于恢复")
 

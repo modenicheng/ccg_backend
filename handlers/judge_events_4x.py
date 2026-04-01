@@ -79,6 +79,12 @@ async def handle_show_song(
             await client.send_error(GameEventType.SHOW_SONG, "Song not found")
             return
 
+        room_stmt = select(models.Room).where(models.Room.id == room_id)
+        room_result = await session.execute(room_stmt)
+        room = room_result.scalar_one_or_none()
+        if room is not None:
+            room.show_answer = True
+
         show_song_message = ShowSongMessage(data=ShowSongData(
             title=song.title,
             album=song.album_name,
@@ -96,12 +102,12 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
     db_session,
 ) -> None:
     """广播 JUDGING 事件给所有客户端
-    
+
     这个函数可以在多种情况下被调用：
     1. 房主手动触发
     2. 曲目播放完成
     3. 所有玩家回答完成
-    
+
     Args:
         clients: 客户端管理器
         room_id: 房间 ID
@@ -163,19 +169,18 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
         ]
 
     # 获取玩家答案（用于显示）
-    player_answers = await get_player_answers_for_judging(
-        db_session, room_id, song_id, song_index)
+    player_answers = await get_player_answers_for_judging(db_session, room_id, song_id,
+                                                          song_index)
 
     logger.info("Player answers for judging: %s", player_answers)
 
     # 构建玩家答案列表
     player_answers_data = []
     player_descriptions_data = []  # 用于房主选择正确答案的描述列表
-    
+
     for user_id, answer_data in player_answers.items():
         # 获取用户名
-        user_stmt = select(
-            models.User.username).where(models.User.id == user_id)
+        user_stmt = select(models.User.username).where(models.User.id == user_id)
         user_result = await db_session.execute(user_stmt)
         username = user_result.scalar_one_or_none() or f"Player {user_id}"
 
@@ -186,10 +191,11 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
                 selected_tags=answer_data["selected_tag_ids"],
                 description=answer_data["description_text"],
             ))
-        
+
         # 如果玩家有提交描述，加入 player_descriptions
         if answer_data.get("description_text"):
-            logger.info("Adding player description from user %s: %s", username, answer_data["description_text"])
+            logger.info("Adding player description from user %s: %s", username,
+                        answer_data["description_text"])
             player_descriptions_data.append(
                 PlayerDescriptionData(
                     id=user_id,  # 使用玩家 ID 作为描述的唯一标识
@@ -225,11 +231,12 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
     # 广播 JUDGING 事件给所有客户端
     judging_message = JudgingMessage(data=judging_data)
     message_dict = judging_message.model_dump()
-    
-    logger.info("Sending JUDGING event with %d player answers and %d player descriptions",
-               len(player_answers_data), len(player_descriptions_data))
+
+    logger.info(
+        "Sending JUDGING event with %d player answers and %d player descriptions",
+        len(player_answers_data), len(player_descriptions_data))
     logger.info("Player descriptions data: %s", player_descriptions_data)
-    
+
     await clients.broadcast(room_id, message_dict)
 
     logger.info("Sent JUDGING event for room %s, song %s", room_id, song.title)

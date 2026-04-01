@@ -24,6 +24,7 @@ from schemas.ws_messages.room_schemas import (
     KickUserMessage,
     StartPosUpdateData,
 )
+from schemas.ws_messages.judge_schemas import ShowSongData, ShowSongMessage
 from db.session import session_scope
 from utils import get_logger
 from utils.enumerations import GameEventType
@@ -115,10 +116,34 @@ async def on_connect(  # pylint: disable=too-many-statements
 
     room_state_message = RoomSchema.RoomStateMessage(data=message)
 
+    reconnect_song_message: ShowSongMessage | None = None
+    if room.show_answer:
+        try:
+            song_id, _ = await crud.get_current_song_info(session, room_id)
+            if song_id is not None:
+                song_stmt = select(models.Song).where(models.Song.id == song_id)
+                song_result = await session.execute(song_stmt)
+                song = song_result.scalar_one_or_none()
+                if song is not None:
+                    reconnect_song_message = ShowSongMessage(data=ShowSongData(
+                        title=song.title,
+                        album=song.album_name,
+                        author=song.artist,
+                        cover=song.cover_url,
+                    ))
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to build reconnect SHOW_SONG message for room %s: %s",
+                room_id,
+                e,
+            )
+
     # 发送房间状态给客户端
     async def send_if_connected():
         if cl.ws.client_state == WebSocketState.CONNECTED:
             await cl.ws.send_json(room_state_message.model_dump())
+            if reconnect_song_message is not None:
+                await cl.ws.send_json(reconnect_song_message.model_dump())
         else:
             logger.warning("Client %s WebSocket not connected, skipping send",
                            cl.user.id)
