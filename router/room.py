@@ -697,8 +697,16 @@ async def dissolve_room(
     3. 删除房间（级联删除相关数据）
     4. 通知所有客户端房间已解散
     """
-    # 获取房间
-    room_stmt = select(Room).where(Room.id == roomid)
+    # 获取房间（预加载用户和标签组关系）
+    from sqlalchemy.orm import selectinload
+    room_stmt = (
+        select(Room)
+        .where(Room.id == roomid)
+        .options(
+            selectinload(Room.users),
+            selectinload(Room.tag_groups),
+        )
+    )
     room_result = await session.execute(room_stmt)
     room = room_result.scalar_one_or_none()
 
@@ -741,6 +749,17 @@ async def dissolve_room(
         # 删除房间（级联删除相关数据）
         await session.delete(room)
         await session.commit()
+
+        # 清理 Redis 缓存（防止房间被删除后仍可连接）
+        try:
+            from cache.room_cache import delete_all_room_cache
+            
+            # 删除所有房间缓存
+            await delete_all_room_cache(roomid)
+            
+            logger.info("Cleared Redis cache for dissolved room %s", roomid)
+        except Exception as cache_error:
+            logger.warning("Failed to clear Redis cache for room %s: %s", roomid, cache_error)
 
         logger.info("Room %s dissolved successfully", roomid)
 

@@ -478,6 +478,26 @@ async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) 
     return True
 
 
+async def delete_all_room_cache(room_id: str) -> None:
+    """删除房间所有 Redis 缓存（用于房间解散时清理）
+    
+    Args:
+        room_id (str): 房间 ID
+    """
+    try:
+        redis = await get_redis()
+        # 删除播放状态
+        await delete_room_playback_state(redis, room_id)
+        # 清空答题队列
+        await clear_answer_queue(redis, room_id)
+        # 清空当前答题者
+        await clear_room_current_answerer(redis, room_id)
+        logger.info("Deleted all Redis cache for room %s", room_id)
+    except Exception as e:
+        logger.error("Error deleting all room cache for room %s: %s", room_id, e)
+        raise
+
+
 @handle_redis_operation(default_return=False,
                         log_operation="syncing answer queue is_answering")
 async def sync_answer_queue_is_answering(redis: Redis, room_id: str,

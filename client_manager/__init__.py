@@ -17,6 +17,10 @@ class Client:
         self.ws: WebSocket = websocket
         self.user: User = user
         self.room: Room = room
+        # 缓存用户 ID 以避免 Session 分离问题
+        self.user_id: int = user.id
+        self.username: str = user.username
+        self.is_owner: bool = user.is_owner
 
     async def send(self, message: str | bytes | dict):
         """Send message to client.
