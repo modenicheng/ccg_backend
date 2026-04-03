@@ -62,6 +62,10 @@ class ClientRoomState(BaseModel):
     players: list[RoomStatePlayerItem] = Field(default_factory=list, alias="users")
     tag_groups: list[RoomStateTagGroupItem] = Field(default_factory=list)
     answer_queue: list[AnswerQueueItem] = Field(default_factory=list)
+    answer_queue_tail_player_id: int | None = Field(
+        default=None,
+        description="当前回合已处理段队尾玩家ID（用于前端边界控制）",
+    )
     round_scored: bool = Field(default=False, description="当前轮次是否已判分")
     round_answers: list[RoundAnswerItem] = Field(default_factory=list,
                                                  description="当前轮次玩家答题详情")

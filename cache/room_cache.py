@@ -408,7 +408,8 @@ async def clear_answer_queue(redis: Redis, room_id: str) -> int | None:
     """
     key = RedisKeys.answer_queue(room_id)
     index_key = RedisKeys.answer_queue_player_index(room_id)
-    result = await cast(Awaitable[int], redis.delete(key, index_key))
+    tail_key = RedisKeys.answer_queue_tail_player(room_id)
+    result = await cast(Awaitable[int], redis.delete(key, index_key, tail_key))
     return result
 
 
@@ -429,6 +430,7 @@ async def remove_from_answer_queue(redis: Redis, room_id: str,
     """
     key = RedisKeys.answer_queue(room_id)
     index_key = RedisKeys.answer_queue_player_index(room_id)
+    tail_key = RedisKeys.answer_queue_tail_player(room_id)
     player_id_key = str(player_id)
 
     # 优先通过索引删除，避免遍历 + JSON 反序列化
@@ -437,6 +439,9 @@ async def remove_from_answer_queue(redis: Redis, room_id: str,
     if member_json:
         removed = await cast(Awaitable[int], redis.zrem(key, member_json))
         await cast(Awaitable[int], redis.hdel(index_key, player_id_key))
+        current_tail = await cast(Awaitable[str | None], redis.get(tail_key))
+        if current_tail is not None and current_tail == player_id_key:
+            await cast(Awaitable[int], redis.delete(tail_key))
         return removed
 
     # 兼容历史数据：索引缺失时回退扫描，并补建索引
@@ -453,6 +458,9 @@ async def remove_from_answer_queue(redis: Redis, room_id: str,
             if item.player_id == player_id:
                 result = await cast(Awaitable[int], redis.zrem(key, raw_member))
                 await cast(Awaitable[int], redis.hdel(index_key, player_id_key))
+                current_tail = await cast(Awaitable[str | None], redis.get(tail_key))
+                if current_tail is not None and current_tail == player_id_key:
+                    await cast(Awaitable[int], redis.delete(tail_key))
                 if result:
                     removed_count += 1
         except (ValidationError, ValueError) as e:
@@ -470,6 +478,39 @@ async def get_room_current_answerer(redis: Redis, room_id: str) -> int | None:
     return answerer
 
 
+@handle_redis_operation(default_return=None,
+                        log_operation="getting answer queue tail player")
+async def get_answer_queue_tail_player_id(redis: Redis, room_id: str) -> int | None:
+    """获取当前回合抢答队列边界（已处理段的队尾玩家 ID）。"""
+    key = RedisKeys.answer_queue_tail_player(room_id)
+    raw_tail_player = await cast(Awaitable[str | None], redis.get(key))
+    if raw_tail_player is None:
+        return None
+    try:
+        return int(raw_tail_player)
+    except (TypeError, ValueError):
+        return None
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="setting answer queue tail player")
+async def set_answer_queue_tail_player_id(redis: Redis, room_id: str,
+                                          player_id: int) -> bool:
+    """设置当前回合抢答队列边界（已处理段的队尾玩家 ID）。"""
+    key = RedisKeys.answer_queue_tail_player(room_id)
+    await cast(Awaitable, redis.set(key, player_id, ex=ROOM_TTL_SECONDS))
+    return True
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="clearing answer queue tail player")
+async def clear_answer_queue_tail_player_id(redis: Redis, room_id: str) -> bool:
+    """清除当前回合抢答队列边界。"""
+    key = RedisKeys.answer_queue_tail_player(room_id)
+    await cast(Awaitable, redis.delete(key))
+    return True
+
+
 @handle_redis_operation(default_return=False, log_operation="setting current answerer")
 async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) -> bool:
     """设置当前答题者"""
@@ -480,7 +521,7 @@ async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) 
 
 async def delete_all_room_cache(room_id: str) -> None:
     """删除房间所有 Redis 缓存（用于房间解散时清理）
-    
+
     Args:
         room_id (str): 房间 ID
     """

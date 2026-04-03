@@ -35,6 +35,10 @@ class RoundEndData(BaseModel):
 class AnswerQueueData(BaseModel):
     """抢答队列数据"""
     queue: List[AnswerQueueItem] = Field(default_factory=list, description="抢答队列")
+    answer_queue_tail_player_id: int | None = Field(
+        default=None,
+        description="当前回合已处理段队尾玩家ID（用于前端边界控制）",
+    )
 
 
 class AnswerQueueMessage(MessageBase):

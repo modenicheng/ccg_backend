@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cache.room_cache import (
     get_answer_queue,
+    get_answer_queue_tail_player_id,
     get_room_playback_state,
     set_room_playback_state,
     append_attempt_answer_player,
+    set_answer_queue_tail_player_id,
     delete_room_playback_state,
     clear_answer_queue,
 )
@@ -186,3 +188,25 @@ async def test_concurrent_answer_queue():
         assert a.offset_ts <= b.offset_ts
 
     await clear_answer_queue(room_id)
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_answer_queue_tail_player_boundary_cache():
+    """验证抢答队列队尾边界ID可读写，并随清队列一并清理。"""
+    room_id = random_string(prefix="test-answer-tail-")
+
+    await append_attempt_answer_player(
+        room_id,
+        AnswerQueueItem(player_id=1, offset_ts=1_700_000_000_000),
+    )
+    await append_attempt_answer_player(
+        room_id,
+        AnswerQueueItem(player_id=2, offset_ts=1_700_000_000_001),
+    )
+
+    ok = await set_answer_queue_tail_player_id(room_id, 2)
+    assert ok is True
+    assert await get_answer_queue_tail_player_id(room_id) == 2
+
+    await clear_answer_queue(room_id)
+    assert await get_answer_queue_tail_player_id(room_id) is None

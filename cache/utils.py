@@ -52,6 +52,12 @@ class RedisKeys:
         return f"room:{safe_room_id}:answer_queue:player_index"
 
     @staticmethod
+    def answer_queue_tail_player(room_id: str) -> str:
+        """Generate Redis key for answer queue tail player id boundary."""
+        safe_room_id = _validate_room_id_for_key(room_id)
+        return f"room:{safe_room_id}:answer_queue:tail_player"
+
+    @staticmethod
     def answerer(room_id: str) -> str:
         """Generate Redis key for room answerer."""
         safe_room_id = _validate_room_id_for_key(room_id)

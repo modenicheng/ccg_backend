@@ -268,7 +268,10 @@ async def handle_skip_round(
         # 立即广播空抢答队列，避免前端残留上一轮队列状态
         await clients.broadcast(
             room_id,
-            AnswerQueueMessage(data=AnswerQueueData(queue=[])).model_dump(),
+            AnswerQueueMessage(data=AnswerQueueData(
+                queue=[],
+                answer_queue_tail_player_id=None,
+            )).model_dump(),
         )
 
         # 2) 为新轮次生成可播放地址
@@ -422,7 +425,19 @@ async def handle_attempt_answer(
         )
         return
 
+    queue_tail_player_id = await room_cache.get_answer_queue_tail_player_id(room_id)
     next_answerer = answer_queue[0].player_id
+    if queue_tail_player_id is not None:
+        queue_tail_index = next(
+            (index for index, item in enumerate(answer_queue)
+             if item.player_id == queue_tail_player_id),
+            -1,
+        )
+        if queue_tail_index >= 0 and queue_tail_index + 1 < len(answer_queue):
+            next_answerer = answer_queue[queue_tail_index + 1].player_id
+        elif queue_tail_index < 0:
+            # 队尾边界不存在于队列（例如被踢出），默认从当前新抢答玩家继续
+            next_answerer = player_id
 
     logger.debug(
         "Current playback state for room %s: %s",
@@ -610,6 +625,7 @@ async def handle_submit_answer(
             # 队列无后续玩家（包括当前玩家未命中队列），恢复播放
             await room_cache.clear_room_current_answerer(room_id)
             await room_cache.sync_answer_queue_is_answering(room_id, -1)
+            await room_cache.set_answer_queue_tail_player_id(room_id, int(player_id))
             should_finish_answering = True
             logger.info(
                 "No next player in queue after player %s submission in room %s",
@@ -634,7 +650,11 @@ async def handle_submit_answer(
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
     # 注意：这里重新读取，确保包含最新 is_answering 状态
     current_queue = await room_cache.get_answer_queue(room_id)
-    answer_queue_data = AnswerQueueData(queue=current_queue)
+    queue_tail_player_id = await room_cache.get_answer_queue_tail_player_id(room_id)
+    answer_queue_data = AnswerQueueData(
+        queue=current_queue,
+        answer_queue_tail_player_id=queue_tail_player_id,
+    )
     answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
     await clients.broadcast(room_id, answer_queue_message.model_dump())
 
