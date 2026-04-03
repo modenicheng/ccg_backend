@@ -455,9 +455,8 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                                 f"Internal server error: {str(e)}")
         return
 
-    # 计分完成，清空抢答队列
-    # pylint: disable=no-value-for-parameter  # decorator adds redis internally
-    await room_cache.clear_answer_queue(room_id)
+    # 计分完成后保留当前回合抢答信息，直到下一轮开始时再统一重置。
+    # 这样前端在 COMPLETED 阶段仍可展示本轮抢答/作答上下文。
 
     # 广播正确答案（SHOW_ANSWER事件）
     show_answer_data = ShowAnswerData(
