@@ -195,6 +195,10 @@ class Room(Base):
     playback_state_json: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True, comment="持久化播放状态快照，cache miss 时用于恢复")
 
+    test_audio_song_id: Mapped[int | None] = mapped_column(
+        ForeignKey("songs.id"), nullable=True, default=None,
+        comment="自定义 test_audio 的歌曲 ID，NULL 表示使用默认 CDN BGM")
+
     __table_args__ = (
         CheckConstraint("status in (0, 1, 2)", name="ck_rooms_status"),
         CheckConstraint("round_state in (0, 1, 2, 3, 4)", name="ck_rooms_round_state"),

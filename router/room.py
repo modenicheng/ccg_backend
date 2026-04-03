@@ -261,13 +261,14 @@ async def set_test_audio(
         request: Request,
         session: AsyncSession = Depends(get_db),
 ):
-    """手动设置房间 test_audio，触发预下载和播放
+    """手动设置房间 test_audio (从全局歌曲库选择)
 
     逻辑：
-    1. 验证歌曲是否在房间歌单中
-    2. 广播 PRELOAD_AUDIO 事件
-    3. 广播 PLAY 事件
-    4. 持久化播放状态到 Redis
+    1. 验证歌曲是否存在于全局歌曲库
+    2. 更新房间的 test_audio_song_id
+    3. 触发预下载 (如果需要)
+    4. 广播 PLAY 事件 (使用正常播放链路)
+    5. 持久化播放状态到 Redis
     """
     # 获取房间
     room_stmt = select(Room).where(Room.id == roomid)
@@ -276,27 +277,24 @@ async def set_test_audio(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # 验证歌曲是否在房间歌单中
-    room_song_stmt = select(RoomSong).where(
-        RoomSong.room_id == roomid,
-        RoomSong.song_id == payload.song_id,
-    )
-    room_song_result = await session.execute(room_song_stmt)
-    room_song = room_song_result.scalar_one_or_none()
-
-    if not room_song:
-        raise HTTPException(
-            status_code=400,
-            detail="Song not in room playlist, please add song to room first",
-        )
-
-    # 获取歌曲信息
+    # 验证歌曲是否存在于全局歌曲库
     song_stmt = select(Song).where(Song.id == payload.song_id)
     song_result = await session.execute(song_stmt)
     song = song_result.scalar_one_or_none()
 
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
+
+    # 更新房间的 test_audio_song_id
+    logger.info(
+        "Setting room %s test_audio_song_id to %s (song: %s)",
+        roomid,
+        payload.song_id,
+        song.title,
+    )
+    room.test_audio_song_id = payload.song_id
+    await session.commit()
+    await session.refresh(room)  # 刷新以确保后续代码能看到更新后的值
 
     # 如果歌曲未缓存，先下载
     if not song.cached_path or not os.path.exists(
@@ -343,40 +341,11 @@ async def set_test_audio(
                 detail=f"Exception occurred while downloading song: {str(e)}",
             ) from e
 
-    # 广播 PRELOAD_AUDIO 和 PLAY 事件
+    # 广播 PLAY 事件 (使用正常播放链路)
     audio_url = f"/api/songs/file/{payload.song_id}"
     current_ts = int(__import__('time').time() * 1000)
 
     try:
-        logger.info(
-            "Starting to broadcast PRELOAD_AUDIO for room %s, song_id: %s, audio_url: %s",
-            roomid,
-            payload.song_id,
-            audio_url,
-        )
-        # 广播 PRELOAD_AUDIO 事件
-        preload_message = {
-            "event": 23,  # GameEventType.PRELOAD_AUDIO.value
-            "ts": current_ts,
-            "data": {
-                "audio_url": audio_url,
-                "progress_ms": 0,
-                "offset_ts": None,
-            },
-        }
-        await request.app.state.clients.broadcast(roomid, preload_message)
-        logger.info(
-            "Broadcasted PRELOAD_AUDIO for test audio: %s (song_id: %s)",
-            audio_url,
-            payload.song_id,
-        )
-
-        # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
-        logger.info(
-            "Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
-        await asyncio.sleep(3.0)
-
-        # 广播 PLAY 事件
         logger.info(
             "Starting to broadcast PLAY for room %s, song_id: %s, audio_url: %s",
             roomid,
@@ -409,7 +378,7 @@ async def set_test_audio(
             updated_at=current_ts,
             offset_ts=current_ts,
             play_state="playing",
-            current_order=0,
+            current_order=-1,  # -1 表示 test_audio
         )
         await set_room_playback_state(roomid, playback_state)
         logger.info(
@@ -438,14 +407,12 @@ async def auto_setup_test_audio(
         request: Request,
         session: AsyncSession = Depends(get_db),
 ):
-    """自动设置房间 test_audio
+    """自动设置房间 test_audio (使用 CDN 播放默认 BGM)
 
     逻辑：
-    1. 检查默认歌曲（platform_song_id: "001gQVVQ0WD3Al"）是否在房间歌单中
-    2. 如果不在，检查是否在数据库总歌曲库中
-    3. 如果不在数据库中，从 QQ 音乐导入
-    4. 将歌曲添加到房间歌单第一首
-    5. 设置 test_audio 为该歌曲的数据库 ID
+    1. 检查房间是否已经设置了 test_audio_song_id
+    2. 如果未设置，设置为 -1 (表示使用默认 CDN BGM)
+    3. 广播 CDN URL 的 PLAY 事件
     """
     # 获取房间
     room_stmt = select(Room).where(Room.id == roomid)
@@ -454,248 +421,265 @@ async def auto_setup_test_audio(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # 默认 test_audio 的 platform_song_id
-    default_platform_song_id = "001gQVVQ0WD3Al"
+    # 检查是否已经设置了 test_audio_song_id
+    if room.test_audio_song_id is not None:
+        logger.info(
+            "Room %s already has test_audio_song_id: %s",
+            roomid,
+            room.test_audio_song_id,
+        )
+        # 使用自定义歌曲
+        return await _broadcast_test_audio_from_db(roomid, request, session, room.test_audio_song_id)
 
-    # 1. 检查是否已在房间歌单中（一次性加载关联 song 避免懒加载引发 async 问题）
-    room_song_stmt = select(RoomSong).options(selectinload(RoomSong.song)).where(
-        RoomSong.room_id == roomid,
-        RoomSong.song_order == 0  # 第一首
+    # 未设置 test_audio_song_id (NULL)，使用默认 CDN BGM
+    logger.info(
+        "Room %s test_audio_song_id is NULL, using default CDN BGM",
+        roomid,
     )
-    room_song_result = await session.execute(room_song_stmt)
-    first_room_song = room_song_result.scalar_one_or_none()
 
-    if first_room_song and first_room_song.song:
-        # 检查第一首歌是否是默认歌曲
-        if first_room_song.song.platform_song_id == default_platform_song_id:
+    # 广播 CDN URL 的 PLAY 事件
+    return await _broadcast_test_audio_from_cdn(roomid, request, session)
+
+
+async def _broadcast_test_audio_from_cdn(
+    roomid: str,
+    request: Request,
+    session: AsyncSession,
+):
+    """从 CDN 广播 test_audio (默认 BGM)"""
+    # 默认 CDN BGM URL
+    cdn_audio_url = "https://cdn.modenc.top/files/001gQVVQ0WD3Al.ogg"
+    current_ts = int(__import__('time').time() * 1000)
+
+    # 检查是否有客户端连接
+    clients_manager = request.app.state.clients
+    has_clients = clients_manager.room_size(roomid) > 0
+
+    if has_clients:
+        try:
             logger.info(
-                "Default test audio already in room playlist: %s",
-                default_platform_song_id,
+                "Broadcasting test audio from CDN for room %s: %s (clients: %d)",
+                roomid,
+                cdn_audio_url,
+                clients_manager.room_size(roomid),
             )
-            return {
-                "success": True,
-                "song_id": first_room_song.song_id,
-                "platform_song_id": default_platform_song_id,
-                "message": "Default test audio already set",
+            # 广播 PLAY 事件
+            play_message = {
+                "event": 20,  # GameEventType.PLAY.value
+                "ts": current_ts,
+                "data": {
+                    "audio_url": cdn_audio_url,
+                    "progress_ms": 0,
+                    "offset_ts": current_ts,
+                },
             }
+            await clients_manager.broadcast(roomid, play_message)
+            logger.info(
+                "Broadcasted PLAY for test audio from CDN: %s",
+                cdn_audio_url,
+            )
 
-    # 2. 检查是否在数据库总歌曲库中
-    song_stmt = select(Song).where(Song.platform_song_id == default_platform_song_id)
+            # 持久化播放状态到 Redis
+            from cache.room_cache import set_room_playback_state
+            from cache.schemas import PlaybackState
+
+            playback_state = PlaybackState(
+                audio_url=cdn_audio_url,
+                progress_ms=0,
+                updated_at=current_ts,
+                offset_ts=current_ts,
+                play_state="playing",
+                current_order=-1,  # -1 表示 test_audio
+            )
+            await set_room_playback_state(roomid, playback_state)
+            logger.info(
+                "Persisted test audio playback state to Redis: %s",
+                roomid,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to broadcast or persist test audio state for room %s: %s",
+                roomid,
+                exc,
+            )
+            raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
+    else:
+        logger.info(
+            "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to -1.",
+            roomid,
+        )
+        # 即使没有客户端，也要持久化播放状态到 Redis
+        try:
+            from cache.room_cache import set_room_playback_state
+            from cache.schemas import PlaybackState
+
+            playback_state = PlaybackState(
+                audio_url=cdn_audio_url,
+                progress_ms=0,
+                updated_at=current_ts,
+                offset_ts=current_ts,
+                play_state="paused",  # 没有客户端时设置为 paused
+                current_order=-1,  # -1 表示 test_audio
+            )
+            await set_room_playback_state(roomid, playback_state)
+            logger.info(
+                "Persisted test audio playback state to Redis (paused): %s",
+                roomid,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to persist test audio state to Redis for room %s: %s",
+                roomid,
+                exc,
+            )
+
+    return {
+        "success": True,
+        "song_id": -1,  # -1 表示使用 CDN
+        "platform_song_id": "001gQVVQ0WD3Al",
+        "message": "Test audio set to default CDN BGM",
+    }
+
+
+async def _broadcast_test_audio_from_db(
+    roomid: str,
+    request: Request,
+    session: AsyncSession,
+    song_id: int,
+):
+    """从数据库广播 test_audio (自定义歌曲)"""
+    # 获取歌曲
+    song_stmt = select(Song).where(Song.id == song_id)
     song_result = await session.execute(song_stmt)
     song = song_result.scalar_one_or_none()
 
     if not song:
-        # 3. 从 QQ 音乐导入（简化版本：直接创建歌曲记录）
-        logger.info(
-            "Default test audio not in database, creating song record: %s",
-            default_platform_song_id,
-        )
-        try:
-            # 直接创建歌曲记录（简化版本）
-            song = Song(
-                platform_song_id=default_platform_song_id,
-                title="默认预热 BGM",
-                artist="未知",
-                platform="qq",
-            )
-            session.add(song)
-            await session.flush()  # 获取 song.id
-            await session.commit()  # 立即 commit，确保歌曲记录对其他 session 可见
-            await session.refresh(song)
+        raise HTTPException(status_code=404, detail=f"Song {song_id} not found")
 
+    # 如果歌曲未缓存，触发下载
+    if not song.cached_path or not os.path.exists(song.cached_path):
+        try:
+            from mq.tasks import _download_and_cache_song_impl
+            assert song.platform_song_id is not None, "platform_song_id cannot be None"
             logger.info(
-                "Created default test audio song: %s",
-                default_platform_song_id,
+                "Downloading and caching song %s for test audio",
+                song.platform_song_id,
             )
-        except Exception as e:  # pylint: disable=raise-missing-from
-            logger.error("Failed to create default test audio: %s", e)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create song: {str(e)}",
-            ) from e
-
-    # 如果歌已经存在，但未缓存则触发缓存任务并等待下载完成
-    if song and (not song.cached_path or
-                 not os.path.exists(song.cached_path if song.cached_path else "")):
-        try:
-            if song.platform_song_id:
+            cached_path = await _download_and_cache_song_impl(song.platform_song_id)
+            if cached_path:
                 logger.info(
-                    "Triggering cache task for song_id %s (%s), waiting for download...",
-                    song.id,
+                    "Successfully cached song %s at %s",
+                    song.platform_song_id,
+                    cached_path,
+                )
+                await session.refresh(song)
+            else:
+                logger.warning(
+                    "Failed to cache song %s, proceeding without cache",
                     song.platform_song_id,
                 )
-                # 同步等待下载完成（最多等待 60 秒）
-                from mq.tasks import _download_and_cache_song_impl
-                downloaded_path = await _download_and_cache_song_impl(
-                    song.platform_song_id)
-
-                if downloaded_path and os.path.exists(downloaded_path):
-                    logger.info(
-                        "Successfully downloaded and cached song: %s (%s)",
-                        song.id,
-                        downloaded_path,
-                    )
-                    # 重新加载歌曲记录以获取最新的 cached_path
-                    await session.refresh(song)
-                else:
-                    logger.error(
-                        "Song download completed but file not found: %s, downloaded_path: %s",
-                        song.id,
-                        downloaded_path,
-                    )
-                    # 下载失败，返回错误
-                    return {
-                        "success": False,
-                        "error": f"Failed to download audio file for song {song.id}",
-                    }
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error(
+            logger.warning(
                 "Failed to download and cache song %s: %s",
                 song.id,
                 e,
-                exc_info=True,
             )
-            return {
-                "success": False,
-                "error": f"Exception occurred while downloading song: {str(e)}",
-            }
 
-    # 检查最终歌曲是否已缓存（双重检查）
-    if not song or not song.cached_path or not os.path.exists(song.cached_path):
-        logger.error(
-            "Song %s is not cached after download attempt, cannot proceed with broadcast",
-            song.id if song else "N/A",
-        )
-        return {
-            "success": False,
-            "error": "Failed to download and cache audio file",
-        }
-
-    # 4. 将歌曲添加到房间歌单第一首
-    # 先检查是否已经在房间歌单中（但不是第一首）
-    existing_room_song_stmt = select(RoomSong).where(
-        RoomSong.room_id == roomid,
-        RoomSong.song_id == song.id,
-    )
-    existing_room_song_result = await session.execute(existing_room_song_stmt)
-    existing_room_song = existing_room_song_result.scalar_one_or_none()
-
-    if existing_room_song:
-        # 调整位置到第一首
-        existing_room_song.song_order = 0
-        logger.info("Moved existing song to first position: %s", song.id)
-    else:
-        # 添加为新歌曲
-        room_song = RoomSong(
-            room_id=roomid,
-            song_id=song.id,
-            song_order=0,
-        )
-        session.add(room_song)
-        logger.info("Added song to room playlist: %s", song.id)
-
-    # 调整其他歌曲的位置
-    await session.execute(
-        update(RoomSong).where(
-            RoomSong.room_id == roomid,
-            RoomSong.song_id != song.id,
-        ).values(song_order=RoomSong.song_order + 1))
-
-    await session.commit()
-
-    # 5. 广播 PRELOAD_AUDIO 和 PLAY 事件，触发所有客户端预下载并播放
+    # 构建音频 URL
     audio_url = f"/api/songs/file/{song.id}"
     current_ts = int(__import__('time').time() * 1000)
 
-    try:
+    # 检查是否有客户端连接
+    clients_manager = request.app.state.clients
+    has_clients = clients_manager.room_size(roomid) > 0
+
+    if has_clients:
+        try:
+            logger.info(
+                "Broadcasting test audio from DB for room %s: %s (song_id: %s, clients: %d)",
+                roomid,
+                audio_url,
+                song.id,
+                clients_manager.room_size(roomid),
+            )
+            # 广播 PLAY 事件
+            play_message = {
+                "event": 20,  # GameEventType.PLAY.value
+                "ts": current_ts,
+                "data": {
+                    "audio_url": audio_url,
+                    "progress_ms": 0,
+                    "offset_ts": current_ts,
+                },
+            }
+            await clients_manager.broadcast(roomid, play_message)
+            logger.info(
+                "Broadcasted PLAY for test audio from DB: %s (song_id: %s)",
+                audio_url,
+                song.id,
+            )
+
+            # 持久化播放状态到 Redis
+            from cache.room_cache import set_room_playback_state
+            from cache.schemas import PlaybackState
+
+            playback_state = PlaybackState(
+                audio_url=audio_url,
+                progress_ms=0,
+                updated_at=current_ts,
+                offset_ts=current_ts,
+                play_state="playing",
+                current_order=-1,  # -1 表示 test_audio
+            )
+            await set_room_playback_state(roomid, playback_state)
+            logger.info(
+                "Persisted test audio playback state to Redis: %s",
+                roomid,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to broadcast or persist test audio state for room %s: %s",
+                roomid,
+                exc,
+            )
+            raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
+    else:
         logger.info(
-            "Starting auto-setup broadcast for room %s, song_id: %s, audio_url: %s",
+            "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to %s.",
             roomid,
-            song.id,
-            audio_url,
+            song_id,
         )
-        # 广播 PRELOAD_AUDIO 事件
-        preload_message = {
-            "event": 23,  # GameEventType.PRELOAD_AUDIO.value
-            "ts": current_ts,
-            "data": {
-                "audio_url": audio_url,
-                "progress_ms": 0,
-                "offset_ts": None,
-            },
-        }
-        await request.app.state.clients.broadcast(roomid, preload_message)
-        logger.info(
-            "Broadcasted PRELOAD_AUDIO for test audio: %s (song_id: %s)",
-            audio_url,
-            song.id,
-        )
+        # 即使没有客户端，也要持久化播放状态到 Redis
+        try:
+            from cache.room_cache import set_room_playback_state
+            from cache.schemas import PlaybackState
 
-        # 等待短暂延迟确保预下载开始（至少 3 秒，确保音频文件已下载完成）
-        logger.info(
-            "Waiting 3000ms before broadcasting PLAY event (waiting for preload)...")
-        await asyncio.sleep(3.0)
+            playback_state = PlaybackState(
+                audio_url=audio_url,
+                progress_ms=0,
+                updated_at=current_ts,
+                offset_ts=current_ts,
+                play_state="paused",  # 没有客户端时设置为 paused
+                current_order=-1,  # -1 表示 test_audio
+            )
+            await set_room_playback_state(roomid, playback_state)
+            logger.info(
+                "Persisted test audio playback state to Redis (paused): %s",
+                roomid,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to persist test audio state to Redis for room %s: %s",
+                roomid,
+                exc,
+            )
 
-        # 广播 PLAY 事件
-        logger.info(
-            "Starting to broadcast PLAY for room %s, song_id: %s, audio_url: %s",
-            roomid,
-            song.id,
-            audio_url,
-        )
-        play_message = {
-            "event": 20,  # GameEventType.PLAY.value
-            "ts": current_ts,
-            "data": {
-                "audio_url": audio_url,
-                "progress_ms": 0,
-                "offset_ts": current_ts,
-            },
-        }
-        await request.app.state.clients.broadcast(roomid, play_message)
-        logger.info(
-            "Broadcasted PLAY for test audio: %s (song_id: %s)",
-            audio_url,
-            song.id,
-        )
-
-        # 持久化播放状态到 Redis
-        from cache.room_cache import set_room_playback_state
-        from cache.schemas import PlaybackState
-
-        playback_state = PlaybackState(
-            audio_url=audio_url,
-            progress_ms=0,
-            updated_at=current_ts,
-            offset_ts=current_ts,
-            play_state="playing",
-            current_order=0,
-        )
-        await set_room_playback_state(roomid, playback_state)
-        logger.info(
-            "Persisted test audio playback state to Redis: %s",
-            roomid,
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to broadcast or persist test audio state for room %s: %s",
-            roomid,
-            exc,
-        )
-        # 不抛出异常，因为 auto-setup 已经完成，广播失败不影响核心功能
-
-    # 6. 返回歌曲信息
-    logger.info(
-        "Auto-setup test audio completed: %s (DB ID: %s)",
-        default_platform_song_id,
-        song.id,
-    )
     return {
         "success": True,
         "song_id": song.id,
-        "platform_song_id": default_platform_song_id,
+        "platform_song_id": song.platform_song_id,
         "title": song.title,
-        "message": "Test audio auto-setup completed",
+        "message": "Test audio set from database",
     }
 
 

@@ -197,6 +197,25 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                                   is_owner=False)
             client = Client(websocket, spectator_user, room)
         else:
+            # 在 Session 仍然有效时检查重复连接
+            # 先清理已经断开的连接，避免误判
+            existing_clients = clients_manager.get_clients(roomid).copy()
+            for existing_client in existing_clients:
+                if existing_client.user_id == user.id:
+                    # 检查连接是否已经断开
+                    # WebSocket 的 client 属性为 None 或 application 为 None 表示连接已关闭
+                    if (existing_client.ws.client is None or 
+                        existing_client.ws.application is None or
+                        not hasattr(existing_client.ws, 'client')):
+                        # 连接已断开，从管理器中移除
+                        logger.info(
+                            "Cleaning up stale connection for user %s in room %s",
+                            user.id,
+                            roomid,
+                        )
+                        clients_manager.pop(roomid, existing_client)
+            
+            # 再次检查是否还有活跃连接
             if clients_manager.has_user_connection(roomid, user.id):
                 logger.info(
                     "Reject duplicate websocket connection for user %s in room %s",
@@ -257,17 +276,12 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 try:
                     event = GameEventType(event_value)
                 except ValueError:
-                    # 尝试转换为 EventType（用于系统级事件如 ERROR）
-                    try:
-                        event = EventType(event_value)
-                        logger.debug("Received system event: %s", event.name)
-                    except ValueError:
-                        await client.ws.send_json(
-                            WebSocketErrorEvent(
-                                error_event=ErrorEventType.UNSUPPORTED_EVENT,
-                                message=f"Unsupported game event: {event_value}",
-                            ).model_dump())
-                        continue
+                    await client.ws.send_json(
+                        WebSocketErrorEvent(
+                            error_event=ErrorEventType.UNSUPPORTED_EVENT,
+                            message=f"Unsupported game event: {event_value}",
+                        ).model_dump())
+                    continue
 
             elif "bytes" in data:
                 parsed_data = data["bytes"]
