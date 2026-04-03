@@ -131,16 +131,21 @@ uv run huey_consumer.py mq.tasks.huey
 ## Project Structure
 ```
 main.py              # FastAPI entry point
-config/              # Configuration (settings.py, yaml loading)
-db/                  # SQLAlchemy models, session, crud
-cache/               # Redis connection and utilities
+config/              # Configuration (settings.py, yaml loading, schema_map.py)
+db/                  # SQLAlchemy models, session, crud (multiple modules)
+cache/               # Redis connection, room cache, cookie rotation, schemas
 schemas/             # Pydantic schemas (HTTP API and WebSocket messages)
-handlers/            # WebSocket event handlers
+handlers/            # WebSocket event handlers (audio, round, judge, heartbeat, etc.)
 router/              # HTTP API endpoints
-utils/               # Utilities (enumerations, memory_monitor, etc.)
-mq/                  # Task queue (huey tasks)
+utils/               # Utilities (enumerations, memory_monitor, cookie, audio_token, etc.)
+mq/                  # Task queue (huey tasks, cookie_refresh_service)
+room_state/          # Room state machine
 client_manager/      # WebSocket client management
 tests/               # pytest tests
+docs/                # Project documentation
+examples/            # Example code and scripts
+assets/              # Audio resource directory
+data/                # Data directory (SQLite, etc.)
 ```
 Standard FastAPI layout with async SQLAlchemy, Redis caching, and WebSocket support.
 
@@ -180,15 +185,18 @@ Standard FastAPI layout with async SQLAlchemy, Redis caching, and WebSocket supp
 - **Database transactions**: FastAPI endpoints use `get_db` dependency yielding AsyncSession; commit/rollback handled automatically. Non‑HTTP flows (tasks, scripts) must use `session_scope` async context manager from `db.session`. CRUD functions in `db/crud.py` expect caller to manage commit.
 - **Error handling in WebSocket handlers**: Raise `ValueError` for client errors; errors are sent via `ErrorMessage` schema with `ErrorEventType`. Use `asyncio.gather(..., return_exceptions=True)` for concurrent operations.
 - **WebSocket event registration**: Import handler modules in `handlers/__init__.py` to trigger decorator registration; otherwise handlers won't be discovered.
-- **MemoryMonitor**: Started automatically in FastAPI lifespan; logs memory usage changes ≥20 MB. Configurable with `interval` and `report_threshold_mb`. May be noisy in logs.
+- **MemoryMonitor**: Started automatically in FastAPI lifespan; logs memory usage changes ≥20 MB. Configurable with `interval` and `report_threshold_mb`. May be noisy in logs. Access memory status via `GET /memory` or `GET /memory/report` endpoints.
 - **Repeat function bugs**: Watch for repeat function bugs in `connection_lifespan.py` (known issue).
 - **Configuration loading order**: Config values are merged as `os.environ > .env > config.yaml`. Environment variables override YAML. Invalid config blocks startup; validation occurs in `config/settings.py`.
+- **Cookie rotation**: Cookie rotation is enabled by default (`CCG_COOKIE_ROTATION_ENABLED=true`). Multiple cookies can be provided via `CCG_QQ_MUSIC_COOKIES` JSON array or YAML config.
+- **Cookie refresh**: Automatic cookie refresh service runs periodically (default: every 30 minutes). Controlled by `CCG_COOKIE_REFRESH_ENABLED` and `CCG_COOKIE_REFRESH_CHECK_INTERVAL`.
 
 ## Environment Variables (CCG_*)
 Key environment variables (prefixed `CCG_`):
 - `CCG_DATABASE_URL` - Database connection (PostgreSQL recommended for production)
 - `CCG_REDIS_URL` - Redis connection (required for real‑time features)
-- `CCG_QQ_MUSIC_COOKIE` - QQ Music API authentication
+- `CCG_QQ_MUSIC_COOKIE` - QQ Music API authentication (single cookie)
+- `CCG_QQ_MUSIC_COOKIES` - QQ Music cookies list (JSON array) for rotation
 - `CCG_AUDIO_DOWNLOAD_DIR` - Audio file storage directory
 - `CCG_AUDIO_TOKEN_TTL` - Audio token TTL in seconds
 - `CCG_LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
@@ -196,6 +204,10 @@ Key environment variables (prefixed `CCG_`):
 - `CCG_CONFIG_YAML_PATH` - Override path for config.yaml
 - `CCG_SONGLIST_FETCH_CONCURRENCY` - Songlist fetch parallelism
 - `CCG_DATABASE_ECHO` - Enable SQL query logging
+- `CCG_COOKIE_ROTATION_ENABLED` - Enable cookie rotation (default: true)
+- `CCG_COOKIE_ROTATION_STRATEGY` - Cookie rotation strategy (default: round_robin)
+- `CCG_COOKIE_REFRESH_ENABLED` - Enable automatic cookie refresh (default: true)
+- `CCG_COOKIE_REFRESH_CHECK_INTERVAL` - Cookie refresh check interval in seconds (default: 1800)
 
 Config is centralized in `config/settings.py` and validated at import time. `config.yaml` should use semantic module‑based hierarchy (e.g., `ccg.database.url`, `ccg.songlist.fetch.concurrency`), not a flat dump of all env keys. Invalid config should fail fast and block startup for both `uv run python main.py` and `uv run uvicorn main:app`.
 See `.env.template` and `config.template.yaml` for defaults/examples.
@@ -205,7 +217,9 @@ See `.env.template` and `config.template.yaml` for defaults/examples.
 - **Redis**: Check `CCG_REDIS_URL`; Redis required for real‑time features
 - **WebSocket tests**: Use `tests/ws_conn.py` factory; ensure Redis running if the test needs
 - **Migrations**: Review generated script; keep data integrity as much as possible
-- **MemoryMonitor**: Logs memory usage every 30s; adjust `interval` and `report_threshold_mb` if too verbose
+- **MemoryMonitor**: Logs memory usage every 30s; adjust `interval` and `report_threshold_mb` if too verbose. Access `/memory/report` for detailed diagnostics.
+- **Cookie rotation**: If QQ Music API fails, check `CCG_QQ_MUSIC_COOKIES` has valid cookies. Monitor cookie refresh service logs.
+- **Audio download failures**: Check `CCG_AUDIO_DOWNLOAD_DIR` permissions and disk space. Review Huey task logs for download errors.
 
 ---
 

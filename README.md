@@ -71,23 +71,76 @@ ccg_backend/
 │  ├─ registe_manager.py      # 事件注册 + 分发 + Pydantic 校验
 │  ├─ connection_lifespan.py  # 连接/断开生命周期 + 部分事件
 │  ├─ audio_events_2x.py      # 20~29 音频控制事件
+│  ├─ audio_error_handler.py  # 音频错误处理
+│  ├─ audio_common.py         # 音频事件公共逻辑
+│  ├─ heartbeats.py           # 心跳处理
 │  ├─ round_events_3x.py      # 30~39 回合事件
-│  └─ judge_events_4x.py      # 40~49 判分事件
+│  ├─ round_state_events.py   # 回合状态更新事件
+│  ├─ judge_events_4x.py      # 40~49 判分事件
+│  └─ __init__.py             # 处理器导入与注册
 ├─ db/
 │  ├─ models.py               # ORM 模型
 │  ├─ session.py              # AsyncSession 管理
 │  └─ crud/                   # 数据访问层
+│     ├─ audio_preload_and_token.py   # 音频预加载与 token 管理
+│     ├─ cookie_crud.py               # Cookie CRUD 操作
+│     ├─ judge_related.py             # 判分相关 CRUD
+│     ├─ room_song_related.py         # 房间歌曲相关 CRUD
+│     ├─ room_state_cache_compat.py   # 房间状态缓存兼容
+│     ├─ room_state_related.py        # 房间状态相关 CRUD
+│     ├─ song_related.py              # 歌曲相关 CRUD
+│     └─ task_related.py              # 任务相关 CRUD
 ├─ cache/
 │  ├─ room_cache.py           # 房间状态缓存
 │  ├─ room_state_manager.py   # 回合/播放状态管理
 │  ├─ file_cache.py           # 音频文件 LRU 缓存
-│  └─ connection.py           # Redis 连接
+│  ├─ connection.py           # Redis 连接
+│  ├─ cookie_rotation.py      # Cookie 轮换管理
+│  ├─ schemas.py              # 缓存 Schema 定义
+│  └─ utils.py                # 缓存工具函数
 ├─ mq/
-│  └─ tasks.py                # Huey 异步任务（抓歌单/下载音频等）
+│  ├─ tasks.py                # Huey 异步任务（抓歌单/下载音频等）
+│  └─ cookie_refresh_service.py  # Cookie 刷新服务
 ├─ config/
-│  └─ settings.py             # 配置加载（os.environ > .env > yaml）
+│  ├─ settings.py             # 配置加载（os.environ > .env > yaml）
+│  └─ schema_map.py           # Schema 映射配置
+├─ room_state/
+│  └─ state_machine.py        # 房间状态机
+├─ client_manager/            # WebSocket 客户端管理
+├─ schemas/                   # Pydantic Schema
+│  ├─ room.py                 # 房间相关 Schema
+│  ├─ room_songs.py           # 房间歌曲相关 Schema
+│  ├─ song.py                 # 歌曲相关 Schema
+│  ├─ songlist.py             # 歌单相关 Schema
+│  ├─ tag.py                  # 标签相关 Schema
+│  ├─ task.py                 # 任务相关 Schema
+│  ├─ user.py                 # 用户相关 Schema
+│  └─ ws_messages/            # WebSocket 消息 Schema
+│     ├─ answer_schemas.py    # 答题相关 Schema
+│     ├─ error_schemas.py     # 错误相关 Schema
+│     ├─ judge_schemas.py     # 判分相关 Schema
+│     ├─ playback_schemas.py  # 播放相关 Schema
+│     ├─ room_schemas.py      # 房间相关 Schema
+│     ├─ round_event_schemas.py  # 回合事件 Schema
+│     └─ round_state_schemas.py  # 回合状态 Schema
+├─ utils/                     # 工具函数
+│  ├─ audio_token.py          # 音频 Token 生成
+│  ├─ calculate.py            # 计算工具
+│  ├─ cookie.py               # Cookie 工具
+│  ├─ cookie_pool.py          # Cookie 池管理
+│  ├─ dataframe.py            # DataFrame 工具
+│  ├─ enumerations.py         # 枚举定义
+│  ├─ errors.py               # 错误处理
+│  ├─ http_utils.py           # HTTP 工具
+│  ├─ logger.py               # 日志工具
+│  ├─ memory_monitor.py       # 内存监控
+│  └─ ts.py                   # 时间序列工具
 ├─ alembic/                   # 数据库迁移
 ├─ tests/                     # 单元/集成测试
+├─ docs/                      # 项目文档
+├─ examples/                  # 示例代码
+├─ assets/                    # 音频资源目录
+├─ data/                      # 数据目录（SQLite 等）
 └─ pyproject.toml             # Python 依赖与测试配置
 ```
 
@@ -233,11 +286,32 @@ ccg_backend/
 若存在则返回前端 `index.html` 与静态资源。
 可用于简化单机部署，但需注意构建产物路径与发布流程一致。
 
-### 4.7 异步任务进程（可选但推荐）
+### 4.7 监控与诊断
+
+#### 内存监控
+
+后端内置内存监控（`MemoryMonitor`），可通过以下端点查看：
+
+- `GET /memory` - 当前内存状态
+- `GET /memory/report` - 详细内存报告
+
+内存监控在应用启动时自动启用，默认每 30 秒报告一次，变化超过 20MB 时输出日志。
+
+#### 日志级别
+
+通过 `CCG_LOG_LEVEL` 控制日志级别（DEBUG, INFO, WARNING, ERROR）。
+开发环境建议使用 `DEBUG`，生产环境使用 `INFO` 或 `WARNING`。
+
+### 4.8 异步任务进程（可选但推荐）
 
 需要启用 Huey 消费者以处理歌单抓取/音频下载：
 
 - `uv run huey_consumer.py mq.tasks.huey`
+
+Huey 任务包括：
+- 歌单抓取（支持 QQ 音乐歌单导入）
+- 音频文件下载与缓存
+- Cookie 刷新服务（自动刷新过期的 QQ 音乐 Cookie）
 
 ---
 
@@ -261,8 +335,11 @@ ccg_backend/
 
 - 前端能打开但接口失败：检查后端是否在 `:8000` 运行。
 - WebSocket 401/1008：检查 cookie 中 room token 是否存在且 roomId 对应。
-- 歌单导入失败：先确认 `CCG_QQ_MUSIC_COOKIE` 有效。
+- 歌单导入失败：先确认 `CCG_QQ_MUSIC_COOKIE` 有效，检查 Cookie 是否在有效期内。
 - 房间状态不同步：检查 Redis 可用性与后端日志中的事件分发错误。
+- Cookie 刷新失败：检查 `CCG_QQ_MUSIC_COOKIES` 配置，确保有多个可用 Cookie 用于轮换。
+- 音频无法播放：检查 `CCG_AUDIO_DOWNLOAD_DIR` 目录权限，查看音频下载任务是否成功。
+- 内存占用过高：访问 `/memory/report` 查看详细内存使用报告。
 
 ---
 
