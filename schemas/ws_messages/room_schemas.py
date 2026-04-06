@@ -26,7 +26,7 @@ class PlaybackState(BaseModel):
     updated_at: int = Field(default_factory=lambda: int(time() * 1000))
     offset_ts: int = Field(default=0, ge=0, description="前端经过修正的时间戳, ms")  # 前端经过修正的时间戳
     play_state: Literal["playing", "paused"] = Field(default="paused")
-    current_order: int = Field(default=0, ge=0)
+    current_order: int = Field(default=0, ge=-1, description="当前曲目序号，-1 表示 test audio")
     audio_url: str | None = None
 
     model_config = ConfigDict(from_attributes=True)

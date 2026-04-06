@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
 from typing import Literal
-from utils.enumerations import RoomStatus, GameEventType, EventType
+from utils.enumerations import GameEventType, EventType
 from ..base_message import MessageBase
 
 
@@ -9,6 +9,11 @@ class PlayControlData(BaseModel):
     progress_ms: int = Field(default=0, ge=0)
     offset_ts: int | None = Field(default=None, ge=0, description="前端经过修正的时间戳，后端不用填入")
     audio_url: str | None = Field(default=None)
+    current_order: int = Field(
+        default=0,
+        ge=-1,
+        description="当前曲目序号，-1 表示 test audio。兼容旧客户端默认 0",
+    )
 
 
 class PlayMessage(MessageBase):

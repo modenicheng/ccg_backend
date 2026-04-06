@@ -85,7 +85,7 @@ class PlaybackState(BaseModel):
     progress_ms: int = Field(default=0, ge=0)
     play_state: Literal["playing", "paused"] = Field(default="paused")
     song_id: int | None = None
-    current_order: int = Field(default=0, ge=0)
+    current_order: int = Field(default=0, ge=-1)
 
 
 # 这是 AI 生成的屎，由一百万个重复数据
