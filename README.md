@@ -47,7 +47,7 @@ ccg_frontend/
 │  ├─ components/             # UI 组件
 │  ├─ types/                  # 事件与消息类型定义
 │  └─ utils/
-│     └─ roomAuth.ts          # token/user 写入 cookie + sessionStorage
+│     └─ roomAuth.ts          # token/user 写入 sessionStorage（可同步 cookie 供部分 HTTP 接口）
 ├─ vite.config.ts             # /api 与 /ws 代理到后端
 ├─ package.json               # pnpm scripts 与前端依赖
 └─ README.md
@@ -150,19 +150,20 @@ ccg_backend/
 
 ## 3. 前后端交互逻辑（核心链路）
 
-### 3.1 登录与入房链路（HTTP + Cookie/Session）
+### 3.1 登录与入房链路（HTTP + Query 鉴权参数）
 
 1. 前端大厅页调用：
    - `POST /api/room/`（创建房间）
    - `POST /api/room/{roomid}`（加入房间）
 2. 后端返回 `token / user_id / username`。
 3. 前端通过 `src/utils/roomAuth.ts` 将认证信息写入：
-   - `cookie`（供后端 WebSocket 握手读取）
-   - `sessionStorage`（前端本地恢复）
+   - `sessionStorage`（WebSocket 鉴权参数来源 + 前端本地恢复）
+   - `cookie`（用于部分仍依赖 cookie 的 HTTP 接口兼容）
+4. 玩家 WebSocket 连接使用：`/ws/{roomid}?token=...&user_id=...`。
 
 ### 3.2 WebSocket 实时链路
 
-- 玩家：`/ws/{roomid}`
+- 玩家：`/ws/{roomid}?token=...&user_id=...`
 - 观战：`/ws/{roomid}/watch`
 
 后端在 `main.py` 中统一接收消息，并通过 `handlers/registe_manager.py` 分发。
@@ -253,7 +254,8 @@ ccg_backend/
 默认提供：
 
 - REST：`http://localhost:8000/api/...`
-- WS：`ws://localhost:8000/ws/{roomid}`
+- WS（玩家）：`ws://localhost:8000/ws/{roomid}?token=...&user_id=...`
+- WS（观战）：`ws://localhost:8000/ws/{roomid}/watch`
 
 ### 4.5 启动前端（开发联调）
 
@@ -334,7 +336,7 @@ Huey 任务包括：
 ## 6. 排障建议
 
 - 前端能打开但接口失败：检查后端是否在 `:8000` 运行。
-- WebSocket 401/1008：检查 cookie 中 room token 是否存在且 roomId 对应。
+- WebSocket 401/1008：检查玩家连接是否携带 `token` 和 `user_id`，并与 `roomId` 匹配。
 - 歌单导入失败：先确认 `CCG_QQ_MUSIC_COOKIE` 有效，检查 Cookie 是否在有效期内。
 - 房间状态不同步：检查 Redis 可用性与后端日志中的事件分发错误。
 - Cookie 刷新失败：检查 `CCG_QQ_MUSIC_COOKIES` 配置，确保有多个可用 Cookie 用于轮换。

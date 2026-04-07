@@ -9,7 +9,7 @@
 ## 2. 核心功能需求
 
 - **房间系统**：房主创建房间，生成唯一房间 ID（6位字母数字）；玩家通过房间 ID 和用户名加入；房主可踢人、开始游戏、结束回合。
-- **用户与会话**：无全局用户系统。玩家在创建或加入房间时输入用户名，同一房间内用户名唯一（数据库唯一约束保证）。通过 Cookie 中的令牌（token）实现断线重连，确保一个浏览器/设备同时只能处于一个房间（同一用户在同一房间只能有一个WebSocket连接）。
+- **用户与会话**：无全局用户系统。玩家在创建或加入房间时输入用户名，同一房间内用户名唯一（数据库唯一约束保证）。通过 `token + user_id` query 参数进行 WebSocket 认证与断线重连，确保同一用户在同一房间只能有一个 WebSocket 连接。
 - **歌曲管理**：房主通过 QQ 音乐歌单 ID 导入曲目；后端爬取歌曲元数据；歌曲按房间独立管理，支持设置播放队列顺序；支持音频预下载与缓存。
 - **标签系统**：房主可预设多个标签组，每组内标签互斥（例如"年代"组：80年代、90年代、00年代），组间不互斥；每个标签可计分。另设"精准描述"字段，玩家需手动输入短文本，房主在判分时从多个候选描述中选择正确项（可多选或不选）。
 - **游戏流程**：开始游戏 → 回合开始（倒计时） → 播放 → 抢答（可排队） → 作答（依次） → 判分 → 下一轮（或结束）。
@@ -65,17 +65,17 @@
 
 ### 5.1 房间管理模块
 
-- **创建房间**：房主提供用户名和房间标题，后端生成唯一房间 ID（6位字母数字），创建 `User` 记录（标记为房主 `is_owner=True`）和 `Room` 记录。生成一个全局唯一的令牌（token，UUID）用于后续认证，通过 Set-Cookie `HttpOnly` 传递给前端。房间信息存入数据库（PostgreSQL/SQLite），状态为 `WAITING`。
+- **创建房间**：房主提供用户名和房间标题，后端生成唯一房间 ID（6位字母数字），创建 `User` 记录（标记为房主 `is_owner=True`）和 `Room` 记录。生成一个全局唯一的令牌（token，UUID）用于后续认证，并在创建响应中返回给前端。房间信息存入数据库（PostgreSQL/SQLite），状态为 `WAITING`。
 - **加入房间**：用户提供房间 ID 和用户名，后端检查房间是否存在且状态为 `WAITING`；若该房间内用户名已存在（唯一约束），返回错误。创建该房间内的新 `User` 记录，生成新令牌，关联房间和玩家。
 - **房间状态**：数据库 `Room` 表存储房间基础状态（status, current\_song\_index, round\_state, song\_start\_range\_percent 等）；Redis 存储播放状态（PlaybackState）和抢答队列（AnswerQueue）。
-- **断线重连**：用户通过 Cookie 中的 Token 重新连接 WebSocket，后端校验令牌有效性（数据库查询），自动将 WebSocket 连接绑定到原用户，恢复其在房间内的状态，并推送当前房间状态同步。同一用户在同一房间只能有一个 WebSocket 连接（`duplicate connection is not allowed`）。
+- **断线重连**：用户通过 `token + user_id` 重新连接 WebSocket，后端校验令牌与用户、房间的对应关系（数据库查询），自动将 WebSocket 连接绑定到原用户，恢复其在房间内的状态，并推送当前房间状态同步。同一用户在同一房间只能有一个 WebSocket 连接（`duplicate connection is not allowed`）。
 
 ### 5.2 用户与会话模块
 
 - **用户标识**：每个玩家在所属房间内由唯一数字 ID（`id`，自增，存储在 `users` 表）标识，前端展示的用户名由玩家输入，同一房间内唯一（数据库唯一约束 `uq_users_room_id_username`）。
-- **认证方式**：创建/加入房间时生成随机令牌（UUID），通过 Set-Cookie `HttpOnly; Path=/` 传递给前端；WebSocket 连接时通过 `simple_authentication` 验证 Cookie 中的 token。
+- **认证方式**：创建/加入房间时生成随机令牌（UUID）并返回给前端；WebSocket 连接时通过 query 参数 `token` 与 `user_id` 进行认证校验（同时匹配 `room_id`）。
 - **单房间限制**：WebSocket 连接时检查该用户是否已在该房间有活跃连接（`has_user_connection`），若有则拒绝连接（code 1008）。
-- **重连机制**：若 WebSocket 断开，前端自动重连，携带相同 Cookie；后端验证通过后恢复连接。
+- **重连机制**：若 WebSocket 断开，前端自动重连并携带相同 `token + user_id` query；后端验证通过后恢复连接。
 
 ### 5.3 歌曲管理模块
 
@@ -476,7 +476,6 @@ Content-Type: application/json
     "token": "uuid-token-string"
   }
 }
-Set-Cookie: token=uuid-token-string; HttpOnly; Path=/
 ```
 
 #### **加入房间**
@@ -497,7 +496,6 @@ Content-Type: application/json
     "token": "uuid-token-string"
   }
 }
-Set-Cookie: token=uuid-token-string; HttpOnly; Path=/
 ```
 
 #### **获取房间公开信息**
