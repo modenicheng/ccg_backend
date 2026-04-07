@@ -11,11 +11,11 @@ from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from db import crud
-from db.models import Room, User, TagGroup, RoomStatusORM, Song, RoomSong
+from db.models import Room, User, TagGroup, RoomStatusORM, Song
 from db.session import get_db
 from cache.connection import get_redis
 from schemas.room import JoinRoomRequest, JoinRoomResponse
@@ -84,7 +84,6 @@ async def auto_setup_after_commit(room_id: str) -> None:
         logger.info("Executing auto-setup-test-audio for room %s", room_id)
         # 直接调用 auto_setup_test_audio 函数
         from unittest.mock import Mock
-        from fastapi import Request
 
         # 延迟导入 app，避免循环导入
         import main
@@ -278,6 +277,10 @@ class SetTestAudioRequest(BaseModel):
     song_id: int = Field(..., gt=0, description="歌曲数据库 ID")
 
 
+def _is_song_cached(song: Song) -> bool:
+    return bool(song.cached_path and os.path.exists(song.cached_path))
+
+
 @room_router.post("/{roomid}/set-test-audio")
 async def set_test_audio(
         roomid: str,
@@ -302,6 +305,14 @@ async def set_test_audio(
     room = room_result.scalar_one_or_none()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
+    if room.status != RoomStatusORM.WAITING:
+        raise HTTPException(
+            status_code=400,
+            detail=
+            "Room is not in WAITING state; test audio modifications are not allowed",
+        )
+    if room.test_audio_song_id == payload.song_id:
+        raise HTTPException(status_code=400, detail="Test audio song is unchanged")
 
     # 验证歌曲是否存在于全局歌曲库
     song_stmt = select(Song).where(Song.id == payload.song_id)
@@ -311,7 +322,75 @@ async def set_test_audio(
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
 
-    # 更新房间的 test_audio_song_id
+    task_id: str | None = (f"download_and_cache_song:{song.platform_song_id}"
+                           if song.platform_song_id else None)
+
+    if not _is_song_cached(song):
+        if not song.platform_song_id:
+            raise HTTPException(
+                status_code=500,
+                detail=("Song is not cached and has no platform_song_id, "
+                        "cannot trigger download task"),
+            )
+
+        assert task_id is not None
+
+        task_record = await crud.get_task_record_by_task_id(session=session,
+                                                            task_id=task_id)
+        task_status = task_record.status if task_record else None
+
+        if task_status in ("pending", "running"):
+            return {
+                "success": False,
+                "status": "task",
+                "task_id": task_id,
+                "task_status": task_status,
+                "song_id": song.id,
+                "title": song.title,
+                "message": "Test audio download task is in progress",
+            }
+
+        if task_status == "success":
+            await session.refresh(song)
+            if not _is_song_cached(song):
+                logger.warning(
+                    "Download task %s reported success but cached file is still missing for song %s",
+                    task_id,
+                    song.id,
+                )
+                task_status = "failed"
+
+        if task_status in (None, "failed"):
+            logger.info(
+                "Triggering download task for room %s test audio song_id=%s, platform_song_id=%s, previous_task_status=%s",
+                roomid,
+                song.id,
+                song.platform_song_id,
+                task_status,
+            )
+            tasks.download_and_cache_song(mid=song.platform_song_id)
+            await crud.create_task_record(
+                session=session,
+                task_id=task_id,
+                task_name="download_and_cache_song",
+                status="pending",
+                result_json={
+                    "room_id": roomid,
+                    "song_id": song.id,
+                    "platform_song_id": song.platform_song_id,
+                },
+            )
+            await session.commit()
+            return {
+                "success": False,
+                "status": "task",
+                "task_id": task_id,
+                "task_status": "pending",
+                "song_id": song.id,
+                "title": song.title,
+                "message": "Test audio download task has been queued",
+            }
+
     logger.info(
         "Setting room %s test_audio_song_id to %s (song: %s)",
         roomid,
@@ -320,54 +399,9 @@ async def set_test_audio(
     )
     room.test_audio_song_id = payload.song_id
     await session.commit()
-    await session.refresh(room)  # 刷新以确保后续代码能看到更新后的值
+    await session.refresh(room)
 
-    # 如果歌曲未缓存，先下载
-    if not song.cached_path or not os.path.exists(
-            song.cached_path if song.cached_path else ""):
-        try:
-            if song.platform_song_id:
-                logger.info(
-                    "Song %s not cached, downloading before broadcast...",
-                    song.id,
-                )
-                from mq.tasks import _download_and_cache_song_impl
-                downloaded_path = await _download_and_cache_song_impl(
-                    song.platform_song_id)
-
-                if downloaded_path and os.path.exists(downloaded_path):
-                    logger.info(
-                        "Successfully downloaded song: %s (%s)",
-                        song.id,
-                        downloaded_path,
-                    )
-                    # 重新加载歌曲记录以获取最新的 cached_path
-                    await session.refresh(song)
-                else:
-                    logger.error(
-                        "Failed to download song %s, downloaded_path: %s",
-                        song.id,
-                        downloaded_path,
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to download audio file for song {song.id}",
-                    )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(
-                "Failed to download song %s: %s",
-                song.id,
-                e,
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Exception occurred while downloading song: {str(e)}",
-            ) from e
-
-    # 广播 PLAY 事件 (使用正常播放链路)
+    # 广播 PLAY 事件（切换后立刻生效）
     audio_url = f"/api/songs/file/{payload.song_id}"
     current_ts = int(__import__('time').time() * 1000)
 
@@ -394,7 +428,7 @@ async def set_test_audio(
             payload.song_id,
         )
 
-        # 持久化播放状态到 Redis
+        # 同步写入 Redis playback state（进度重置）
         from cache.room_cache import set_room_playback_state
         from cache.schemas import PlaybackState
 
@@ -408,8 +442,9 @@ async def set_test_audio(
         )
         await set_room_playback_state(roomid, playback_state)
         logger.info(
-            "Persisted test audio playback state to Redis: %s",
+            "Persisted test audio playback state to Redis: room=%s, audio_url=%s, progress_ms=0, current_order=-1",
             roomid,
+            audio_url,
         )
     except Exception as exc:
         logger.error(
@@ -421,8 +456,10 @@ async def set_test_audio(
 
     return {
         "success": True,
+        "status": "completed",
         "song_id": payload.song_id,
         "title": song.title,
+        "task_id": task_id,
         "message": "Test audio set successfully",
     }
 
