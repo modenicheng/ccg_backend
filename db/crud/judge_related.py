@@ -13,7 +13,7 @@ from utils import get_logger
 from .. import models
 from .room_song_related import fetch_room_object
 
-l = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 async def get_room_song_queue(

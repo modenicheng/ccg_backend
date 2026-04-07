@@ -20,7 +20,7 @@ from sqlalchemy import update
 from cache.connection import redis_client
 from client_manager import ClientManager, Client
 from config import app_config
-from db.crud import fetch_room_object, simple_authentication
+from db.crud import fetch_room_object, authenticate_user_by_room_token
 from db.models import User
 from db.session import session_scope
 from handlers.registe_manager import handle
@@ -181,57 +181,56 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
     """Handle websocket lifecycle, authentication, and game events for a room."""
     async with session_scope() as session:
         clients_manager: ClientManager = app.state.clients
-        user = await simple_authentication(session, websocket.cookies, roomid)
+        token = websocket.query_params.get("token")
+        user_id_raw = websocket.query_params.get("user_id")
+        try:
+            user_id = int(user_id_raw) if user_id_raw is not None else None
+        except ValueError:
+            user_id = None
+        user = await authenticate_user_by_room_token(session, roomid, token, user_id)
         room = await fetch_room_object(session, roomid)
         if not room:
             await websocket.close(code=1008, reason="Room not found")
             return
-
-        # 如果没有身份信息，创建一个观战者客户端
         if not user:
-            logger.info("WebSocket connection for room %s as spectator", roomid)
-            spectator_user = User(id=0,
-                                  username="Spectator",
-                                  token="",
-                                  room_id=roomid,
-                                  is_owner=False)
-            client = Client(websocket, spectator_user, room)
-        else:
-            # 在 Session 仍然有效时检查重复连接
-            # 先清理已经断开的连接，避免误判
-            existing_clients = clients_manager.get_clients(roomid).copy()
-            for existing_client in existing_clients:
-                if existing_client.user_id == user.id:
-                    # 检查连接是否已经断开
-                    # WebSocket 的 client 属性为 None 或 application 为 None 表示连接已关闭
-                    if (existing_client.ws.client is None or 
+            await websocket.close(code=1008, reason="Authentication failed")
+            return
+
+        # 在 Session 仍然有效时检查重复连接
+        # 先清理已经断开的连接，避免误判
+        existing_clients = clients_manager.get_clients(roomid).copy()
+        for existing_client in existing_clients:
+            if existing_client.user_id == user.id:
+                # 检查连接是否已经断开
+                # WebSocket 的 client 属性为 None 或 application 为 None 表示连接已关闭
+                if (existing_client.ws.client is None or
                         existing_client.ws.application is None or
                         not hasattr(existing_client.ws, 'client')):
-                        # 连接已断开，从管理器中移除
-                        logger.info(
-                            "Cleaning up stale connection for user %s in room %s",
-                            user.id,
-                            roomid,
-                        )
-                        clients_manager.pop(roomid, existing_client)
-            
-            # 再次检查是否还有活跃连接
-            if clients_manager.has_user_connection(roomid, user.id):
-                logger.info(
-                    "Reject duplicate websocket connection for user %s in room %s",
-                    user.id,
-                    roomid,
-                    extra={
-                        "event": "duplicate_connection_rejected",
-                        "user_id": user.id,
-                        "room_id": roomid,
-                        "ws_endpoint": "/ws/{roomid}",
-                    },
-                )
-                await websocket.close(code=1008,
-                                      reason="Duplicate connection is not allowed")
-                return
-            client = Client(websocket, user, room)
+                    # 连接已断开，从管理器中移除
+                    logger.info(
+                        "Cleaning up stale connection for user %s in room %s",
+                        user.id,
+                        roomid,
+                    )
+                    clients_manager.pop(roomid, existing_client)
+
+        # 再次检查是否还有活跃连接
+        if clients_manager.has_user_connection(roomid, user.id):
+            logger.info(
+                "Reject duplicate websocket connection for user %s in room %s",
+                user.id,
+                roomid,
+                extra={
+                    "event": "duplicate_connection_rejected",
+                    "user_id": user.id,
+                    "room_id": roomid,
+                    "ws_endpoint": "/ws/{roomid}",
+                },
+            )
+            await websocket.close(code=1008,
+                                  reason="Duplicate connection is not allowed")
+            return
+        client = Client(websocket, user, room)
 
         await client.ws.accept()
 

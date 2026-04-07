@@ -70,16 +70,6 @@ async def on_connect(  # pylint: disable=too-many-statements
         logger.warning("Room %s not found during on_connect for client %s", room_id, cl)
         return
 
-    # 验证玩家身份
-    try:
-        await crud.simple_authentication(session, cl.ws.cookies, room_id)
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Authentication failed for client %s: %s",
-                     cl.user.id,
-                     e,
-                     exc_info=True)
-        return
-
     # 更新玩家在线状态
     try:
         # 先设置online为True，避免None值在验证时出错
@@ -119,12 +109,16 @@ async def on_connect(  # pylint: disable=too-many-statements
     try:
         song_id, song_index = await crud.get_current_song_info(session, room_id)
         if song_id is not None and song_index is not None:
-            message.round_answers = await crud.get_round_answers_for_room_state(
+            round_answers = await crud.get_round_answers_for_room_state(
                 session=session,
                 room_id=room_id,
                 song_id=song_id,
                 round_index=song_index,
             )
+            message.round_answers = [
+                RoomSchema.RoundAnswerItem.model_validate(item)
+                for item in round_answers
+            ]
 
             score_stmt = (select(models.Score.id).where(
                 models.Score.room_id == room_id,

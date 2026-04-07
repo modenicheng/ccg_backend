@@ -14,7 +14,7 @@ from utils import get_logger
 
 from .. import models
 
-l = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 async def get_room_songs(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -53,7 +53,7 @@ async def get_room_songs(  # pylint: disable=too-many-arguments,too-many-positio
         else:
             stmt = stmt.order_by(models.RoomSong.song_id)
     else:
-        l.warning("Invalid order parameter: %s, defaulting to +song_id", order)
+        logger.warning("Invalid order parameter: %s, defaulting to +song_id", order)
 
     # Apply offset and limit
     stmt = stmt.offset(offset)
@@ -182,7 +182,8 @@ async def remove_songs_from_room(session: AsyncSession, room_id: str,
             await session.delete(room_song)
             removed.append(room_song)
         except (SQLAlchemyError, ValueError) as e:  # pylint: disable=broad-exception-caught
-            l.warning("Failed to remove song %s from room %s: %s", song_id, room_id, e)
+            logger.warning("Failed to remove song %s from room %s: %s", song_id,
+                           room_id, e)
             # continue to next song
 
     if not removed:
@@ -354,14 +355,14 @@ async def count_songlist_songs(session: AsyncSession, songlist_id: int) -> int |
 async def simple_authentication(session: AsyncSession, ws_cookie: dict,
                                 roomid: str) -> None | models.User:
     """简单WebSocket认证，基于cookie中的房间令牌和用户ID。"""
-    l.debug(ws_cookie)
+    logger.debug(ws_cookie)
 
     user_token = ws_cookie.get(f"ccg-room-token:{roomid}")
     user_id = ws_cookie.get(f"ccg-room-user-id:{roomid}")
     username = ws_cookie.get(f"ccg-room-username:{roomid}")
 
     if not user_token or not user_id or not username:
-        l.warning(
+        logger.warning(
             "WebSocket connection missing authentication cookies for room %s. "
             "user_token: %s, user_id: %s, username: %s",
             roomid,
@@ -375,7 +376,7 @@ async def simple_authentication(session: AsyncSession, ws_cookie: dict,
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     if not user or user.token != user_token or user.room_id != roomid:
-        l.warning(
+        logger.warning(
             "WebSocket authentication failed for room %s. user_id: %s, "
             "token valid: %s, room_id valid: %s",
             roomid,
@@ -385,13 +386,53 @@ async def simple_authentication(session: AsyncSession, ws_cookie: dict,
         )
         return
 
-    l.info(
+    logger.info(
         "WebSocket connection attempt for room %s with token: %s, "
         "user_id: %s, username: %s",
         roomid,
         user_token,
         user_id,
         username,
+    )
+    return user
+
+
+async def authenticate_user_by_room_token(
+    session: AsyncSession,
+    roomid: str,
+    user_token: str | None,
+    user_id: int | None,
+) -> None | models.User:
+    """基于 query token + user_id 的 WebSocket 认证。"""
+    if not user_token or user_id is None:
+        logger.warning(
+            "WebSocket connection missing auth query for room %s. token=%s, user_id=%s",
+            roomid,
+            bool(user_token),
+            user_id,
+        )
+        return None
+
+    stmt = select(models.User).where(
+        models.User.id == user_id,
+        models.User.token == user_token,
+        models.User.room_id == roomid,
+    )
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        logger.warning(
+            "WebSocket query authentication failed for room %s. user_id=%s",
+            roomid,
+            user_id,
+        )
+        return None
+
+    logger.info(
+        "WebSocket query authentication succeeded for room %s. user_id=%s",
+        roomid,
+        user.id,
     )
     return user
 
