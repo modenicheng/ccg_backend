@@ -30,7 +30,12 @@ room_songs_router = APIRouter(prefix="/api/rooms/{roomid}/songs", tags=["room_so
 async def _require_room_owner(session: AsyncSession, request: Request,
                               roomid: str) -> models.User:
     """验证请求用户是当前房间房主。"""
-    user = await crud.simple_authentication(session, request.cookies, roomid)
+    user = await crud.authenticate_user_for_room_http(
+        session,
+        roomid,
+        request.query_params,
+        request.cookies,
+    )
     if not user:
         raise HTTPException(status_code=403,
                             detail="Authentication required for this room")

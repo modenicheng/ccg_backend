@@ -27,6 +27,7 @@ class SongInfo(BaseModel):
         cover_url (Optional[str]): The URL to the cover image.
         platform_url (Optional[str]): The URL to the song on the platform.
     """
+    id: int | None = None
     title: str | None = None
     artist: str | None = None
     album: str | None = None
@@ -79,6 +80,10 @@ class JudgingData(BaseModel):
         answers (list[PlayerAnswerData]): 本轮所有玩家提交的答案
         player_descriptions (list[PlayerDescriptionData]): 本轮所有玩家的精准描述（用于房主选择正确答案）
     """
+    song: SongInfo | None = Field(default=None, description="当前判分歌曲信息")
+    history_tag_ids: list[int] = Field(default_factory=list, description="历史高频标签 ID 列表")
+    reference_descriptions: list[str] = Field(default_factory=list,
+                                              description="历史参考描述")
     tag_groups: list[TagGroupData] = Field(default_factory=list)
     description_candidates: list[DescriptionCandidate] = Field(default_factory=list)
     answers: list[PlayerAnswerData] = Field(default_factory=list)

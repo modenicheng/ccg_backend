@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from typing import Literal
+from typing import Literal, Mapping
 
 from sqlalchemy import select, func
 from sqlalchemy.exc import SQLAlchemyError
@@ -435,6 +435,35 @@ async def authenticate_user_by_room_token(
         user.id,
     )
     return user
+
+
+async def authenticate_user_for_room_http(
+    session: AsyncSession,
+    roomid: str,
+    query_params: Mapping[str, str],
+    cookies: Mapping[str, str],
+) -> None | models.User:
+    """HTTP 房间鉴权：优先 query(token+user_id)，缺失时兼容 cookie。"""
+    token = query_params.get("token")
+    user_id_raw = query_params.get("user_id")
+
+    user_id: int | None = None
+    if user_id_raw is not None:
+        try:
+            user_id = int(user_id_raw)
+        except ValueError:
+            logger.warning(
+                "Invalid user_id query for room %s: %s",
+                roomid,
+                user_id_raw,
+            )
+            return None
+
+    if token is not None or user_id_raw is not None:
+        # 只要出现任一 query 鉴权参数，就强制走 query 鉴权，避免 query/cookie 混用绕过。
+        return await authenticate_user_by_room_token(session, roomid, token, user_id)
+
+    return await simple_authentication(session, dict(cookies), roomid)
 
 
 async def fetch_room_object(session: AsyncSession, room_id: str) -> models.Room | None:

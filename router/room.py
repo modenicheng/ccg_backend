@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
+from db import crud
 from db.models import Room, User, TagGroup, RoomStatusORM, Song, RoomSong
 from db.session import get_db
 from cache.connection import get_redis
@@ -33,6 +34,27 @@ from utils import get_logger
 logger = get_logger(__name__)
 
 room_router = APIRouter(prefix="/api/room", tags=["room"])
+
+
+async def _require_room_owner(
+    session: AsyncSession,
+    request: Request,
+    roomid: str,
+) -> User:
+    """验证请求用户是当前房间房主（query 优先，cookie 兼容）。"""
+    user = await crud.authenticate_user_for_room_http(
+        session,
+        roomid,
+        request.query_params,
+        request.cookies,
+    )
+    if not user:
+        raise HTTPException(status_code=403,
+                            detail="Authentication required for this room")
+    if not user.is_owner:
+        raise HTTPException(status_code=403,
+                            detail="Only room owner can perform this action")
+    return user
 
 
 def _to_room_info_response(room: Room) -> RoomInfoResponse:
@@ -186,6 +208,8 @@ async def room_setting(
     request: Request,
     session: AsyncSession = Depends(get_db)) -> RoomInfoResponse:
     """Update room settings."""
+    await _require_room_owner(session, request, roomid)
+
     stmt = (select(Room).where(Room.id == roomid).options(
         selectinload(Room.users),
         selectinload(Room.tag_groups).selectinload(TagGroup.tags),
@@ -270,6 +294,8 @@ async def set_test_audio(
     4. 广播 PLAY 事件 (使用正常播放链路)
     5. 持久化播放状态到 Redis
     """
+    await _require_room_owner(session, request, roomid)
+
     # 获取房间
     room_stmt = select(Room).where(Room.id == roomid)
     room_result = await session.execute(room_stmt)
@@ -429,7 +455,8 @@ async def auto_setup_test_audio(
             room.test_audio_song_id,
         )
         # 使用自定义歌曲
-        return await _broadcast_test_audio_from_db(roomid, request, session, room.test_audio_song_id)
+        return await _broadcast_test_audio_from_db(roomid, request, session,
+                                                   room.test_audio_song_id)
 
     # 未设置 test_audio_song_id (NULL)，使用默认 CDN BGM
     logger.info(
@@ -502,7 +529,8 @@ async def _broadcast_test_audio_from_cdn(
                 roomid,
                 exc,
             )
-            raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to broadcast: {str(exc)}")
     else:
         logger.info(
             "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to -1.",
@@ -642,7 +670,8 @@ async def _broadcast_test_audio_from_db(
                 roomid,
                 exc,
             )
-            raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to broadcast: {str(exc)}")
     else:
         logger.info(
             "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to %s.",
@@ -697,16 +726,14 @@ async def dissolve_room(
     3. 删除房间（级联删除相关数据）
     4. 通知所有客户端房间已解散
     """
+    await _require_room_owner(session, request, roomid)
+
     # 获取房间（预加载用户和标签组关系）
     from sqlalchemy.orm import selectinload
-    room_stmt = (
-        select(Room)
-        .where(Room.id == roomid)
-        .options(
-            selectinload(Room.users),
-            selectinload(Room.tag_groups),
-        )
-    )
+    room_stmt = (select(Room).where(Room.id == roomid).options(
+        selectinload(Room.users),
+        selectinload(Room.tag_groups),
+    ))
     room_result = await session.execute(room_stmt)
     room = room_result.scalar_one_or_none()
 
@@ -753,13 +780,14 @@ async def dissolve_room(
         # 清理 Redis 缓存（防止房间被删除后仍可连接）
         try:
             from cache.room_cache import delete_all_room_cache
-            
+
             # 删除所有房间缓存
             await delete_all_room_cache(roomid)
-            
+
             logger.info("Cleared Redis cache for dissolved room %s", roomid)
         except Exception as cache_error:
-            logger.warning("Failed to clear Redis cache for room %s: %s", roomid, cache_error)
+            logger.warning("Failed to clear Redis cache for room %s: %s", roomid,
+                           cache_error)
 
         logger.info("Room %s dissolved successfully", roomid)
 

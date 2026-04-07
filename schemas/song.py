@@ -200,6 +200,54 @@ class SonglistFetchResult(BaseModel):
         })
 
 
+class SongTagHistoryOption(BaseModel):
+    """Aggregated history option for a specific tag."""
+
+    tag_id: int = Field(description="Tag ID")
+    tag_name: str = Field(description="Tag name")
+    selected_count: int = Field(description="How many times this tag was selected")
+
+
+class SongTagGroupHistoryItem(BaseModel):
+    """Grouped tag history under one tag group."""
+
+    group_id: int = Field(description="Tag group ID")
+    group_name: str = Field(description="Tag group name")
+    tags: list[SongTagHistoryOption] = Field(default_factory=list,
+                                             description="Tag options in this group")
+
+
+class SongTagHistorySummaryResponse(BaseModel):
+    """Aggregated tag history for one song."""
+
+    song_id: int = Field(description="Song ID")
+    groups: list[SongTagGroupHistoryItem] = Field(default_factory=list,
+                                                  description="Grouped tag history")
+
+
+class SongTagHistoryRecord(BaseModel):
+    """One raw history record for a tag selection."""
+
+    history_id: int = Field(description="History record ID")
+    room_id: str | None = Field(default=None, description="Room ID")
+    judged_by_user_id: int | None = Field(default=None, description="Judge user ID")
+    judged_by_username: str | None = Field(default=None, description="Judge username")
+    created_at: datetime = Field(description="Record creation timestamp")
+
+
+class SongTagHistoryDetailResponse(BaseModel):
+    """Detailed records for one song+tag history entry."""
+
+    song_id: int = Field(description="Song ID")
+    tag_id: int = Field(description="Tag ID")
+    tag_name: str = Field(description="Tag name")
+    group_id: int | None = Field(default=None, description="Tag group ID")
+    group_name: str | None = Field(default=None, description="Tag group name")
+    total: int = Field(description="Total number of matching records")
+    records: list[SongTagHistoryRecord] = Field(default_factory=list,
+                                                description="Raw matching records")
+
+
 class SongItem(SongBase):
     id: int
     order: Optional[int] = Field(default=None, description="Order in the song queue")

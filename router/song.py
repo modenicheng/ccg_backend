@@ -9,9 +9,27 @@ from sqlalchemy import select, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from cache.file_cache import load_song_asset_with_cache
 from config import app_config
-from db.models import Song, Room, RoomSong
+from db.models import (
+    Song,
+    Room,
+    RoomSong,
+    SongTagHistory,
+    Tag,
+    TagGroup,
+    TagGroupTag,
+    User,
+)
 from db.session import get_db
-from schemas.song import SongResponse, SongCreate, SongListResponse
+from schemas.song import (
+    SongResponse,
+    SongCreate,
+    SongListResponse,
+    SongTagHistorySummaryResponse,
+    SongTagGroupHistoryItem,
+    SongTagHistoryOption,
+    SongTagHistoryDetailResponse,
+    SongTagHistoryRecord,
+)
 from mq import tasks
 from utils import get_logger
 from utils.http_utils import build_range_response
@@ -112,6 +130,139 @@ async def get_song(
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
         {c.name: getattr(song, c.name) for c in song.__table__.columns})
+
+
+@song_router.get("/{song_id}/history/tags",
+                 response_model=SongTagHistorySummaryResponse)
+async def get_song_tag_history_summary(
+        song_id: int,
+        session: AsyncSession = Depends(get_db),
+) -> SongTagHistorySummaryResponse:
+    """Get aggregated historical correct-tag options for a song."""
+    song_stmt = select(Song.id).where(Song.id == song_id)
+    song_result = await session.execute(song_stmt)
+    if song_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    selected_count_expr = func.count(SongTagHistory.id).label("selected_count")
+    summary_stmt = (select(
+        TagGroup.id.label("group_id"),
+        TagGroup.name.label("group_name"),
+        Tag.id.label("tag_id"),
+        Tag.name.label("tag_name"),
+        selected_count_expr,
+    ).select_from(SongTagHistory).join(Tag, SongTagHistory.tag_id == Tag.id).join(
+        TagGroupTag, TagGroupTag.tag_id == Tag.id).join(
+            TagGroup, TagGroup.id == TagGroupTag.group_id).where(
+                SongTagHistory.song_id == song_id).group_by(
+                    TagGroup.id,
+                    TagGroup.name,
+                    Tag.id,
+                    Tag.name,
+                ).order_by(
+                    TagGroup.id.asc(),
+                    selected_count_expr.desc(),
+                    Tag.id.asc(),
+                ))
+
+    rows = (await session.execute(summary_stmt)).all()
+
+    grouped: dict[int, SongTagGroupHistoryItem] = {}
+    for row in rows:
+        if row.group_id not in grouped:
+            grouped[row.group_id] = SongTagGroupHistoryItem(
+                group_id=row.group_id,
+                group_name=row.group_name,
+                tags=[],
+            )
+
+        grouped[row.group_id].tags.append(
+            SongTagHistoryOption(tag_id=row.tag_id,
+                                 tag_name=row.tag_name,
+                                 selected_count=int(row.selected_count or 0)))
+
+    return SongTagHistorySummaryResponse(song_id=song_id, groups=list(grouped.values()))
+
+
+@song_router.get("/{song_id}/history/tags/{tag_id}/records",
+                 response_model=SongTagHistoryDetailResponse)
+async def get_song_tag_history_records(
+        song_id: int,
+        tag_id: int,
+        group_id: int | None = Query(default=None, ge=1),
+        session: AsyncSession = Depends(get_db),
+) -> SongTagHistoryDetailResponse:
+    """Get all historical records for one song+tag selection."""
+    song_stmt = select(Song.id).where(Song.id == song_id)
+    song_result = await session.execute(song_stmt)
+    if song_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    tag_stmt = select(Tag.id, Tag.name).where(Tag.id == tag_id)
+    tag_result = await session.execute(tag_stmt)
+    tag_row = tag_result.one_or_none()
+    if tag_row is None:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    group_row = None
+    if group_id is not None:
+        group_stmt = (select(TagGroup.id, TagGroup.name).join(
+            TagGroupTag, TagGroupTag.group_id == TagGroup.id).where(
+                TagGroup.id == group_id,
+                TagGroupTag.tag_id == tag_id,
+            ))
+        group_result = await session.execute(group_stmt)
+        group_row = group_result.one_or_none()
+        if group_row is None:
+            raise HTTPException(status_code=404,
+                                detail="Tag is not in the specified tag group")
+    else:
+        first_group_stmt = (select(TagGroup.id, TagGroup.name).join(
+            TagGroupTag, TagGroupTag.group_id == TagGroup.id).where(
+                TagGroupTag.tag_id == tag_id,).order_by(TagGroup.id.asc()).limit(1))
+        first_group_result = await session.execute(first_group_stmt)
+        group_row = first_group_result.one_or_none()
+
+    records_stmt = (select(
+        SongTagHistory.id.label("history_id"),
+        SongTagHistory.room_id,
+        SongTagHistory.judged_by_user_id,
+        User.username.label("judged_by_username"),
+        SongTagHistory.created_at,
+    ).select_from(SongTagHistory).outerjoin(
+        User, User.id == SongTagHistory.judged_by_user_id).where(
+            SongTagHistory.song_id == song_id,
+            SongTagHistory.tag_id == tag_id,
+        ).order_by(
+            SongTagHistory.created_at.desc(),
+            SongTagHistory.id.desc(),
+        ))
+    records_result = await session.execute(records_stmt)
+    records_rows = records_result.all()
+
+    if not records_rows:
+        raise HTTPException(status_code=404,
+                            detail="No history records found for this song tag")
+
+    records = [
+        SongTagHistoryRecord(
+            history_id=row.history_id,
+            room_id=row.room_id,
+            judged_by_user_id=row.judged_by_user_id,
+            judged_by_username=row.judged_by_username,
+            created_at=row.created_at,
+        ) for row in records_rows
+    ]
+
+    return SongTagHistoryDetailResponse(
+        song_id=song_id,
+        tag_id=tag_row.id,
+        tag_name=tag_row.name,
+        group_id=group_row.id if group_row else None,
+        group_name=group_row.name if group_row else None,
+        total=len(records),
+        records=records,
+    )
 
 
 @song_router.put("/{song_id}", response_model=SongResponse)

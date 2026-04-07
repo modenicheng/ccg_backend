@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from cache import room_cache
 from cache.room_state_manager import RoundStateManager, RoomStateManager
@@ -37,6 +37,7 @@ from schemas.ws_messages.judge_schemas import (
     ShowSongData,
     ShowSongMessage,
     ShowSongRequestMessage,
+    SongInfo,
     TagData,
     TagGroupData,
 )
@@ -172,6 +173,18 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
     player_answers = await get_player_answers_for_judging(db_session, room_id, song_id,
                                                           song_index)
 
+    # 获取历史标签（按出现次数排序）
+    history_tags_stmt = (select(
+        models.SongTagHistory.tag_id,
+        func.count(models.SongTagHistory.id).label("selected_count"),
+    ).where(models.SongTagHistory.song_id == song_id).group_by(
+        models.SongTagHistory.tag_id).order_by(
+            func.count(models.SongTagHistory.id).desc(),
+            models.SongTagHistory.tag_id.asc(),
+        ))
+    history_tags_result = await db_session.execute(history_tags_stmt)
+    history_tag_ids = [row.tag_id for row in history_tags_result]
+
     logger.info("Player answers for judging: %s", player_answers)
 
     # 构建玩家答案列表
@@ -209,6 +222,16 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
 
     # 构建 JUDGING 事件数据
     judging_data = JudgingData(
+        song=SongInfo(
+            id=song.id,
+            title=song.title,
+            artist=song.artist,
+            album=song.album_name,
+            cover_url=song.cover_url,
+            platform_url=None,
+        ),
+        history_tag_ids=history_tag_ids,
+        reference_descriptions=[candidate.text for candidate in description_candidates],
         tag_groups=tag_groups_data,
         description_candidates=description_candidates,
         answers=player_answers_data,
@@ -316,23 +339,15 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
                                         "Cannot determine current song")
                 return
 
-            # 存储标签历史
+            # 存储标签历史（每次判分都记录，用于统计历史选择次数）
             for tag_id in data.data.correct_tags:
-                existing_stmt = select(models.SongTagHistory).where(
-                    models.SongTagHistory.song_id == song_id,
-                    models.SongTagHistory.tag_id == tag_id,
+                tag_history = models.SongTagHistory(
+                    song_id=song_id,
+                    tag_id=tag_id,
+                    judged_by_user_id=client.user.id,
+                    room_id=room_id,
                 )
-                existing_result = await db.execute(existing_stmt)
-                existing = existing_result.scalar_one_or_none()
-
-                if not existing:
-                    tag_history = models.SongTagHistory(
-                        song_id=song_id,
-                        tag_id=tag_id,
-                        judged_by_user_id=client.user.id,
-                        room_id=room_id,
-                    )
-                    db.add(tag_history)
+                db.add(tag_history)
 
             # 处理玩家选择的描述（增加 times_selected）
             for description_id in data.data.correct_description_ids:
