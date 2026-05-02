@@ -12,7 +12,7 @@ from utils.enumerations import MusicPlatform
 
 from .. import models
 
-l = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _apply_songlist_fields(
@@ -344,7 +344,7 @@ async def update_song_cached_path(
 ) -> Optional[models.Song]:
     """仅更新歌曲缓存路径，不覆盖其它业务字段。"""
     if not platform or not platform_song_id:
-        l.warning(
+        logger.warning(
             "Missing platform or platform_song_id for cache path update: %s, %s, skip updating",
             platform,
             platform_song_id,

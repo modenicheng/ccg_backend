@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from cache.schemas import PlaybackState
 from cache.room_cache import (
@@ -21,7 +22,7 @@ async def _build_playback_state_from_control(
     room_id: str,
     control_data: playback_schemas.PlayControlData,
     event_ts: int,
-    play_state: str,
+    play_state: Literal["playing", "paused"],
 ) -> PlaybackState:
     """Merge incoming control payload with cached playback state.
 

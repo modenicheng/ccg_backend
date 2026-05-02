@@ -14,7 +14,7 @@ from utils.audio_token import generate_audio_token, get_song_id_from_token
 from .. import models
 from .judge_related import get_room_song_queue
 
-l = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _utc_now_naive() -> datetime.datetime:
@@ -46,7 +46,7 @@ async def get_or_create_audio_token(
     room_song = result.scalar_one_or_none()
 
     if not room_song:
-        l.warning("RoomSong not found for room %s, song %s", room_id, song_id)
+        logger.warning("RoomSong not found for room %s, song %s", room_id, song_id)
         # 如果RoomSong不存在，创建新的token但不存储（理论上不应该发生）
         token = await generate_audio_token(song_id)
         return token
@@ -58,16 +58,17 @@ async def get_or_create_audio_token(
         if room_song.expire_at > current_time:
             existing_song_id = await get_song_id_from_token(room_song.temp_url)
             if existing_song_id == song_id:
-                l.debug("Using existing token for room %s, song %s", room_id, song_id)
+                logger.debug("Using existing token for room %s, song %s", room_id,
+                             song_id)
                 return room_song.temp_url
-            l.info(
+            logger.info(
                 "Existing token in DB is not resolvable in Redis or song_id mismatch "
                 "for room %s, song %s; regenerating",
                 room_id,
                 song_id,
             )
         else:
-            l.debug("Token expired for room %s, song %s", room_id, song_id)
+            logger.debug("Token expired for room %s, song %s", room_id, song_id)
 
     # 生成新token
     token = await generate_audio_token(song_id)
@@ -77,7 +78,7 @@ async def get_or_create_audio_token(
     room_song.temp_url = token
     room_song.expire_at = expire_at
 
-    l.info(
+    logger.info(
         "Created new audio token for room %s, song %s, expires at %s",
         room_id,
         song_id,
@@ -105,7 +106,7 @@ async def validate_audio_token(
     # 从token获取song_id
     song_id = await get_song_id_from_token(token)
     if not song_id:
-        l.debug("Invalid token or token expired: %s...", token[:8])
+        logger.debug("Invalid token or token expired: %s...", token[:8])
         return False
 
     # 查询RoomSong记录
@@ -116,21 +117,21 @@ async def validate_audio_token(
     room_song = result.scalar_one_or_none()
 
     if not room_song:
-        l.debug("RoomSong not found for room %s, song %s", room_id, song_id)
+        logger.debug("RoomSong not found for room %s, song %s", room_id, song_id)
         return False
 
     current_time = _utc_now_naive()
 
     # 验证token和过期时间
     if room_song.temp_url != token:
-        l.debug("Token mismatch for room %s, song %s", room_id, song_id)
+        logger.debug("Token mismatch for room %s, song %s", room_id, song_id)
         return False
 
     if not room_song.expire_at or room_song.expire_at <= current_time:
-        l.debug("Token expired for room %s, song %s", room_id, song_id)
+        logger.debug("Token expired for room %s, song %s", room_id, song_id)
         return False
 
-    l.debug("Token valid for room %s, song %s", room_id, song_id)
+    logger.debug("Token valid for room %s, song %s", room_id, song_id)
     return True
 
 
@@ -156,7 +157,7 @@ async def update_room_song_temp_token(
     room_song = result.scalar_one_or_none()
 
     if not room_song:
-        l.warning(
+        logger.warning(
             "Cannot update token: RoomSong not found for room %s, song %s",
             room_id,
             song_id,
@@ -169,8 +170,8 @@ async def update_room_song_temp_token(
     room_song.temp_url = token
     room_song.expire_at = expire_at
 
-    l.debug("Updated token for room %s, song %s, expires at %s", room_id, song_id,
-            expire_at)
+    logger.debug("Updated token for room %s, song %s, expires at %s", room_id, song_id,
+                 expire_at)
 
 
 async def prepare_preload_songs(  # pylint: disable=too-many-locals
@@ -188,12 +189,12 @@ async def prepare_preload_songs(  # pylint: disable=too-many-locals
     """
     song_queue = await get_room_song_queue(session, room_id)
     if not song_queue:
-        l.debug("No songs in room %s to prepare preload", room_id)
+        logger.debug("No songs in room %s to prepare preload", room_id)
         return []
 
     end_index = min(start_index + count, len(song_queue))
     if start_index >= end_index:
-        l.debug(
+        logger.debug(
             "Invalid preload range: start_index=%s, end_index=%s",
             start_index,
             end_index,
@@ -212,7 +213,7 @@ async def prepare_preload_songs(  # pylint: disable=too-many-locals
     for song_id in target_song_ids:
         song = songs_by_id.get(song_id)
         if not song:
-            l.warning(
+            logger.warning(
                 "Song %s not found while preparing preload for room %s",
                 song_id,
                 room_id,
@@ -227,7 +228,7 @@ async def prepare_preload_songs(  # pylint: disable=too-many-locals
             token_updated_count += 1
             platform_song_ids.append(str(song.platform_song_id))
         except Exception as e:  # pylint: disable=broad-exception-caught
-            l.warning(
+            logger.warning(
                 "Failed to refresh preload token for room %s, song %s: %s",
                 room_id,
                 song.id,
@@ -236,7 +237,7 @@ async def prepare_preload_songs(  # pylint: disable=too-many-locals
 
     await session.flush()
 
-    l.info(
+    logger.info(
         "Prepared preload for %s songs and updated tokens for %s songs "
         "in room %s (range %s-%s)",
         len(platform_song_ids),
@@ -307,8 +308,8 @@ async def update_room_current_song_index(
     room = result.scalar_one_or_none()
 
     if not room:
-        l.warning("Room %s not found", room_id)
+        logger.warning("Room %s not found", room_id)
         return
 
     room.current_song_index = song_index
-    l.debug("Updated room %s current_song_index to %s", room_id, song_index)
+    logger.debug("Updated room %s current_song_index to %s", room_id, song_index)

@@ -149,7 +149,7 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
     # 按 times_selected 降序排序，最多取 10 条
     description_history_stmt = select(models.SongDescriptionHistory).where(
         models.SongDescriptionHistory.song_id == song_id,
-        models.SongDescriptionHistory.is_correct == True,  # pylint: disable=singleton-comparison
+        models.SongDescriptionHistory.is_correct,
     ).order_by(models.SongDescriptionHistory.times_selected.desc()).limit(10)
     description_history_result = await db_session.execute(description_history_stmt)
     description_history_records = description_history_result.scalars().all()
@@ -321,7 +321,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to transition to COMPLETED when skip scoring: %s", e)
         # 广播ROUND_END事件
-        round_end_message = RoundEndMessage()
+        round_end_message = RoundEndMessage(event=GameEventType.ROUND_END.value)
         await clients.broadcast(room_id, round_end_message.model_dump())
         return
 

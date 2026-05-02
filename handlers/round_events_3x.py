@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 import cache.schemas as cache_schemas
 from cache import room_cache
+from cache.room_state_manager import RoundStateManager
 from cache.room_state_manager import RoomStateManager
 from client_manager import ClientManager, Client
 from db import crud
@@ -548,9 +549,10 @@ async def handle_submit_answer(
         return
 
     # 验证当前玩家是否为当前作答者
-    player_id = str(client.user.id)
+    player_id = client.user.id
+    player_id_str = str(player_id)
     current_answerer = await room_cache.get_room_current_answerer(room_id)
-    if current_answerer is None or str(current_answerer) != player_id:
+    if current_answerer is None or str(current_answerer) != player_id_str:
         await client.send_error(GameEventType.SUBMIT_ANSWER, "Not your turn to answer")
         return
 
@@ -581,7 +583,7 @@ async def handle_submit_answer(
             db.add(player_answer)
             logger.info(
                 "Saved answer for player %s song %d in room %s",
-                player_id,
+                player_id_str,
                 song_id,
                 room_id,
             )
@@ -612,7 +614,7 @@ async def handle_submit_answer(
         # 找到当前玩家的位置
         current_player_index = -1
         for i, item in enumerate(current_queue):
-            if str(item.player_id) == player_id:
+            if str(item.player_id) == player_id_str:
                 current_player_index = i
                 break
 
@@ -629,7 +631,7 @@ async def handle_submit_answer(
                 logger.info(
                     "Answerer already transitioned away from player %s in room %s, "
                     "skipping duplicate SUBMIT_ANSWER",
-                    player_id,
+                    player_id_str,
                     room_id,
                 )
                 return
@@ -664,7 +666,7 @@ async def handle_submit_answer(
                 logger.info(
                     "Answerer already transitioned away from player %s in room %s, "
                     "skipping duplicate SUBMIT_ANSWER",
-                    player_id,
+                    player_id_str,
                     room_id,
                 )
                 return
@@ -673,7 +675,7 @@ async def handle_submit_answer(
             should_finish_answering = True
             logger.info(
                 "No next player in queue after player %s submission in room %s",
-                player_id,
+                player_id_str,
                 room_id,
             )
     else:

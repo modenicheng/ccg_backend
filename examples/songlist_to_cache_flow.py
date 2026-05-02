@@ -18,7 +18,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, cast
 
 import dotenv
 # pylint: disable=import-error
@@ -29,12 +29,6 @@ from sqlalchemy import and_, select
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-# pylint: disable=import-error,wrong-import-position
-from db import models
-from db.session import session_scope
-from mq.tasks import _download_and_cache_song_impl, _fetch_songlist_impl
-# pylint: enable=import-error,wrong-import-position
 
 dotenv.load_dotenv("../.env")
 
@@ -70,12 +64,19 @@ async def run_songlist_to_cache_flow(songlist_id: int) -> Tuple[int, str, str]:
         logger.warning(
             "CCG_QQ_MUSIC_COOKIE is empty; some songlists may return empty tracks")
 
+    # pylint: disable=import-error,wrong-import-position
+    from db import models
+    from db.session import session_scope
+    from mq.tasks import _download_and_cache_song_impl, _fetch_songlist_impl
+    # pylint: enable=import-error,wrong-import-position
+
     logger.info("Step 1: Fetching and persisting songlist: %d", songlist_id)
     result = await _fetch_songlist_impl(songlist_id)
     if not result:
         raise SonglistToCacheError("fetch_songlist failed")
 
-    db_songs, songlist = result
+    songlist = cast(models.Songlist, result["songlist"])
+    db_songs = cast(list[models.Song], result["songs"])
     if not db_songs:
         raise SonglistToCacheError(
             "Songlist persisted but has no songs. "
