@@ -163,10 +163,14 @@ def _ensure_background_event_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
-def _run_async(coro: Coroutine[Any, Any, T]) -> T:
+def _run_async(coro: Coroutine[Any, Any, T], timeout: float = 300.0) -> T:
     loop = _ensure_background_event_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
+    try:
+        return future.result(timeout=timeout)
+    except TimeoutError:
+        future.cancel()
+        raise TimeoutError(f"Async operation timed out after {timeout}s") from None
 
 
 async def _with_retry(

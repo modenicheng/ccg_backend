@@ -519,6 +519,48 @@ async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) 
     return True
 
 
+# Lua script: atomically check current answerer and set if empty or same player.
+# Returns 1 if set succeeded, 0 if another player is already the answerer.
+_TRY_SET_ANSWERER_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false or current == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+    return 1
+end
+return 0
+"""
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="atomically setting current answerer")
+async def try_set_room_current_answerer(redis: Redis, room_id: str,
+                                        player_id: int) -> bool:
+    """Atomically set current answerer only if nobody else is already answering.
+
+    Uses a Lua script to make the GET + conditional SET a single atomic
+    operation, preventing the TOCTOU race where multiple concurrent
+    ATTEMPT_ANSWER handlers all observe ``current_answerer is None`` and
+    each enter the "first answerer" code-path.
+
+    Args:
+        redis: Redis connection
+        room_id: The room identifier
+        player_id: The player to set as current answerer
+
+    Returns:
+        True if the answerer was set (either was empty or already same
+        player), False if someone else is already the answerer.
+    """
+    key = RedisKeys.answerer(room_id)
+    expected = str(player_id)
+    result = await cast(
+        Awaitable[int],
+        redis.eval(_TRY_SET_ANSWERER_SCRIPT, 1, key, expected, expected,
+                   ROOM_TTL_SECONDS),
+    )
+    return bool(result)
+
+
 async def delete_all_room_cache(room_id: str) -> None:
     """删除房间所有 Redis 缓存（用于房间解散时清理）
 

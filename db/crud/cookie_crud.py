@@ -57,7 +57,7 @@ async def add_or_update_cookie(
 
 async def get_all_active_cookies(session: AsyncSession) -> list[dict[str, Any]]:
     """Get all active cookies from database."""
-    stmt = select(CookieConfig).where(CookieConfig.is_active is True)
+    stmt = select(CookieConfig).where(CookieConfig.is_active.is_(True))
     results = await session.scalars(stmt)
 
     cookies = []

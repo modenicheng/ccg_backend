@@ -403,19 +403,10 @@ async def handle_attempt_answer(
         excluded_clients={client},
     )
 
-    current_answerer = await room_cache.get_room_current_answerer(room_id)
-
-    # 若已有当前作答者，新抢答只入队，不抢占当前作答权
-    if current_answerer is not None:
-        logger.info(
-            "Player %s queued in room %s while player %s is answering",
-            player_id,
-            room_id,
-            current_answerer,
-        )
-        return
-
     # 当前无人作答：从队列头选出本轮作答者，开始作答阶段
+    # NOTE: current_answerer 查询已移除——改用原子 CAS 操作代替
+    # 原来的 get + set 是 TOCTOU 竞态：多个并发 ATTEMPT_ANSWER 都能看到 None，
+    # 全部进入"首个作答者"路径，导致多次 PAUSE 广播和状态错误。
     answer_queue = await room_cache.get_answer_queue(room_id)
     if not answer_queue:
         logger.warning(
@@ -436,7 +427,6 @@ async def handle_attempt_answer(
         if queue_tail_index >= 0 and queue_tail_index + 1 < len(answer_queue):
             next_answerer = answer_queue[queue_tail_index + 1].player_id
         elif queue_tail_index < 0:
-            # 队尾边界不存在于队列（例如被踢出），默认从当前新抢答玩家继续
             next_answerer = player_id
 
     logger.debug(
@@ -444,6 +434,8 @@ async def handle_attempt_answer(
         room_id,
         playback_state,
     )
+
+    # 先准备好暂停状态（不产生副作用），再用原子 CAS 决定是否执行
     if playback_state.play_state == "playing":
         paused_progress_ms = playback_state.progress_ms
         if playback_state.offset_ts and playback_state.offset_ts > 0:
@@ -459,12 +451,27 @@ async def handle_attempt_answer(
                 "progress_ms": paused_progress_ms,
                 "offset_ts": server_ts,
             })
+    else:
+        new_playback_state = None
+
+    # 原子 CAS：仅当当前无作答者（或同一玩家重复提交）时才设置成功
+    set_ok = await room_cache.try_set_room_current_answerer(room_id, next_answerer)
+    if not set_ok:
+        logger.info(
+            "Race lost for player %s in room %s: another answerer already set",
+            player_id,
+            room_id,
+        )
+        return
+
+    # CAS 成功——现在安全执行副作用
+    if new_playback_state is not None:
         await room_cache.set_room_playback_state(room_id, new_playback_state)
         await handle_round_state_transition(clients, client, room_id,
                                             RoundState.ANSWERING)
 
         pause_message = PauseMessage(data=PlayControlData(
-            progress_ms=paused_progress_ms,
+            progress_ms=new_playback_state.progress_ms,
             offset_ts=server_ts,
             audio_url=new_playback_state.audio_url,
         ))
@@ -476,11 +483,8 @@ async def handle_attempt_answer(
             next_answerer,
         )
 
-    # 设置当前作答玩家
-    await room_cache.set_room_current_answerer(room_id, next_answerer)
     await room_cache.sync_answer_queue_is_answering(room_id, next_answerer)
 
-    # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID）
     your_turn_data = YourTurnData(user_id=int(next_answerer))
     your_turn_message = YourTurnMessage(data=your_turn_data)
     await clients.broadcast(room_id, your_turn_message.model_dump())

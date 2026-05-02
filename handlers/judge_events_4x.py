@@ -323,7 +323,13 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     players: list[dict[str, int | str]] = []
     player_scores: dict[int, int] = {}
 
-    # 使用数据库会话获取数据
+    # Variables collected during DB session for post-commit broadcasts
+    show_answer_data: ShowAnswerData | None = None
+    score_entries: list[ScoreEntry] = []
+    transition_success: bool = False
+    game_end_result: dict | None = None
+
+    # Single session_scope: ALL DB work (scores, history, round state, game end check)
     try:
         async with session_scope() as db:
             # 检查房间是否存在
@@ -464,6 +470,49 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
 
             logger.info("Saved scoring results to database for room %s", room_id)
 
+            # Collect broadcast data for SHOW_ANSWER
+            show_answer_data = ShowAnswerData(
+                tag_ids=data.data.correct_tags,
+                description_ids=data.data.correct_description_ids,
+            )
+
+            # Collect broadcast data for SCORE_UPDATE
+            score_entries = [
+                ScoreEntry(
+                    player_id=player_id,
+                    username=next(
+                        (str(p["username"]) for p in players if p["id"] == player_id),
+                        f"Player {player_id}",
+                    ),
+                    score=player_scores.get(player_id, 0),
+                ) for player_id in player_scores
+            ]
+
+            # 判分完成后，回合状态转移到 COMPLETED
+            transition_success = await RoundStateManager.transition_round_state(
+                room_id=room_id,
+                target=RoundState.COMPLETED,
+                session=db,
+            )
+            if transition_success:
+                logger.info("Room %s round state transitioned to COMPLETED", room_id)
+
+            # 检查是否所有歌曲都已播放完毕，如果是则自动结束游戏
+            song_queue = await get_room_song_queue(db, room_id)
+            if song_queue:
+                current_index = room.current_song_index or 0
+                if current_index >= len(song_queue) - 1:
+                    logger.info(
+                        "All songs completed for room %s (current=%d, total=%d), "
+                        "auto-ending game",
+                        room_id,
+                        current_index,
+                        len(song_queue),
+                    )
+                    game_end_result = await RoomStateManager.end_game(room_id, db)
+            else:
+                logger.warning("Room %s has no songs when checking game end", room_id)
+
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during judge submission for room %s: %s", room_id, e)
         await client.send_error(GameEventType.JUDGE_SUBMIT.value,
@@ -473,88 +522,34 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     # 计分完成后保留当前回合抢答信息，直到下一轮开始时再统一重置。
     # 这样前端在 COMPLETED 阶段仍可展示本轮抢答/作答上下文。
 
+    # --- Post-commit: all Redis operations and WebSocket broadcasts ---
+
     # 广播正确答案（SHOW_ANSWER事件）
-    show_answer_data = ShowAnswerData(
-        tag_ids=data.data.correct_tags,
-        description_ids=data.data.correct_description_ids,
-    )
     show_answer_message = ShowAnswerMessage(data=show_answer_data)
     await clients.broadcast(room_id, show_answer_message.model_dump())
 
-    # 构建得分更新消息
-    score_entries = [
-        ScoreEntry(
-            player_id=player_id,
-            username=next(
-                (str(p["username"]) for p in players if p["id"] == player_id),
-                f"Player {player_id}",
-            ),
-            score=player_scores.get(player_id, 0),
-        ) for player_id in player_scores
-    ]
-
+    # 广播得分更新事件
     score_update_data = ScoreUpdateData(scores=score_entries)
     score_update_message = ScoreUpdateMessage(data=score_update_data)
-
-    # 广播得分更新事件
     await clients.broadcast(room_id, score_update_message.model_dump())
 
     logger.info("Scoring completed for room %s", room_id)
 
-    # 判分完成后，回合状态转移到 COMPLETED
-    try:
-        async with session_scope() as session:
-            success = await RoundStateManager.transition_round_state(
-                room_id=room_id,
-                target=RoundState.COMPLETED,
-                session=session,
-            )
-            if success:
-                await clients.broadcast(
-                    room_id,
-                    build_round_state_update_message(RoundState.COMPLETED).model_dump(),
-                )
-                logger.info("Room %s round state transitioned to COMPLETED", room_id)
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error(
-            "Failed to transition to COMPLETED after scoring for room %s: %s",
+    # 广播回合状态更新
+    if transition_success:
+        await clients.broadcast(
             room_id,
-            e,
+            build_round_state_update_message(RoundState.COMPLETED).model_dump(),
         )
 
-    # 检查是否所有歌曲都已播放完毕，如果是则自动结束游戏
-    try:
-        async with session_scope() as session:
-            room = await fetch_room_object(session, room_id)
-            if not room:
-                logger.error("Room %s not found when checking game end", room_id)
-                return
-
-            song_queue = await get_room_song_queue(session, room_id)
-            if not song_queue:
-                logger.warning("Room %s has no songs when checking game end", room_id)
-                return
-
-            current_index = room.current_song_index or 0
-            # 如果当前索引已经是最后一首歌，则游戏结束
-            if current_index >= len(song_queue) - 1:
-                logger.info(
-                    "All songs completed for room %s (current=%d, total=%d), "
-                    "auto-ending game",
-                    room_id,
-                    current_index,
-                    len(song_queue),
-                )
-                # 使用 RoomStateManager 结束游戏
-                result = await RoomStateManager.end_game(room_id, session)
-                if result["success"]:
-                    game_over_data = RoomSchema.GameOverData(
-                        manual=False, final_scores=result["final_scores"])
-                    message = RoomSchema.GameOverMessage(data=game_over_data)
-                    await clients.broadcast(room_id, message.model_dump())
-                    logger.info("Game auto-ended for room %s", room_id)
-                else:
-                    logger.error("Failed to auto-end game for room %s: %s", room_id,
-                                 result.get("error"))
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error checking game end: %s", e)
+    # 广播游戏结束（如果自动结束）
+    if game_end_result is not None:
+        if game_end_result["success"]:
+            game_over_data = RoomSchema.GameOverData(
+                manual=False, final_scores=game_end_result["final_scores"])
+            message = RoomSchema.GameOverMessage(data=game_over_data)
+            await clients.broadcast(room_id, message.model_dump())
+            logger.info("Game auto-ended for room %s", room_id)
+        else:
+            logger.error("Failed to auto-end game for room %s: %s", room_id,
+                         game_end_result.get("error"))
