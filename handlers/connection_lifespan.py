@@ -172,36 +172,30 @@ async def on_connect(  # pylint: disable=too-many-statements
             logger.warning("Client %s WebSocket not connected, skipping send",
                            cl.user.id)
 
+    # 先向新连接的客户端发送房间状态，如果发送失败则不广播加入消息
+    # 避免 WS 已断开时仍广播 PlayerJoinMessage 导致其他客户端收到无意义的加入/离开消息序列
+    try:
+        await send_if_connected()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error(
+            "Failed to send initial state to client %s: %s",
+            cl.user.id,
+            e,
+            exc_info=True,
+        )
+        return
+
     try:
         player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
         join_message = RoomSchema.PlayerJoinMessage(
             data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-
-        res = await asyncio.gather(
-            send_if_connected(),
-            clients.broadcast(room_id, join_message.model_dump(),
-                              excluded_clients={cl}),
-            return_exceptions=True,
-        )
+        await clients.broadcast(room_id,
+                                join_message.model_dump(),
+                                excluded_clients={cl})
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error sending messages: %s", e, exc_info=True)
+        logger.error("Error broadcasting join message: %s", e, exc_info=True)
 
-        # 即使出错也要尝试发送房间状态给客户端
-        res = await asyncio.gather(
-            send_if_connected(),
-            return_exceptions=True,
-        )
-
-    for i, r in enumerate(res):
-        if isinstance(r, Exception):
-            logger.error(
-                "Exception occurred in asyncio.gather task %d for client %s: %s",
-                i,
-                cl,
-                r,
-                exc_info=r,
-            )
-    logger.debug("Finished sending initial room state to client %s: %s", cl, res)
+    logger.debug("Finished sending initial room state to client %s", cl)
 
 
 async def on_disconnect(

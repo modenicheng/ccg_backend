@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import update
+from starlette.websockets import WebSocketState
 
 from cache.connection import redis_client
 from client_manager import ClientManager, Client
@@ -211,16 +212,19 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
         existing_clients = clients_manager.get_clients(roomid).copy()
         for existing_client in existing_clients:
             if existing_client.user_id == user.id:
-                # 检查连接是否已经断开
-                # WebSocket 的 client 属性为 None 或 application 为 None 表示连接已关闭
-                if (existing_client.ws.client is None or
-                        existing_client.ws.application is None or
-                        not hasattr(existing_client.ws, 'client')):
-                    # 连接已断开，从管理器中移除
-                    logger.info(
-                        "Cleaning up stale connection for user %s in room %s",
+                try:
+                    if existing_client.ws.client_state != WebSocketState.CONNECTED:
+                        logger.info(
+                            "Cleaning up stale connection for user %s in room %s",
+                            user.id,
+                            roomid,
+                        )
+                        clients_manager.pop(roomid, existing_client)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.warning(
+                        "Error checking stale connection for user %s, removing it",
                         user.id,
-                        roomid,
+                        exc_info=True,
                     )
                     clients_manager.pop(roomid, existing_client)
 
