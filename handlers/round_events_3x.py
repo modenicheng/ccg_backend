@@ -538,10 +538,10 @@ async def handle_submit_answer(
 ) -> None:
     """处理玩家提交答案事件"""
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements,unused-argument
-    # Validate round state: only allow submissions during ANSWERING
+    # Validate round state: allow submissions during PLAYING_AUDIO or ANSWERING
     async with session_scope() as check_db:
         round_state = await RoundStateManager.get_round_state(room_id, check_db)
-    if round_state != RoundState.ANSWERING:
+    if round_state not in (RoundState.PLAYING_AUDIO, RoundState.ANSWERING):
         await client.send_error(
             GameEventType.SUBMIT_ANSWER,
             "Cannot submit answer in the current round state",
