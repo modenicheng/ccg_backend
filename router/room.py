@@ -452,7 +452,7 @@ async def set_test_audio(
             roomid,
             exc,
         )
-        raise HTTPException(status_code=500, detail=f"Failed to broadcast: {str(exc)}")
+        raise HTTPException(status_code=500, detail="Failed to broadcast")
 
     return {
         "success": True,
@@ -566,8 +566,7 @@ async def _broadcast_test_audio_from_cdn(
                 roomid,
                 exc,
             )
-            raise HTTPException(status_code=500,
-                                detail=f"Failed to broadcast: {str(exc)}")
+            raise HTTPException(status_code=500, detail="Failed to broadcast")
     else:
         logger.info(
             "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to -1.",
@@ -707,8 +706,7 @@ async def _broadcast_test_audio_from_db(
                 roomid,
                 exc,
             )
-            raise HTTPException(status_code=500,
-                                detail=f"Failed to broadcast: {str(exc)}")
+            raise HTTPException(status_code=500, detail="Failed to broadcast")
     else:
         logger.info(
             "Skipping broadcast for room %s: no clients connected yet. test_audio_song_id is set to %s.",
@@ -836,5 +834,4 @@ async def dissolve_room(
     except Exception as e:
         logger.error("Failed to dissolve room %s: %s", roomid, e, exc_info=True)
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to dissolve room: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="Failed to dissolve room") from e

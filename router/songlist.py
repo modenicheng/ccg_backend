@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import ORJSONResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from db.crud import create_task_record, get_task_record_by_task_id, count_songlist_songs
-from db.models import Songlist, SonglistSong, Tasks, Song
+from db.crud import create_task_record, get_task_record_by_task_id, count_songlist_songs, authenticate_user_global
+from db.models import Songlist, SonglistSong, Tasks, Song, User
 from db.session import get_db
 from schemas.songlist import (
     SonglistBase,
@@ -26,6 +26,25 @@ from mq import tasks
 logger = get_logger(__name__)
 
 songlist_router = APIRouter(prefix="/api/songlists", tags=["songlists"])
+
+
+async def _require_auth(
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+) -> User:
+    """验证请求用户身份（全局 CRUD 端点通用鉴权）。"""
+    token = request.query_params.get("token")
+    user_id_raw = request.query_params.get("user_id")
+    if not token or not user_id_raw:
+        raise HTTPException(status_code=403, detail="Authentication required")
+    try:
+        user_id = int(user_id_raw)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid user_id")
+    user = await authenticate_user_global(session, token, user_id)
+    if not user:
+        raise HTTPException(status_code=403, detail="Authentication failed")
+    return user
 
 
 async def _build_task_response(session: AsyncSession,
@@ -101,8 +120,12 @@ async def songlist_list(
 
 
 @songlist_router.post("/")
-async def create_songlist_from_mid(data: SonglistFromMidRequest,
-                                   session: AsyncSession = Depends(get_db)):
+async def create_songlist_from_mid(
+        data: SonglistFromMidRequest,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+):
     """Create a songlist from platform mid."""
     if data.platform == MusicPlatform.QQ:
         task_id = str(uuid4())
@@ -129,10 +152,10 @@ async def create_songlist_from_mid(data: SonglistFromMidRequest,
             await session.commit()
             logger.info("Created task record for songlist fetch: %s", task_id)
         except Exception as e:
-            logger.error("Failed to create task record: %s", e)
+            logger.error("Failed to create task record: %s", e, exc_info=True)
             await session.rollback()
             raise HTTPException(status_code=500,
-                                detail=f"Failed to create task record: {str(e)}") from e  # pylint: disable=raise-missing-from
+                                detail="Failed to create task record") from e
         return TaskResponse(
             task_id=task_id,
             task_name="fetch_songlist",
@@ -204,7 +227,9 @@ async def get_songlist_detail(
 async def update_songlist(
         songlist_id: int,
         songlist_data: SonglistBase,
+        request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> SonglistResponse:
     """Update songlist details."""
     stmt = select(Songlist).where(Songlist.id == songlist_id)
@@ -240,7 +265,12 @@ async def update_songlist(
 
 
 @songlist_router.delete("/{songlist_id}")
-async def delete_songlist(songlist_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_songlist(
+        songlist_id: int,
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+):
     """Delete a songlist."""
     stmt = select(Songlist).where(Songlist.id == songlist_id)
     result = await session.execute(stmt)

@@ -2,35 +2,46 @@
 
 from __future__ import annotations
 
-import datetime
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from db.crud import authenticate_user_global
 from db.session import get_db
 from db import models
-from cache.file_cache import load_song_asset_with_cache
+from cache.file_cache import build_file_response
 from utils.audio_token import get_song_id_from_token
 from utils import get_logger
-from utils.http_utils import build_range_response
 
 logger = get_logger(__name__)
 
 audio_stream_router = APIRouter(prefix="/api/songs", tags=["audio"])
 
 
-def _utc_now_naive() -> datetime.datetime:
-    """Return naive UTC time matching database DateTime(timezone=False) field."""
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+async def _require_auth(
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+) -> models.User:
+    """验证请求用户身份（全局 CRUD 端点通用鉴权）。"""
+    token = request.query_params.get("token")
+    user_id_raw = request.query_params.get("user_id")
+    if not token or not user_id_raw:
+        raise HTTPException(status_code=403, detail="Authentication required")
+    try:
+        user_id = int(user_id_raw)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid user_id")
+    user = await authenticate_user_global(session, token, user_id)
+    if not user:
+        raise HTTPException(status_code=403, detail="Authentication failed")
+    return user
 
 
 @audio_stream_router.get("/stream/{token}")
 async def stream_audio(
         token: str,
-        request: Request,
         db: AsyncSession = Depends(get_db),
 ):
     """Stream audio file using temporary token."""
@@ -54,32 +65,19 @@ async def stream_audio(
         raise HTTPException(status_code=404, detail="Audio not available")
 
     try:
-        content, media_type = await load_song_asset_with_cache(song.cached_path)
+        return build_file_response(song.cached_path)
+    except HTTPException:
+        raise
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error loading audio file: %s", e)
         raise HTTPException(status_code=500, detail="Failed to load audio") from e  # pylint: disable=raise-missing-from
-
-    file_size = len(content)
-    range_header = request.headers.get("range")
-
-    if range_header:
-        return build_range_response(content, media_type, range_header)
-
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_size),
-        },
-    )
 
 
 @audio_stream_router.get("/file/{song_id}")
 async def get_audio_file(
         song_id: int,
-        request: Request,
         db: AsyncSession = Depends(get_db),
+        _auth: models.User = Depends(_require_auth),
 ):
     """Stream audio file for a song (compatible with audio tag)."""
     logger.debug("Audio file request for song id: %s", song_id)
@@ -98,13 +96,11 @@ async def get_audio_file(
         raise HTTPException(status_code=404, detail="Audio file not found")
 
     try:
-        content, media_type = await load_song_asset_with_cache(song.cached_path)
+        content_disposition = (
+            f'inline; filename="{os.path.basename(song.cached_path)}"')
+        return build_file_response(song.cached_path, content_disposition)
+    except HTTPException:
+        raise
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error loading audio file for streaming: %s", e)
         raise HTTPException(status_code=500, detail="Failed to load audio") from e
-
-    range_header = request.headers.get("range")
-    response = build_range_response(content, media_type, range_header)
-    response.headers["Content-Disposition"] = (
-        f'inline; filename="{os.path.basename(song.cached_path)}"')
-    return response

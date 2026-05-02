@@ -118,5 +118,5 @@ async def handle_round_state_update(
         logger.error("Error handling round state update: %s", e, exc_info=True)
         await client.send_error(
             GameEventType.ROUND_STATE_UPDATE,
-            f"Error handling round state update: {str(e)}",
+            "Error handling round state update",
         )

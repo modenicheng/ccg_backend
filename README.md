@@ -93,7 +93,7 @@ ccg_backend/
 ├─ cache/
 │  ├─ room_cache.py           # 房间状态缓存
 │  ├─ room_state_manager.py   # 回合/播放状态管理
-│  ├─ file_cache.py           # 音频文件 LRU 缓存
+│  ├─ file_cache.py           # 音频文件磁盘流式响应（FileResponse）
 │  ├─ connection.py           # Redis 连接
 │  ├─ cookie_rotation.py      # Cookie 轮换管理
 │  ├─ schemas.py              # 缓存 Schema 定义
@@ -304,6 +304,18 @@ ccg_backend/
 通过 `CCG_LOG_LEVEL` 控制日志级别（DEBUG, INFO, WARNING, ERROR）。
 开发环境建议使用 `DEBUG`，生产环境使用 `INFO` 或 `WARNING`。
 
+#### 安全审计（2026-05）
+
+后端经过两轮专业代码审计，修复了 7 个 Critical、6 个 High 级别问题。审计详情见 `docs/AUDIT_FIXES.md`。关键修复：
+
+- 全局 CRUD 端点（歌曲/歌单/标签）增加鉴权（`_require_auth`）
+- WebSocket 抢答/提交答案增加回合状态校验 + Redis Lua CAS 原子操作
+- 音频文件从内存 LRU 缓存改为磁盘流式响应（`FileResponse`），降低内存占用
+- 所有 HTTP/WS 错误响应移除内部异常信息泄露
+- Redis 连接增加 `asyncio.Lock` 防止并发创建
+- 音频下载使用临时文件 + 原子替换，防止损坏文件残留
+- PostgreSQL 专有 SQL 改为兼容 SQLite 的通用写法
+
 ### 4.8 异步任务进程（可选但推荐）
 
 需要启用 Huey 消费者以处理歌单抓取/音频下载：
@@ -340,7 +352,7 @@ Huey 任务包括：
 - 歌单导入失败：先确认 `CCG_QQ_MUSIC_COOKIE` 有效，检查 Cookie 是否在有效期内。
 - 房间状态不同步：检查 Redis 可用性与后端日志中的事件分发错误。
 - Cookie 刷新失败：检查 `CCG_QQ_MUSIC_COOKIES` 配置，确保有多个可用 Cookie 用于轮换。
-- 音频无法播放：检查 `CCG_AUDIO_DOWNLOAD_DIR` 目录权限，查看音频下载任务是否成功。
+- 音频无法播放：检查 `CCG_AUDIO_DOWNLOAD_DIR` 目录权限，查看 Huey 音频下载任务日志是否成功。
 - 内存占用过高：访问 `/memory/report` 查看详细内存使用报告。
 
 ---

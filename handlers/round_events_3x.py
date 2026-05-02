@@ -334,6 +334,16 @@ async def handle_attempt_answer(
     if client is None or room_id is None:
         return
 
+    # Validate round state: only allow attempts during PLAYING_AUDIO or ANSWERING
+    async with session_scope() as check_db:
+        round_state = await RoundStateManager.get_round_state(room_id, check_db)
+    if round_state not in (RoundState.PLAYING_AUDIO, RoundState.ANSWERING):
+        await client.send_error(
+            GameEventType.ATTEMPT_ANSWER.value,
+            "Cannot answer in the current round state",
+        )
+        return
+
     # 获取玩家ID和抢答时的时间/进度信息
     # 使用当前连接的认证用户ID，避免客户端伪造user_id
     player_id = client.user.id
@@ -527,6 +537,16 @@ async def handle_submit_answer(
 ) -> None:
     """处理玩家提交答案事件"""
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements,unused-argument
+    # Validate round state: only allow submissions during ANSWERING
+    async with session_scope() as check_db:
+        round_state = await RoundStateManager.get_round_state(room_id, check_db)
+    if round_state != RoundState.ANSWERING:
+        await client.send_error(
+            GameEventType.SUBMIT_ANSWER,
+            "Cannot submit answer in the current round state",
+        )
+        return
+
     # 验证当前玩家是否为当前作答者
     player_id = str(client.user.id)
     current_answerer = await room_cache.get_room_current_answerer(room_id)
@@ -567,8 +587,7 @@ async def handle_submit_answer(
             )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Failed to save player answer to database: %s", e)
-        await client.send_error(GameEventType.SUBMIT_ANSWER,
-                                f"Failed to save answer: {str(e)}")
+        await client.send_error(GameEventType.SUBMIT_ANSWER, "Failed to save answer")
         return
 
     # 广播答案给所有玩家（ANSWER_BROADCAST事件）
@@ -601,7 +620,19 @@ async def handle_submit_answer(
             # 有下一个玩家
             next_player_item = current_queue[current_player_index + 1]
             next_player = next_player_item.player_id
-            await room_cache.set_room_current_answerer(room_id, next_player)
+            # Use CAS to atomically check current == player_id before
+            # transitioning.  Prevents TOCTOU where concurrent SUBMIT_ANSWER
+            # handlers both read the same queue and overwrite each other.
+            transition_ok = await room_cache.transition_room_current_answerer(
+                room_id, int(player_id), next_player)
+            if not transition_ok:
+                logger.info(
+                    "Answerer already transitioned away from player %s in room %s, "
+                    "skipping duplicate SUBMIT_ANSWER",
+                    player_id,
+                    room_id,
+                )
+                return
             await room_cache.sync_answer_queue_is_answering(room_id, next_player)
 
             # 广播给全房间：无论目标连接是否存在，都要让前端状态一致
@@ -627,7 +658,16 @@ async def handle_submit_answer(
             logger.info("Next player in queue: %s", next_player)
         else:
             # 队列无后续玩家（包括当前玩家未命中队列），恢复播放
-            await room_cache.clear_room_current_answerer(room_id)
+            transition_ok = await room_cache.transition_room_current_answerer(
+                room_id, int(player_id), None)
+            if not transition_ok:
+                logger.info(
+                    "Answerer already transitioned away from player %s in room %s, "
+                    "skipping duplicate SUBMIT_ANSWER",
+                    player_id,
+                    room_id,
+                )
+                return
             await room_cache.sync_answer_queue_is_answering(room_id, -1)
             await room_cache.set_answer_queue_tail_player_id(room_id, int(player_id))
             should_finish_answering = True

@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import select, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
-from cache.file_cache import load_song_asset_with_cache
+from cache.file_cache import build_file_response
 from config import app_config
+from db.crud import authenticate_user_global
 from db.models import (
     Song,
     Room,
@@ -32,12 +33,30 @@ from schemas.song import (
 )
 from mq import tasks
 from utils import get_logger
-from utils.http_utils import build_range_response
 from utils.enumerations import RoomStatus
 
 logger = get_logger(__name__)
 
 song_router = APIRouter(prefix="/api/songs", tags=["songs"])
+
+
+async def _require_auth(
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+) -> User:
+    """验证请求用户身份（全局 CRUD 端点通用鉴权）。"""
+    token = request.query_params.get("token")
+    user_id_raw = request.query_params.get("user_id")
+    if not token or not user_id_raw:
+        raise HTTPException(status_code=403, detail="Authentication required")
+    try:
+        user_id = int(user_id_raw)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid user_id")
+    user = await authenticate_user_global(session, token, user_id)
+    if not user:
+        raise HTTPException(status_code=403, detail="Authentication failed")
+    return user
 
 
 @song_router.get("/", response_model=SongListResponse)
@@ -74,7 +93,10 @@ async def song_list(
 
 @song_router.post("/", response_model=SongResponse)
 async def create_song(
-    song_data: SongCreate, session: AsyncSession = Depends(get_db)) -> SongResponse:
+        song_data: SongCreate,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+) -> SongResponse:
     """Create a new song."""
     # 检查是否已存在相同的平台歌曲ID
     if song_data.platform_song_id:
@@ -109,10 +131,9 @@ async def create_song(
         await session.refresh(song)
         logger.info("Song created successfully with id: %s", song.id)
     except Exception as e:
-        logger.error("Failed to create song: %s", e)
+        logger.error("Failed to create song: %s", e, exc_info=True)
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to create song: {str(e)}") from e  # pylint: disable=raise-missing-from
+        raise HTTPException(status_code=500, detail="Failed to create song") from e
     # Convert SQLAlchemy object to dictionary to avoid async context issues
     return SongResponse.model_validate(
         {c.name: getattr(song, c.name) for c in song.__table__.columns})
@@ -267,8 +288,11 @@ async def get_song_tag_history_records(
 
 @song_router.put("/{song_id}", response_model=SongResponse)
 async def update_song(
-    song_id: int, song_data: SongCreate,
-    session: AsyncSession = Depends(get_db)) -> SongResponse:
+        song_id: int,
+        song_data: SongCreate,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+) -> SongResponse:
     """Update an existing song."""
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
@@ -288,7 +312,11 @@ async def update_song(
 
 
 @song_router.delete("/{song_id}")
-async def delete_song(song_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_song(
+        song_id: int,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+):
     """Delete a song by ID."""
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)
@@ -318,8 +346,8 @@ async def delete_song(song_id: int, session: AsyncSession = Depends(get_db)):
 @song_router.get("/cache/{song_id}")
 async def get_song_asset(
         song_id: int,
-        request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> Response:
     """Get cached audio asset for a song."""
     stmt = select(Song).where(Song.id == song_id)
@@ -330,19 +358,19 @@ async def get_song_asset(
     if not song.cached_path:
         raise HTTPException(status_code=404,
                             detail="Cached path not found for this song")
-    content, media_type = await load_song_asset_with_cache(song.cached_path)
-    range_header = request.headers.get("range")
-    response = build_range_response(content, media_type, range_header)
-    response.headers["Content-Disposition"] = (
-        f'inline; filename="{os.path.basename(song.cached_path)}"')
-    return response
+    content_disposition = (f'inline; filename="{os.path.basename(song.cached_path)}"')
+    return build_file_response(song.cached_path, content_disposition)
 
 
 BASE_ASSETS_PATH = app_config.audio_download_dir
 
 
 @song_router.post("/cache/{song_id}")
-async def cache_song_asset(song_id: int, session: AsyncSession = Depends(get_db)):
+async def cache_song_asset(
+        song_id: int,
+        session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
+):
     """Trigger caching of audio asset for a song."""
     stmt = select(Song).where(Song.id == song_id)
     result = await session.execute(stmt)

@@ -215,7 +215,7 @@ async def add_songs_to_room(
         logger.error("Failed to add songs to room %s: %s", roomid, e)
         await session.rollback()
         raise HTTPException(status_code=500,
-                            detail=f"Failed to add songs to room: {str(e)}") from e  # pylint: disable=raise-missing-from
+                            detail="Failed to add songs to room") from e
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -251,7 +251,7 @@ async def remove_songs_from_room(
         logger.error("Failed to remove songs from room %s: %s", roomid, e)
         await session.rollback()
         raise HTTPException(status_code=500,
-                            detail=f"Failed to remove songs from room: {str(e)}") from e  # pylint: disable=raise-missing-from
+                            detail="Failed to remove songs from room") from e
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -275,21 +275,20 @@ async def batch_update_room_song_order(
     await _require_room_owner(session, http_request, roomid)
     await _require_room_waiting(session, roomid)
 
-    # Validate all songs exist in room
-    for order_update in request.orders:
-        room_song = await crud.get_room_song(session, roomid, order_update.song_id)
-        if not room_song:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Song with ID {order_update.song_id} not found in room",
-            )
+    # Validate all songs exist in room (single batch query)
+    song_ids = [o.song_id for o in request.orders]
+    existing = await crud.get_room_songs_by_ids(session, roomid, song_ids)
+    missing = [sid for sid in song_ids if sid not in existing]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Songs not found in room: {missing}",
+        )
 
-    # Apply updates (simple sequential update - for complex reordering,
-    # client should send complete new ordering)
+    # Apply updates (single batch query)
     try:
-        for order_update in request.orders:
-            await crud.update_room_song_order(session, roomid, order_update.song_id,
-                                              order_update.new_order)
+        orders = {o.song_id: o.new_order for o in request.orders}
+        await crud.batch_update_room_song_orders(session, roomid, orders)
         await session.commit()
         if request.orders:
             await _trigger_preload_top_songs(session, roomid)
@@ -302,7 +301,7 @@ async def batch_update_room_song_order(
         logger.error("Failed to update song orders in room %s: %s", roomid, e)
         await session.rollback()
         raise HTTPException(status_code=500,
-                            detail=f"Failed to update song orders: {str(e)}") from e  # pylint: disable=raise-missing-from
+                            detail="Failed to update song orders") from e
 
     # Return updated list
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
@@ -332,7 +331,7 @@ async def clear_all_room_songs(
         logger.error("Failed to clear songs from room %s: %s", roomid, e)
         await session.rollback()
         raise HTTPException(status_code=500,
-                            detail=f"Failed to clear songs from room: {str(e)}") from e  # pylint: disable=raise-missing-from
+                            detail="Failed to clear songs from room") from e
 
     # Return empty list
     return RoomSongsListResponse(room_id=roomid, list=[], total=0)
@@ -354,15 +353,20 @@ async def shuffle_room_songs_list(
 
     try:
         await crud.shuffle_room_songs(session, roomid)
-        await _refresh_default_playback_initial_song(session, roomid)
         await session.commit()
+    except Exception as e:
+        logger.error("Failed to shuffle songs in room %s: %s", roomid, e)
+        await session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to shuffle songs") from e  # pylint: disable=raise-missing-from
+
+    try:
+        await _refresh_default_playback_initial_song(session, roomid)
         await _trigger_preload_top_songs(session, roomid)
         logger.info("Manually shuffled songs in room %s", roomid)
     except Exception as e:
         logger.error("Failed to shuffle songs in room %s: %s", roomid, e)
         await session.rollback()
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to shuffle songs: {str(e)}") from e  # pylint: disable=raise-missing-from
+        raise HTTPException(status_code=500, detail="Failed to shuffle songs") from e
 
     return await get_room_songs_list(roomid, offset=0, limit=20, session=session)
 

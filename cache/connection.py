@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Awaitable, cast
 from urllib.parse import urlparse
 
@@ -20,6 +21,7 @@ class RedisClient:
     def __init__(self):
         self.client: Redis | None = None
         self.connected = False
+        self._connect_lock = asyncio.Lock()
 
     @staticmethod
     def _is_local_redis_endpoint(redis_url: str) -> bool:
@@ -70,7 +72,12 @@ class RedisClient:
         Returns:
             redis.Redis: Redis 客户端实例
         """
-        if not self.connected:
+        if self.connected and self.client is not None:
+            return self.client
+        async with self._connect_lock:
+            # Double-check after acquiring lock
+            if self.connected and self.client is not None:
+                return self.client
             await self.connect()
         if not self.connected or self.client is None:
             raise RuntimeError("Unable to connect to Redis")

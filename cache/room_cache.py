@@ -261,6 +261,7 @@ async def set_room_playback_progress(redis: Redis, room_id: str, progress_ms: in
             },
         ),
     )
+    await cast(Awaitable, redis.expire(key, ROOM_TTL_SECONDS))
 
 
 @handle_redis_operation(default_return=None, log_operation="loading playback state")
@@ -556,6 +557,58 @@ async def try_set_room_current_answerer(redis: Redis, room_id: str,
     result = await cast(
         Awaitable[int],
         redis.eval(_TRY_SET_ANSWERER_SCRIPT, 1, key, expected, expected,
+                   ROOM_TTL_SECONDS),
+    )
+    return bool(result)
+
+
+# Lua script: atomically check current answerer == from_player, then
+# transition to to_player (or clear if to_player is empty string).
+# Returns 1 if transition succeeded, 0 if current answerer doesn't match.
+_TRANSITION_ANSWERER_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current ~= ARGV[1] then
+    return 0
+end
+if ARGV[2] == '' then
+    redis.call('DEL', KEYS[1])
+else
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+end
+return 1
+"""
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="transitioning current answerer")
+async def transition_room_current_answerer(
+    redis: Redis,
+    room_id: str,
+    from_player_id: int,
+    to_player_id: int | None,
+) -> bool:
+    """Atomically transition current answerer from one player to another.
+
+    Uses a Lua script to make the check-and-set atomic, preventing the
+    TOCTOU race where concurrent SUBMIT_ANSWER handlers both read the
+    same queue and attempt to set the next player.
+
+    Args:
+        redis: Redis connection
+        room_id: The room identifier
+        from_player_id: The expected current answerer (must match)
+        to_player_id: The next answerer, or None to clear the answerer
+
+    Returns:
+        True if the transition succeeded, False if current answerer
+        doesn't match ``from_player_id``.
+    """
+    key = RedisKeys.answerer(room_id)
+    from_id = str(from_player_id)
+    to_id = str(to_player_id) if to_player_id is not None else ""
+    result = await cast(
+        Awaitable[int],
+        redis.eval(_TRANSITION_ANSWERER_SCRIPT, 1, key, from_id, to_id,
                    ROOM_TTL_SECONDS),
     )
     return bool(result)

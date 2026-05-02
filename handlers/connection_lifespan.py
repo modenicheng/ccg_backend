@@ -244,8 +244,10 @@ async def on_disconnect(
 
         # 若同一用户在该房间仍有其他活跃连接（例如刷新重连后的旧连接断开），
         # 则不应将其标记为离线，也不应广播 PLAYER_LEAVE。
-        has_other_active_session = any(
-            other.user.id == cl.user.id for other in clients.get_clients(room_id))
+        # NOTE: 排除 cl 自身——cl 尚未从 clients 中 pop（在 finally 中执行），
+        # 不排除自身会导致 any() 恒为 True，跳过所有清理逻辑。
+        has_other_active_session = any(other.user.id == cl.user.id and other is not cl
+                                       for other in clients.get_clients(room_id))
         if has_other_active_session:
             logger.info(
                 "Skip offline mark for user %s in room %s because another active session exists",

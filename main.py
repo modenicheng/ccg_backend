@@ -266,10 +266,11 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 try:
                     parsed_data = json.loads(payload_text)
                 except json.JSONDecodeError as exc:
+                    logger.warning("Invalid JSON payload from client: %s", exc)
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.INVALID_JSON,
-                            message=f"Invalid JSON payload: {exc}",
+                            message="Invalid JSON payload",
                         ).model_dump())
                     continue
 
