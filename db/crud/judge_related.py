@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, func
@@ -131,20 +132,27 @@ async def update_player_answer_order(
     Returns:
         更新的记录数
     """
+    # Batch fetch all answers for this round
+    stmt = select(models.PlayerAnswer).where(
+        models.PlayerAnswer.room_id == room_id,
+        models.PlayerAnswer.song_id == song_id,
+        models.PlayerAnswer.round_index == round_index,
+    )
+    result = await session.execute(stmt)
+    all_answers = list(result.scalars().all())
+
+    # Build lookup: user_id -> latest answer (by created_at desc)
+    # Since there could be multiple answers per user, pick the latest
+    user_answers: dict[int, models.PlayerAnswer] = {}
+    for answer in all_answers:
+        existing = user_answers.get(answer.user_id)
+        if existing is None or (answer.created_at or
+                                datetime.min) > (existing.created_at or datetime.min):
+            user_answers[answer.user_id] = answer
+
     updated_count = 0
-
     for order, user_id in enumerate(answer_queue, start=1):
-        # 查找该玩家的答案记录（最新的）
-        stmt = (select(models.PlayerAnswer).where(
-            models.PlayerAnswer.room_id == room_id,
-            models.PlayerAnswer.user_id == user_id,
-            models.PlayerAnswer.song_id == song_id,
-            models.PlayerAnswer.round_index == round_index,
-        ).order_by(models.PlayerAnswer.created_at.desc()).limit(1))
-
-        result = await session.execute(stmt)
-        player_answer = result.scalar_one_or_none()
-
+        player_answer = user_answers.get(user_id)
         if player_answer:
             player_answer.answer_order = order
             updated_count += 1

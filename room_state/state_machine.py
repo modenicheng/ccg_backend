@@ -128,7 +128,7 @@ class RoundStateMachine:
             RoundState.JUDGING,
             RoundState.COMPLETED,
         ],
-        RoundState.JUDGING: [RoundState.COMPLETED],
+        RoundState.JUDGING: [RoundState.COMPLETED, RoundState.PLAYING_AUDIO],
         RoundState.COMPLETED: [RoundState.PENDING,
                                RoundState.PLAYING_AUDIO],  # 回合结束后可进入下一个回合或重新开始
     }

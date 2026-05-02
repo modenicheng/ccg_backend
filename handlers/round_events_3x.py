@@ -642,14 +642,12 @@ async def handle_submit_answer(
 
     if should_finish_answering:
         logger.info(
-            "Answering phase finished in room %s, keep playback paused by default",
+            "Answering phase finished in room %s, waiting for owner to trigger judging",
             room_id,
         )
-        # 所有玩家回答完成后，自动进入 JUDGING 环节
-        # 导入这里避免循环引用
-        from handlers.judge_events_4x import broadcast_judging_event
-        async with session_scope() as db_session:
-            await broadcast_judging_event(clients, room_id, db_session)
+        # 所有玩家回答完成后，不自动进入 JUDGING。
+        # 房主需手动发送 JUDGING 事件触发判分环节（DESIGN.md §5.5 step 7）。
+        # 这样可以避免答案被自动广播给所有人。
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
     # 注意：这里重新读取，确保包含最新 is_answering 状态

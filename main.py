@@ -120,7 +120,17 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:4000",
+        "http://localhost:5173",
+        "http://localhost:4000",
+        "https://gs.modenc.top",
+        "https://ccg-origin.modenc.top",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 ##############################
@@ -309,18 +319,12 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 await client.ws.send_json(
                     WebSocketErrorEvent(
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
-                        message=f"Failed to handle event {event.name}: {exc}",
+                        message=f"Failed to handle event {event.name}",
                     ).model_dump())
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
-        try:
-            await client.ws.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        clients_manager.pop(roomid, client)
-        logger.info("WebSocket removed from clients: %s", client.ws.client)
         async with session_scope() as session:
             await on_disconnect(session, client, clients_manager, roomid)
 
@@ -347,6 +351,7 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
                               token="",
                               room_id=roomid,
                               is_owner=False)
+        spectator_user.is_spectator = True
         client = Client(websocket, spectator_user, room)
 
         await client.ws.accept()
@@ -374,12 +379,6 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
     except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
-        try:
-            await client.ws.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        clients_manager.pop(roomid, client)
-        logger.info("WebSocket removed from clients: %s", client.ws.client)
         async with session_scope() as session:
             await on_disconnect(session, client, clients_manager, roomid)
 

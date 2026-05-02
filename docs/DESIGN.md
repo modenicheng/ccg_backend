@@ -102,6 +102,7 @@
 **回合状态机** **`RoundStateMachine`**：
 
 - `PENDING` → `PLAYING_AUDIO` → `ANSWERING`/`JUDGING` → `COMPLETED` → `PENDING`
+- `JUDGING` → `PLAYING_AUDIO`（跳过判分，强制下一轮）
 
 **游戏流程**：
 
@@ -118,8 +119,8 @@
 6. **作答轮次**：
    - 当前作答玩家发送 `SUBMIT_ANSWER` 事件（包含选中的标签 ID 列表和精准描述）。
    - 后端保存答案到 `PlayerAnswer` 表，广播 `ANSWER_BROADCAST`。
-   - 若队列非空，更新下一个作答玩家；若队列为空，进入待判分状态。
-7. **判分环节**：
+   - 若队列非空，更新下一个作答玩家；若队列为空，进入待判分状态（等待房主手动触发判分）。
+ 7. **判分环节**：
    - 房主发送 `JUDGING` 事件（手动触发），后端广播 `JUDGING` 事件（含歌曲信息、历史标签 ID、玩家提交的描述候选列表）。
    - 房主提交正确答案（`JUDGE_SUBMIT`），包含正确标签 ID 列表、正确描述 ID 列表、新描述文本，或选择跳过计分。
 8. **计分**：

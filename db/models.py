@@ -196,7 +196,9 @@ class Room(Base):
         JSON, nullable=True, comment="持久化播放状态快照，cache miss 时用于恢复")
 
     test_audio_song_id: Mapped[int | None] = mapped_column(
-        ForeignKey("songs.id"), nullable=True, default=None,
+        ForeignKey("songs.id"),
+        nullable=True,
+        default=None,
         comment="自定义 test_audio 的歌曲 ID，NULL 表示使用默认 CDN BGM")
 
     __table_args__ = (
@@ -311,6 +313,8 @@ class SongTagHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
+    __table_args__ = (Index("idx_song_tag_history_song", "song_id"),)
+
     song: Mapped[Song] = relationship(back_populates="song_tag_histories")
     tag: Mapped[Tag] = relationship(back_populates="song_history")
     judged_by_user: Mapped[User] = relationship(back_populates="judged_song_tags")
@@ -337,6 +341,8 @@ class SongDescriptionHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
 
+    __table_args__ = (Index("idx_song_description_history_song", "song_id"),)
+
     song: Mapped[Song] = relationship(back_populates="song_description_histories")
     judged_by_user: Mapped[User] = relationship(
         back_populates="judged_song_descriptions")
@@ -358,6 +364,8 @@ class Score(Base):
     total_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
+
+    __table_args__ = (Index("idx_scores_room_user", "room_id", "user_id"),)
 
     room: Mapped[Room] = relationship(back_populates="scores")
     user: Mapped[User] = relationship(back_populates="scores")
@@ -381,6 +389,9 @@ class PlayerAnswer(Base):
     answer_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp())
+
+    __table_args__ = (Index("idx_player_answers_room_song_round", "room_id", "song_id",
+                            "round_index"),)
 
     room: Mapped[Room] = relationship(back_populates="player_answers")
     user: Mapped[User] = relationship(back_populates="player_answers")

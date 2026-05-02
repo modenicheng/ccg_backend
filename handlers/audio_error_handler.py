@@ -1,6 +1,8 @@
 """WebSocket event handler for audio preload errors reported by the frontend."""
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import select
 
 from client_manager import ClientManager, Client
@@ -14,6 +16,9 @@ from utils.enumerations import EventType
 from .registe_manager import regist
 
 logger = get_logger(__name__)
+
+_REDOWNLOAD_COOLDOWN_SECONDS = 30
+_last_redownload: dict[str, float] = {}  # room_id -> last re-download timestamp
 
 
 @regist(EventType.ERROR, data_validator=AudioErrorMessage)
@@ -48,6 +53,17 @@ async def handle_audio_preload_error(
         reason,
         audio_url,
     )
+
+    now = time.monotonic()
+    last_time = _last_redownload.get(room_id, 0)
+    if now - last_time < _REDOWNLOAD_COOLDOWN_SECONDS:
+        logger.info(
+            "[AUDIO_ERROR] Rate limited re-download for room %s (cooldown %ds remaining)",
+            room_id,
+            int(_REDOWNLOAD_COOLDOWN_SECONDS - (now - last_time)),
+        )
+        return
+    _last_redownload[room_id] = now
 
     try:
         # Get current room and song queue information from database

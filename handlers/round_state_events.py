@@ -67,7 +67,7 @@ async def handle_round_state_transition(
         logger.error("Error handling round state transition: %s", e, exc_info=True)
         # 发送错误消息给客户端
         await client.send_error(GameEventType.ROUND_STATE_UPDATE,
-                                f"Error during state transition: {str(e)}")
+                                "Error during state transition")
 
 
 async def handle_round_state_update(

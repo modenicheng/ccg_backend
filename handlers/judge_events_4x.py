@@ -187,15 +187,19 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
 
     logger.info("Player answers for judging: %s", player_answers)
 
+    # Batch fetch all usernames to avoid N+1 queries
+    user_ids = list(player_answers.keys())
+    usernames_stmt = select(models.User.id,
+                            models.User.username).where(models.User.id.in_(user_ids))
+    usernames_result = await db_session.execute(usernames_stmt)
+    username_map = {row.id: row.username for row in usernames_result}
+
     # 构建玩家答案列表
     player_answers_data = []
     player_descriptions_data = []  # 用于房主选择正确答案的描述列表
 
     for user_id, answer_data in player_answers.items():
-        # 获取用户名
-        user_stmt = select(models.User.username).where(models.User.id == user_id)
-        user_result = await db_session.execute(user_stmt)
-        username = user_result.scalar_one_or_none() or f"Player {user_id}"
+        username = username_map.get(user_id, f"Player {user_id}")
 
         player_answers_data.append(
             PlayerAnswerData(
@@ -269,6 +273,9 @@ async def broadcast_judging_event(  # pylint: disable=too-many-locals
 async def handle_judging(data: JudgingMessage, clients: ClientManager, client: Client,
                          room_id: str, **kwargs) -> None:
     """处理进入判分环节事件（房主手动触发）"""
+    if not client.user.is_owner:
+        await client.send_error(GameEventType.JUDGING, "Only owner can trigger judging")
+        return
     # pylint: disable=unused-argument
     try:
         async with session_scope() as db:
@@ -276,8 +283,7 @@ async def handle_judging(data: JudgingMessage, clients: ClientManager, client: C
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during JUDGING event: %s", e)
         if client:
-            await client.send_error(GameEventType.JUDGING,
-                                    f"Internal server error: {str(e)}")
+            await client.send_error(GameEventType.JUDGING, "Internal server error")
 
 
 @regist(GameEventType.JUDGE_SUBMIT, JudgeSubmitMessage)
@@ -516,7 +522,7 @@ async def handle_judge_submit(  # pylint: disable=too-many-return-statements
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error during judge submission for room %s: %s", room_id, e)
         await client.send_error(GameEventType.JUDGE_SUBMIT.value,
-                                f"Internal server error: {str(e)}")
+                                "Internal server error")
         return
 
     # 计分完成后保留当前回合抢答信息，直到下一轮开始时再统一重置。

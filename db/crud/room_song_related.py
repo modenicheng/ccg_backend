@@ -422,11 +422,28 @@ async def authenticate_user_by_room_token(
     user = result.scalar_one_or_none()
 
     if not user:
-        logger.warning(
-            "WebSocket query authentication failed for room %s. user_id=%s",
-            roomid,
-            user_id,
-        )
+        # 诊断：逐项检查哪个条件不匹配
+        user_exists = await session.scalar(
+            select(models.User.id).where(models.User.id == user_id))
+        if user_exists is None:
+            logger.warning(
+                "Auth fail: user_id=%s does not exist in DB",
+                user_id,
+            )
+        else:
+            # 用户存在，检查 token 和 room_id
+            user_row = await session.scalar(
+                select(models.User).where(models.User.id == user_id))
+            token_match = user_row.token == user_token if user_row else False
+            room_match = user_row.room_id == roomid if user_row else False
+            logger.warning(
+                "Auth fail: user_id=%s, room=%s | DB: room=%s, token_match=%s, room_match=%s",
+                user_id,
+                roomid,
+                user_row.room_id if user_row else None,
+                token_match,
+                room_match,
+            )
         return None
 
     logger.info(
