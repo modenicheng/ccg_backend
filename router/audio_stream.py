@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from db.crud import authenticate_user_global
 from db.session import get_db
 from db import models
 from cache.file_cache import build_file_response
@@ -18,25 +17,6 @@ from utils import get_logger
 logger = get_logger(__name__)
 
 audio_stream_router = APIRouter(prefix="/api/songs", tags=["audio"])
-
-
-async def _require_auth(
-        request: Request,
-        session: AsyncSession = Depends(get_db),
-) -> models.User:
-    """验证请求用户身份（全局 CRUD 端点通用鉴权）。"""
-    token = request.query_params.get("token")
-    user_id_raw = request.query_params.get("user_id")
-    if not token or not user_id_raw:
-        raise HTTPException(status_code=403, detail="Authentication required")
-    try:
-        user_id = int(user_id_raw)
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Invalid user_id")
-    user = await authenticate_user_global(session, token, user_id)
-    if not user:
-        raise HTTPException(status_code=403, detail="Authentication failed")
-    return user
 
 
 @audio_stream_router.get("/stream/{token}")
@@ -77,7 +57,6 @@ async def stream_audio(
 async def get_audio_file(
         song_id: int,
         db: AsyncSession = Depends(get_db),
-        _auth: models.User = Depends(_require_auth),
 ):
     """Stream audio file for a song (compatible with audio tag)."""
     logger.debug("Audio file request for song id: %s", song_id)
