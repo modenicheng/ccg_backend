@@ -22,7 +22,7 @@ except ImportError as e:
 print("\n2️⃣  验证事件处理器导入...")
 try:
     from handlers.audio_error_handler import handle_audio_preload_error
-    print("   ✓ handle_audio_preload_error 导入成功")
+    print(f"   ✓ {handle_audio_preload_error.__name__} 导入成功")
 except ImportError as e:
     print(f"   ✗ 导入失败: {e}")
     sys.exit(1)
@@ -54,8 +54,8 @@ print(f"   ✓ 序列化后事件ID: {serialized['event']}")
 # 6. 验证模块导入
 print("\n6️⃣  验证handlers模块导入...")
 try:
-    import handlers
-    print("   ✓ handlers 模块导入成功")
+    import handlers as handlers_module
+    print(f"   ✓ {handlers_module.__name__} 模块导入成功")
 except ImportError as e:
     print(f"   ✗ 导入失败: {e}")
     sys.exit(1)

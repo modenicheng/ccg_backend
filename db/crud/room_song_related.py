@@ -330,6 +330,47 @@ async def get_room_song(session: AsyncSession, room_id: str,
     return result.scalar_one_or_none()
 
 
+async def get_room_songs_by_ids(session: AsyncSession, room_id: str,
+                                song_ids: list[int]) -> dict[int, models.RoomSong]:
+    """Batch-fetch room-song associations by song IDs.
+
+    Returns:
+        Dict mapping song_id → RoomSong for songs found in the room.
+    """
+    if not song_ids:
+        return {}
+    stmt = (select(models.RoomSong).where(
+        models.RoomSong.room_id == room_id,
+        models.RoomSong.song_id.in_(song_ids),
+    ).options(selectinload(models.RoomSong.song)))
+    result = await session.execute(stmt)
+    return {rs.song_id: rs for rs in result.scalars().all()}
+
+
+async def batch_update_room_song_orders(
+    session: AsyncSession,
+    room_id: str,
+    orders: dict[int, int],
+) -> None:
+    """Batch-update song orders in a room using a single query pass.
+
+    Args:
+        session: Async database session
+        room_id: Room ID
+        orders: Mapping of song_id → new song_order value
+    """
+    song_ids = list(orders.keys())
+    stmt = select(models.RoomSong).where(
+        models.RoomSong.room_id == room_id,
+        models.RoomSong.song_id.in_(song_ids),
+    )
+    result = await session.execute(stmt)
+    room_songs = list(result.scalars().all())
+    for rs in room_songs:
+        rs.song_order = orders[rs.song_id]
+    await session.flush()
+
+
 async def count_room_songs(session: AsyncSession,
                            room_id: str,
                            kw: str | None = None) -> int | None:
@@ -422,11 +463,28 @@ async def authenticate_user_by_room_token(
     user = result.scalar_one_or_none()
 
     if not user:
-        logger.warning(
-            "WebSocket query authentication failed for room %s. user_id=%s",
-            roomid,
-            user_id,
-        )
+        # 诊断：逐项检查哪个条件不匹配
+        user_exists = await session.scalar(
+            select(models.User.id).where(models.User.id == user_id))
+        if user_exists is None:
+            logger.warning(
+                "Auth fail: user_id=%s does not exist in DB",
+                user_id,
+            )
+        else:
+            # 用户存在，检查 token 和 room_id
+            user_row = await session.scalar(
+                select(models.User).where(models.User.id == user_id))
+            token_match = user_row.token == user_token if user_row else False
+            room_match = user_row.room_id == roomid if user_row else False
+            logger.warning(
+                "Auth fail: user_id=%s, room=%s | DB: room=%s, token_match=%s, room_match=%s",
+                user_id,
+                roomid,
+                user_row.room_id if user_row else None,
+                token_match,
+                room_match,
+            )
         return None
 
     logger.info(
@@ -464,6 +522,23 @@ async def authenticate_user_for_room_http(
         return await authenticate_user_by_room_token(session, roomid, token, user_id)
 
     return await simple_authentication(session, dict(cookies), roomid)
+
+
+async def authenticate_user_global(
+    session: AsyncSession,
+    token: str | None,
+    user_id: int | None,
+) -> models.User | None:
+    """全局鉴权：验证 token + user_id（不绑定房间），用于全局 CRUD 端点。"""
+    if not token or user_id is None:
+        return None
+
+    stmt = select(models.User).where(
+        models.User.id == user_id,
+        models.User.token == token,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def fetch_room_object(session: AsyncSession, room_id: str) -> models.Room | None:

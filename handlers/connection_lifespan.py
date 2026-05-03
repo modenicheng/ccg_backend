@@ -172,36 +172,30 @@ async def on_connect(  # pylint: disable=too-many-statements
             logger.warning("Client %s WebSocket not connected, skipping send",
                            cl.user.id)
 
+    # 先向新连接的客户端发送房间状态，如果发送失败则不广播加入消息
+    # 避免 WS 已断开时仍广播 PlayerJoinMessage 导致其他客户端收到无意义的加入/离开消息序列
+    try:
+        await send_if_connected()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error(
+            "Failed to send initial state to client %s: %s",
+            cl.user.id,
+            e,
+            exc_info=True,
+        )
+        return
+
     try:
         player_item = cache.schemas.RoomStatePlayerItem.model_validate(cl.user)
         join_message = RoomSchema.PlayerJoinMessage(
             data=RoomSchema.RoomStatePlayerItem.model_validate(player_item))
-
-        res = await asyncio.gather(
-            send_if_connected(),
-            clients.broadcast(room_id, join_message.model_dump(),
-                              excluded_clients={cl}),
-            return_exceptions=True,
-        )
+        await clients.broadcast(room_id,
+                                join_message.model_dump(),
+                                excluded_clients={cl})
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error("Error sending messages: %s", e, exc_info=True)
+        logger.error("Error broadcasting join message: %s", e, exc_info=True)
 
-        # 即使出错也要尝试发送房间状态给客户端
-        res = await asyncio.gather(
-            send_if_connected(),
-            return_exceptions=True,
-        )
-
-    for i, r in enumerate(res):
-        if isinstance(r, Exception):
-            logger.error(
-                "Exception occurred in asyncio.gather task %d for client %s: %s",
-                i,
-                cl,
-                r,
-                exc_info=r,
-            )
-    logger.debug("Finished sending initial room state to client %s: %s", cl, res)
+    logger.debug("Finished sending initial room state to client %s", cl)
 
 
 async def on_disconnect(
@@ -244,8 +238,10 @@ async def on_disconnect(
 
         # 若同一用户在该房间仍有其他活跃连接（例如刷新重连后的旧连接断开），
         # 则不应将其标记为离线，也不应广播 PLAYER_LEAVE。
-        has_other_active_session = any(
-            other.user.id == cl.user.id for other in clients.get_clients(room_id))
+        # NOTE: 排除 cl 自身——cl 尚未从 clients 中 pop（在 finally 中执行），
+        # 不排除自身会导致 any() 恒为 True，跳过所有清理逻辑。
+        has_other_active_session = any(other.user.id == cl.user.id and other is not cl
+                                       for other in clients.get_clients(room_id))
         if has_other_active_session:
             logger.info(
                 "Skip offline mark for user %s in room %s because another active session exists",

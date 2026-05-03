@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import update
+from starlette.websockets import WebSocketState
 
 from cache.connection import redis_client
 from client_manager import ClientManager, Client
@@ -120,7 +121,17 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:4000",
+        "http://localhost:5173",
+        "http://localhost:4000",
+        "https://gs.modenc.top",
+        "https://ccg-origin.modenc.top",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 ##############################
@@ -201,16 +212,19 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
         existing_clients = clients_manager.get_clients(roomid).copy()
         for existing_client in existing_clients:
             if existing_client.user_id == user.id:
-                # 检查连接是否已经断开
-                # WebSocket 的 client 属性为 None 或 application 为 None 表示连接已关闭
-                if (existing_client.ws.client is None or
-                        existing_client.ws.application is None or
-                        not hasattr(existing_client.ws, 'client')):
-                    # 连接已断开，从管理器中移除
-                    logger.info(
-                        "Cleaning up stale connection for user %s in room %s",
+                try:
+                    if existing_client.ws.client_state != WebSocketState.CONNECTED:
+                        logger.info(
+                            "Cleaning up stale connection for user %s in room %s",
+                            user.id,
+                            roomid,
+                        )
+                        clients_manager.pop(roomid, existing_client)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    logger.warning(
+                        "Error checking stale connection for user %s, removing it",
                         user.id,
-                        roomid,
+                        exc_info=True,
                     )
                     clients_manager.pop(roomid, existing_client)
 
@@ -256,10 +270,11 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 try:
                     parsed_data = json.loads(payload_text)
                 except json.JSONDecodeError as exc:
+                    logger.warning("Invalid JSON payload from client: %s", exc)
                     await client.ws.send_json(
                         WebSocketErrorEvent(
                             error_event=ErrorEventType.INVALID_JSON,
-                            message=f"Invalid JSON payload: {exc}",
+                            message="Invalid JSON payload",
                         ).model_dump())
                     continue
 
@@ -309,18 +324,12 @@ async def websocket_endpoint(  # pylint: disable=too-many-branches,too-many-stat
                 await client.ws.send_json(
                     WebSocketErrorEvent(
                         error_event=ErrorEventType.HANDLER_EXCEPTION,
-                        message=f"Failed to handle event {event.name}: {exc}",
+                        message=f"Failed to handle event {event.name}",
                     ).model_dump())
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
-        try:
-            await client.ws.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        clients_manager.pop(roomid, client)
-        logger.info("WebSocket removed from clients: %s", client.ws.client)
         async with session_scope() as session:
             await on_disconnect(session, client, clients_manager, roomid)
 
@@ -347,6 +356,7 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
                               token="",
                               room_id=roomid,
                               is_owner=False)
+        spectator_user.is_spectator = True
         client = Client(websocket, spectator_user, room)
 
         await client.ws.accept()
@@ -374,12 +384,6 @@ async def websocket_watch_endpoint(  # pylint: disable=too-many-branches,too-man
     except (WebSocketDisconnect, RuntimeError):
         logger.info("WebSocket disconnected: %s", client.ws.client)
     finally:
-        try:
-            await client.ws.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        clients_manager.pop(roomid, client)
-        logger.info("WebSocket removed from clients: %s", client.ws.client)
         async with session_scope() as session:
             await on_disconnect(session, client, clients_manager, roomid)
 

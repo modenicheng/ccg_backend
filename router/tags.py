@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import Tag, TagGroup, TagGroupRoom, TagGroupTag
+from db.crud import authenticate_user_global
+from db.models import Tag, TagGroup, TagGroupRoom, TagGroupTag, User
 from db.session import get_db
 from schemas.common import RoomStateTagGroupItem
 from schemas.tag import (
@@ -33,6 +33,25 @@ from utils import get_logger
 
 logger = get_logger(__name__)
 tag_router = APIRouter(prefix="/api/tags", tags=["tags"])
+
+
+async def _require_auth(
+        request: Request,
+        session: AsyncSession = Depends(get_db),
+) -> User:
+    """验证请求用户身份（全局 CRUD 端点通用鉴权）。"""
+    token = request.query_params.get("token")
+    user_id_raw = request.query_params.get("user_id")
+    if not token or not user_id_raw:
+        raise HTTPException(status_code=403, detail="Authentication required")
+    try:
+        user_id = int(user_id_raw)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid user_id")
+    user = await authenticate_user_global(session, token, user_id)
+    if not user:
+        raise HTTPException(status_code=403, detail="Authentication failed")
+    return user
 
 
 def _get_connected_room_ids(request: Request) -> set[str]:
@@ -185,15 +204,30 @@ async def _create_tags(tag_names: list[str], session: AsyncSession) -> list[Tag]
     if not tag_name_list:
         return []
 
-    # 批量插入新标签，忽略已存在的标签（使用 ON CONFLICT DO NOTHING）
-    stmt = insert(Tag).values([{"name": name} for name in tag_name_list])
-    stmt = stmt.on_conflict_do_nothing(index_elements=["name"])
-    await session.execute(stmt)
+    # 先查询已存在的标签
+    existing_result = await session.execute(
+        select(Tag).where(Tag.name.in_(tag_name_list)))
+    existing_tags: dict[str, Tag] = {
+        tag.name: tag for tag in existing_result.scalars().all()
+    }
 
-    # 查询所有标签（包括刚插入的和已存在的）
-    result = await session.execute(select(Tag).where(Tag.name.in_(tag_name_list)))
-    tags = result.scalars().all()
-    return list(tags)
+    # 插入不存在的标签，使用 SAVEPOINT 逐条插入处理并发竞争
+    for name in tag_name_list:
+        if name in existing_tags:
+            continue
+        try:
+            async with session.begin_nested():
+                tag = Tag(name=name)
+                session.add(tag)
+            existing_tags[name] = tag
+        except IntegrityError:
+            # 并发插入了同名标签，重新查询获取
+            result = await session.execute(select(Tag).where(Tag.name == name))
+            found = result.scalar_one_or_none()
+            if found is not None:
+                existing_tags[name] = found
+
+    return [existing_tags[n] for n in tag_name_list if n in existing_tags]
 
 
 async def _get_existing_tags_by_ids(tag_ids: list[int],
@@ -219,6 +253,7 @@ async def create_tags(
         tag_names: TagsCreateRequest,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> TagListResponse:
     """Create new tags."""
     tags = await _create_tags(tag_names.tags, session)
@@ -248,6 +283,7 @@ async def patch_tag(
         data: TagPatch,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> TagResponse:
     """Update a tag."""
     result = await session.execute(select(Tag).where(Tag.id == tag_id))
@@ -284,6 +320,7 @@ async def delete_tag(
         tag_id: int,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> None:
     """Delete a tag."""
     result = await session.execute(select(Tag).where(Tag.id == tag_id))
@@ -324,6 +361,7 @@ async def create_tag_group(
         data: TagGroupCreate,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> TagGroupResponse:
     """Create a new tag group."""
     tags_to_associate: list[Tag] = []
@@ -367,6 +405,7 @@ async def patch_tag_group(
         data: TagGroupPatch,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> TagGroupResponse:
     """Update a tag group."""
     group_id = data.id
@@ -435,6 +474,7 @@ async def delete_tag_group(
         group_id: int,
         request: Request,
         session: AsyncSession = Depends(get_db),
+        _auth: User = Depends(_require_auth),
 ) -> None:
     """Delete a tag group."""
     result = await session.execute(select(TagGroup).where(TagGroup.id == group_id))

@@ -15,11 +15,20 @@ from .models import Base
 DATABASE_URL = app_config.database_url
 DATABASE_ECHO = app_config.database_echo
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=DATABASE_ECHO,
-    future=True,
-)
+_engine_kwargs: dict = {
+    "echo": DATABASE_ECHO,
+    "future": True,
+    "pool_pre_ping": True,
+}
+
+if not DATABASE_URL.startswith("sqlite+"):
+    _engine_kwargs.update({
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_recycle": 3600,
+    })
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
 if DATABASE_URL.startswith("sqlite+"):
 

@@ -1,10 +1,13 @@
 """WebSocket event handler for audio preload errors reported by the frontend."""
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import select
 
 from client_manager import ClientManager, Client
 from db import models
+from db.crud import get_current_song_info, get_room_song_queue
 from db.session import session_scope
 from handlers.audio_common import broadcast_preload_audio_for_index
 from mq import tasks
@@ -14,6 +17,9 @@ from utils.enumerations import EventType
 from .registe_manager import regist
 
 logger = get_logger(__name__)
+
+_REDOWNLOAD_COOLDOWN_SECONDS = 30
+_last_redownload: dict[str, float] = {}  # room_id -> last re-download timestamp
 
 
 @regist(EventType.ERROR, data_validator=AudioErrorMessage)
@@ -43,29 +49,39 @@ async def handle_audio_preload_error(
     logger.warning(
         "[AUDIO_ERROR] Room %s, Client %s reported %s error: %s (URL: %s)",
         room_id,
-        client.sid,
+        client.user_id,
         error_type,
         reason,
         audio_url,
     )
 
+    now = time.monotonic()
+    last_time = _last_redownload.get(room_id, 0)
+    if now - last_time < _REDOWNLOAD_COOLDOWN_SECONDS:
+        logger.info(
+            "[AUDIO_ERROR] Rate limited re-download for room %s (cooldown %ds remaining)",
+            room_id,
+            int(_REDOWNLOAD_COOLDOWN_SECONDS - (now - last_time)),
+        )
+        return
+    _last_redownload[room_id] = now
+
     try:
         # Get current room and song queue information from database
         async with session_scope() as session:
-            room_stmt = select(models.Room).where(models.Room.id == room_id)
-            room_result = await session.execute(room_stmt)
-            room = room_result.scalar_one_or_none()
-
-            if not room:
+            current_song_id, current_song_queue_index = await get_current_song_info(
+                session,
+                room_id,
+            )
+            if current_song_id is None or current_song_queue_index is None:
                 logger.error(
-                    "[AUDIO_ERROR] Room %s not found in database",
+                    "[AUDIO_ERROR] Room %s not found or current song unavailable in database",
                     room_id,
                 )
                 return
 
             # Get song queue and current index
-            room_song_queue = room.room_song_queue or []
-            current_song_queue_index = room.current_song_queue_index or 0
+            room_song_queue = await get_room_song_queue(session, room_id)
 
             if not room_song_queue or current_song_queue_index >= len(room_song_queue):
                 logger.warning(

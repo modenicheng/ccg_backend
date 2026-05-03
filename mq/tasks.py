@@ -163,10 +163,14 @@ def _ensure_background_event_loop() -> asyncio.AbstractEventLoop:
         return loop
 
 
-def _run_async(coro: Coroutine[Any, Any, T]) -> T:
+def _run_async(coro: Coroutine[Any, Any, T], timeout: float = 300.0) -> T:
     loop = _ensure_background_event_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
+    try:
+        return future.result(timeout=timeout)
+    except TimeoutError:
+        future.cancel()
+        raise TimeoutError(f"Async operation timed out after {timeout}s") from None
 
 
 async def _with_retry(
@@ -400,6 +404,7 @@ def download_audio_file(url, save_path=None, mid: str | None = None):
 async def _download_audio_file_impl(url, save_path=None, mid: str | None = None):
     """
     下载音频文件并保存到指定路径。
+    使用临时文件 + 原子重命名，避免写入失败后残留损坏文件。
     """
     try:
         target_mid = (mid or
@@ -407,7 +412,10 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
                       "unknown")
         final_save_path = _resolve_audio_download_path(target_mid, url, save_path)
 
-        async with httpx.AsyncClient() as http_client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10,
+                                                           read=60,
+                                                           write=30,
+                                                           pool=10),) as http_client:
             response = await _with_retry(
                 operation_name=f"download audio from {url}",
                 task_factory=lambda: http_client.get(url),
@@ -415,8 +423,20 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
                 backoff_seconds=DOWNLOAD_BACKOFF_SECONDS,
             )
         response.raise_for_status()
-        with open(final_save_path, "wb") as f:
-            f.write(response.content)
+
+        tmp_save_path = final_save_path + ".tmp"
+        try:
+            with open(tmp_save_path, "wb") as f:
+                f.write(response.content)
+            os.replace(tmp_save_path, final_save_path)
+        except Exception:
+            # 清理临时文件，避免残留
+            try:
+                os.remove(tmp_save_path)
+            except OSError:
+                pass
+            raise
+
         logger.info("Audio downloaded successfully: %s", final_save_path)
         return final_save_path
     except Exception as e:  # pylint: disable=broad-exception-caught

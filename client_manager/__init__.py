@@ -21,6 +21,7 @@ class Client:
         self.user_id: int = user.id
         self.username: str = user.username
         self.is_owner: bool = user.is_owner
+        self.is_spectator: bool = getattr(user, 'is_spectator', False)
 
     async def send(self, message: str | bytes | dict):
         """Send message to client.
@@ -119,8 +120,8 @@ class ClientManager:
         Returns:
             True if at least one active connection exists for the user in this room
         """
-        return any(
-            client.user.id == user_id for client in self._rooms.get(room_id, set()))
+        return any(client.user.id == user_id and not client.is_spectator
+                   for client in self._rooms.get(room_id, set()))
 
     def get_all_clients(self) -> set[Client]:
         """Get all clients across all rooms.

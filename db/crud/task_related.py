@@ -13,7 +13,7 @@ from utils import get_logger
 
 from .. import models
 
-l = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 async def create_task_record(

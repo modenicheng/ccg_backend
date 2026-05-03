@@ -88,6 +88,7 @@ uv run huey_consumer.py mq.tasks.huey
 - In WebSocket handlers, raise `ValueError` for client errors
 - `asyncio.gather(..., return_exceptions=True)` for concurrent ops
 - Let SQLAlchemy exceptions propagate to FastAPI (HTTP 500)
+- **Never leak internal details to clients**: use generic `detail="Failed to X"` in HTTP responses and `send_error(event, "Generic message")` in WS handlers. Log full exception server-side with `exc_info=True`
 
 ### Logging
 - `logger = get_logger(__name__)` at module level
@@ -162,7 +163,11 @@ Standard FastAPI layout with async SQLAlchemy, Redis caching, and WebSocket supp
 1. Create/update router in `router/`
 2. Define request/response schemas in `schemas/`
 3. Add route with dependency `db: AsyncSession = Depends(get_db)`
-4. Handle errors, document with docstrings
+4. **Add authentication** if the endpoint writes data:
+   - Room-scoped: use `_require_room_owner(request, session)` pattern (see `router/room.py`)
+   - Global (no room context): use `_require_auth(request, session)` pattern (see `router/song.py`) which calls `authenticate_user_global(session, token, user_id)` from `db.crud`
+   - Public read-only endpoints (e.g., `GET /api/room/{roomid}`, `GET /api/songs/`) do not require auth
+5. Handle errors, document with docstrings
 
 ### Add New Database Model
 1. Add class to `db/models.py` (SQLAlchemy 2.0 style)
@@ -190,6 +195,10 @@ Standard FastAPI layout with async SQLAlchemy, Redis caching, and WebSocket supp
 - **Configuration loading order**: Config values are merged as `os.environ > .env > config.yaml`. Environment variables override YAML. Invalid config blocks startup; validation occurs in `config/settings.py`.
 - **Cookie rotation**: Cookie rotation is enabled by default (`CCG_COOKIE_ROTATION_ENABLED=true`). Multiple cookies can be provided via `CCG_QQ_MUSIC_COOKIES` JSON array or YAML config.
 - **Cookie refresh**: Automatic cookie refresh service runs periodically (default: every 30 minutes). Controlled by `CCG_COOKIE_REFRESH_ENABLED` and `CCG_COOKIE_REFRESH_CHECK_INTERVAL`.
+- **Audio file serving**: Use `build_file_response(path)` from `cache.file_cache` which returns a `FileResponse` for disk streaming. Do NOT load entire files into memory. The old in-memory LRU cache has been removed.
+- **Atomic file writes**: Write to a temp file (`.tmp` suffix), then `os.replace()` for atomic move. Clean up temp file on failure. See `mq/tasks.py:_download_audio_file_impl`.
+- **Lua CAS for Redis**: Use Lua scripts for atomic check-and-set operations (e.g., `try_set_room_current_answerer`, `transition_room_current_answerer` in `cache/room_cache.py`). Avoid separate read-then-write patterns that create TOCTOU races.
+- **Round state validation**: WebSocket handlers that modify game state must validate `round_state` before proceeding. Use `RoundStateManager.get_round_state(room_id, session)` from `cache.room_state_manager`.
 
 ## Environment Variables (CCG_*)
 Key environment variables (prefixed `CCG_`):
@@ -200,7 +209,6 @@ Key environment variables (prefixed `CCG_`):
 - `CCG_AUDIO_DOWNLOAD_DIR` - Audio file storage directory
 - `CCG_AUDIO_TOKEN_TTL` - Audio token TTL in seconds
 - `CCG_LOG_LEVEL` - Logging level (DEBUG, INFO, WARNING, ERROR)
-- `CCG_ASSET_CACHE_MAX_ITEMS` - LRU cache size for assets
 - `CCG_CONFIG_YAML_PATH` - Override path for config.yaml
 - `CCG_SONGLIST_FETCH_CONCURRENCY` - Songlist fetch parallelism
 - `CCG_DATABASE_ECHO` - Enable SQL query logging
@@ -249,4 +257,4 @@ uv run alembic upgrade head
 uv run huey_consumer.py mq.tasks.huey
 ```
 
-*Last updated: March 2026*
+*Last updated: May 2026*

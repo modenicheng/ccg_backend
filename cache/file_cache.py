@@ -1,47 +1,39 @@
-"""File-based caching for song assets."""
+"""Audio file response utilities (streaming from disk, no in-memory cache)."""
 
 from __future__ import annotations
 
 import mimetypes
 import os
-from collections import OrderedDict
 
-from anyio import open_file
 from fastapi import HTTPException
+from fastapi.responses import FileResponse
 
-from config import app_config
+from utils import get_logger
 
-ASSET_CACHE_MAX_ITEMS = app_config.asset_cache_max_items
-_song_asset_cache: OrderedDict[str, tuple[float, int, bytes, str]] = OrderedDict()
+logger = get_logger(__name__)
 
 
-async def load_song_asset_with_cache(path: str) -> tuple[bytes, str]:
-    """
-    使用内存 LRU 缓存音频文件内容，减少重复磁盘 IO。
+def build_file_response(path: str,
+                        content_disposition: str | None = None) -> FileResponse:
+    """Build a FileResponse that streams from disk with Range support.
 
-    缓存键使用文件绝对路径，失效判断基于 mtime + size。
+    Args:
+        path: Absolute path to the audio file.
+        content_disposition: Optional Content-Disposition header value.
+
+    Returns:
+        FileResponse streaming the file from disk.
+
+    Raises:
+        HTTPException: If the file does not exist.
     """
     abs_path = os.path.abspath(path)
     if not os.path.isfile(abs_path):
-        raise HTTPException(status_code=404, detail="Cached audio file not found")
-
-    stat = os.stat(abs_path)
-    mtime = stat.st_mtime
-    size = stat.st_size
-
-    cached = _song_asset_cache.get(abs_path)
-    if cached and cached[0] == mtime and cached[1] == size:
-        _song_asset_cache.move_to_end(abs_path)
-        return cached[2], cached[3]
-
-    async with await open_file(abs_path, mode="rb") as f:
-        content = await f.read()
+        raise HTTPException(status_code=404, detail="Audio file not found")
 
     media_type = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
-    _song_asset_cache[abs_path] = (mtime, size, content, media_type)
-    _song_asset_cache.move_to_end(abs_path)
+    headers: dict[str, str] = {"Accept-Ranges": "bytes"}
+    if content_disposition:
+        headers["Content-Disposition"] = content_disposition
 
-    while len(_song_asset_cache) > ASSET_CACHE_MAX_ITEMS:
-        _song_asset_cache.popitem(last=False)
-
-    return content, media_type
+    return FileResponse(abs_path, media_type=media_type, headers=headers)

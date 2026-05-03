@@ -15,12 +15,12 @@ from .judge_related import (get_room_song_queue, get_current_song_info,
                             get_round_answers_for_room_state)
 from .task_related import (create_task_record, get_task_record_by_task_id,
                            update_task_record)
-from .room_song_related import (get_room_songs, shuffle_room_songs, add_songs_to_room,
-                                remove_songs_from_room, update_room_song_order,
-                                clear_room_songs, get_room_song, count_room_songs,
-                                count_songlist_songs, simple_authentication,
-                                authenticate_user_by_room_token,
-                                authenticate_user_for_room_http, fetch_room_object)
+from .room_song_related import (
+    get_room_songs, shuffle_room_songs, add_songs_to_room, remove_songs_from_room,
+    update_room_song_order, clear_room_songs, get_room_song, get_room_songs_by_ids,
+    batch_update_room_song_orders, count_room_songs, count_songlist_songs,
+    simple_authentication, authenticate_user_by_room_token,
+    authenticate_user_for_room_http, authenticate_user_global, fetch_room_object)
 from .song_related import (create_or_update_songlist, create_or_update_song,
                            create_or_update_songs, update_song_cached_path)
 from .room_state_related import (
@@ -70,11 +70,14 @@ __all__ = [
     "update_room_song_order",
     "clear_room_songs",
     "get_room_song",
+    "get_room_songs_by_ids",
+    "batch_update_room_song_orders",
     "count_room_songs",
     "count_songlist_songs",
     "simple_authentication",
     "authenticate_user_by_room_token",
     "authenticate_user_for_room_http",
+    "authenticate_user_global",
     "fetch_room_object",
     # Song related
     "create_or_update_songlist",
