@@ -439,11 +439,7 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
             raise
 
         # 移除音频文件中的所有 metadata（歌曲名/封面/专辑等）
-        if not strip_audio_metadata(final_save_path):
-            logger.warning(
-                "Audio downloaded but metadata stripping failed for: %s",
-                final_save_path,
-            )
+        strip_audio_metadata(final_save_path)
 
         logger.info("Audio downloaded successfully: %s", final_save_path)
         return final_save_path
@@ -557,10 +553,7 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
         # 生成候选路径（如果提供了save_path则使用，否则根据mid和url生成）
         candidate_path = save_path or _resolve_audio_download_path(mid, song_url)
         if os.path.exists(candidate_path):
-            # 文件已存在但数据库中没有记录
-            # 先尝试清除元数据（因为不确定该文件是否已被处理过）
-            strip_audio_metadata(candidate_path)
-
+            # 文件已存在但数据库中没有记录，更新数据库
             if song:
                 song.cached_path = candidate_path
                 await session.flush()
@@ -583,7 +576,6 @@ async def _download_and_cache_song_impl(mid: str, save_path: str | None = None):
                     "platform_song_id": mid,
                     "cached_path": candidate_path,
                     "skipped": True,
-                    "metadata_stripped": True,
                 },
                 session=session,
             )
