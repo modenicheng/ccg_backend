@@ -219,6 +219,7 @@ async def _generate_default_playback_state(room_id: str) -> PlaybackState | None
         play_state="paused",
         current_order=current_order,
         audio_url=audio_url,
+        show_answer=getattr(room, "show_answer", False),
     )
 
 

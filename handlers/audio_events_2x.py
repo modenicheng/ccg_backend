@@ -38,6 +38,8 @@ async def _build_playback_state_from_control(
     resolved_audio_url = (control_data.audio_url if control_data.audio_url is not None
                           else (existing.audio_url if existing is not None else None))
 
+    resolved_show_answer = existing.show_answer if existing is not None else False
+
     return PlaybackState(
         progress_ms=control_data.progress_ms,
         updated_at=event_ts,
@@ -45,6 +47,7 @@ async def _build_playback_state_from_control(
         play_state=play_state,
         current_order=resolved_current_order,
         audio_url=resolved_audio_url,
+        show_answer=resolved_show_answer,
     )
 
 
@@ -62,9 +65,11 @@ async def handle_play(
         data.ts,
         "playing",
     )
+    broadcast_payload = data.model_dump()
+    broadcast_payload["data"]["show_answer"] = state.show_answer
     res = await asyncio.gather(
         set_room_playback_state(room_id, state),
-        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
+        clients.broadcast(room_id, broadcast_payload, excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):
@@ -92,9 +97,11 @@ async def handle_pause(
         data.ts,
         "paused",
     )
+    broadcast_payload = data.model_dump()
+    broadcast_payload["data"]["show_answer"] = state.show_answer
     res = await asyncio.gather(
         set_room_playback_state(room_id, state),
-        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
+        clients.broadcast(room_id, broadcast_payload, excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):
@@ -148,9 +155,11 @@ async def handle_seek(
             audio_url=data.data.audio_url,
         )
 
+    broadcast_payload = data.model_dump()
+    broadcast_payload["data"]["show_answer"] = updated_state.show_answer
     res = await asyncio.gather(
         set_room_playback_state(room_id, updated_state),
-        clients.broadcast(room_id, data.model_dump(), excluded_clients={client}),
+        clients.broadcast(room_id, broadcast_payload, excluded_clients={client}),
         return_exceptions=True,
     )
     for i, r in enumerate(res):
