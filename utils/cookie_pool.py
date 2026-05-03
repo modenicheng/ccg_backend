@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
 import qqmusic_api as qapi
 
 from utils.cookie import parse_cookie_string
@@ -219,7 +220,7 @@ class CookiePoolManager:
                 result.append(entry)
         return result
 
-    async def persist_new_cookies_to_db(self, session: "AsyncSession") -> int:
+    async def persist_new_cookies_to_db(self, session: AsyncSession) -> int:
         """
         Persist any cookies that are not yet in the database.
 

@@ -14,9 +14,14 @@ logger = get_logger(__name__)
 def strip_audio_metadata(file_path: str) -> bool:
     """Remove all metadata from an audio file in-place.
 
-    Uses ffmpeg ``-map_metadata -1 -c copy`` to strip every tag/container
-    metadata (ID3, Vorbis comments, MP4 tags, cover art, …) while keeping
-    the audio stream intact (no re-encoding).
+    Uses ffmpeg to strip every tag/container metadata (ID3, Vorbis comments,
+    MP4 tags, cover art, …) while keeping the audio stream intact (no
+    re-encoding).
+
+    The command strips three layers of metadata:
+    - ``-map_metadata:g -1`` — global container metadata
+    - ``-map_metadata:s -1`` — per-stream metadata (e.g. Vorbis comments in OGG)
+    - ``-map_chapters -1`` — chapter markers
 
     Args:
         file_path: Path to the audio file to strip.
@@ -40,16 +45,15 @@ def strip_audio_metadata(file_path: str) -> bool:
             "-y",  # overwrite output
             "-i",
             file_path,
-            "-map_metadata",
-            "-1",  # strip all metadata
+            "-map_metadata:g",
+            "-1",  # strip global metadata
+            "-map_metadata:s",
+            "-1",  # strip per-stream metadata (Vorbis comments, etc.)
+            "-map_chapters",
+            "-1",  # strip chapter markers
             "-c",
             "copy",  # no re-encoding
-            "-fflags",
-            "+bitexact",  # avoid writing encoder tag
-            "-flags:v",
-            "+bitexact",  # avoid writing encoder tag for video
-            "-flags:a",
-            "+bitexact",  # avoid writing encoder tag for audio
+            "-bitexact",  # avoid writing encoder tags / creation metadata
             tmp_path,
         ]
         result = subprocess.run(
