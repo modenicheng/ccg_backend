@@ -28,6 +28,7 @@ class PlaybackState(BaseModel):
     play_state: Literal["playing", "paused"] = Field(default="paused")
     current_order: int = Field(default=0, ge=-1, description="当前曲目序号，-1 表示 test audio")
     audio_url: str | None = None
+    show_answer: bool = Field(default=False, description="是否显示答案（仅房主切换 / 新轮次时自动隐藏）")
 
     model_config = ConfigDict(from_attributes=True)
 

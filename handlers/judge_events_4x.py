@@ -60,7 +60,7 @@ async def handle_show_song(
     **kwargs,
 ) -> None:
     """Handle SHOW_SONG event: broadcast current song metadata to all clients."""
-    # pylint: disable=unused-argument
+    # pylint: disable=unused-argument,too-many-locals
     if not client.user.is_owner:
         await client.send_error(GameEventType.SHOW_SONG,
                                 "Only owner can show current song")
@@ -93,6 +93,12 @@ async def handle_show_song(
             cover=song.cover_url,
         ))
         await clients.broadcast(room_id, show_song_message.model_dump())
+
+        # 同步 show_answer=True 到 Redis PlaybackState，确保所有客户端通过播放事件也能获取最新状态
+        existing_playback = await room_cache.get_room_playback_state(room_id)
+        if existing_playback is not None and not existing_playback.show_answer:
+            updated = existing_playback.model_copy(update={"show_answer": True})
+            await room_cache.set_room_playback_state(room_id, updated)
 
         logger.info("Broadcast SHOW_SONG for room %s, song_id=%s", room_id, song_id)
 
