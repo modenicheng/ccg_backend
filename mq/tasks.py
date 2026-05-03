@@ -34,6 +34,7 @@ from db.crud import (
 from db.session import session_scope, engine
 from mq import cookie_refresh_service
 from utils import parse_cookie_string
+from utils.audio_metadata import strip_audio_metadata
 from utils.cookie_pool import CookieEntry, CookiePoolManager
 
 logger = logging.getLogger("huey")
@@ -436,6 +437,9 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
             except OSError:
                 pass
             raise
+
+        # 移除音频文件中的所有 metadata（歌曲名/封面/专辑等）
+        strip_audio_metadata(final_save_path)
 
         logger.info("Audio downloaded successfully: %s", final_save_path)
         return final_save_path
