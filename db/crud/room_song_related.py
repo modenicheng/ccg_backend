@@ -350,7 +350,7 @@ async def get_room_songs_by_ids(session: AsyncSession, room_id: str,
 async def batch_update_room_song_orders(
     session: AsyncSession,
     room_id: str,
-    orders: dict[int, int],
+    orders: dict[int, int | None],
 ) -> None:
     """Batch-update song orders in a room using a single query pass.
 

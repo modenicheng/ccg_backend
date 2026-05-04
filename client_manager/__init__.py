@@ -236,9 +236,16 @@ class ClientManager:
             message: Error message text
             excluded_clients: Clients to exclude from broadcast
         """
+        event: int
+        if isinstance(event_type, Enum):
+            event = event_type.value
+        elif isinstance(event_type, int):
+            event = event_type
+        else:
+            raise TypeError(f"Unsupported event_type type: {type(event_type)}")
         error_message = ErrorMessage(event=255,
                                      data=ErrorMessageData(message=message,
-                                                           error_event=event_type))
+                                                           error_event=event))
         await self.broadcast(room_id,
                              error_message.model_dump(),
                              excluded_clients=excluded_clients)
