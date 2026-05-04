@@ -71,6 +71,7 @@ class ClientRoomState(BaseModel):
     round_answers: list[RoundAnswerItem] = Field(default_factory=list,
                                                  description="当前轮次玩家答题详情")
     playback_status: PlaybackState | None = Field(default=None, description="当前播放状态")
+    answer_deadline: int | None = Field(default=None, ge=0, description="当前作答截止时间（服务器时间戳，毫秒）")
     scores: list[ScoreItem] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

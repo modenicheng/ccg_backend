@@ -105,6 +105,7 @@ async def on_connect(  # pylint: disable=too-many-statements
     message.answer_queue = queue
     message.answer_queue_tail_player_id = await room_cache.get_answer_queue_tail_player_id(
         room_id)
+    message.answer_deadline = await room_cache.get_answer_deadline(room_id)
 
     try:
         song_id, song_index = await crud.get_current_song_info(session, room_id)

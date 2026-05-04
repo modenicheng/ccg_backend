@@ -683,6 +683,41 @@ async def sync_answer_queue_is_answering(redis: Redis, room_id: str,
 async def clear_room_current_answerer(redis: Redis, room_id: str) -> bool:
     """清除当前答题者"""
     key = RedisKeys.answerer(room_id)
+    await redis.delete(key)
+    deadline_key = RedisKeys.answer_deadline(room_id)
+    await redis.delete(deadline_key)
+    return True
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="setting answer deadline")
+async def set_answer_deadline(redis: Redis, room_id: str,
+                              deadline_ms: int) -> bool:
+    """设置当前答题截止时间戳（毫秒）。"""
+    key = RedisKeys.answer_deadline(room_id)
+    await cast(Awaitable, redis.set(key, str(deadline_ms), ex=ROOM_TTL_SECONDS))
+    return True
+
+
+@handle_redis_operation(default_return=None,
+                        log_operation="getting answer deadline")
+async def get_answer_deadline(redis: Redis, room_id: str) -> int | None:
+    """获取当前答题截止时间戳，过期返回 None。"""
+    key = RedisKeys.answer_deadline(room_id)
+    raw = await cast(Awaitable[str | None], redis.get(key))
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="clearing answer deadline")
+async def clear_answer_deadline(redis: Redis, room_id: str) -> bool:
+    """清除当前答题截止时间。"""
+    key = RedisKeys.answer_deadline(room_id)
     await cast(Awaitable, redis.delete(key))
     return True
 

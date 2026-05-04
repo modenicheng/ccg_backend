@@ -65,6 +65,7 @@ class AttemptAnswerMessage(MessageBase):
 class YourTurnData(BaseModel):
     """你的回合数据"""
     user_id: int = Field(..., ge=0, description="当前轮到作答的玩家ID")
+    answer_deadline: int = Field(default=0, ge=0, description="作答截止时间（服务器时间戳，毫秒）")
 
 
 class YourTurnMessage(MessageBase):

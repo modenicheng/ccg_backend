@@ -34,6 +34,7 @@ from schemas.ws_messages.round_event_schemas import (
 )
 from schemas.ws_messages.playback_schemas import (
     PlayControlData,
+    PlayMessage,
     PauseMessage,
 )
 from schemas.ws_messages.judge_schemas import SkipRoundMessage
@@ -265,6 +266,7 @@ async def handle_skip_round(
         # 清理上一轮的作答状态
         await room_cache.clear_answer_queue(room_id)
         await room_cache.clear_room_current_answerer(room_id)
+        await room_cache.clear_answer_deadline(room_id)
 
         # 立即广播空抢答队列，避免前端残留上一轮队列状态
         await clients.broadcast(
@@ -496,7 +498,15 @@ async def handle_attempt_answer(
 
     await room_cache.sync_answer_queue_is_answering(room_id, next_answerer)
 
-    your_turn_data = YourTurnData(user_id=int(next_answerer))
+    # 存储答题截止时间（30秒后）
+    answer_deadline = server_ts + 30000
+    await room_cache.set_answer_deadline(room_id, answer_deadline)
+
+    # 广播YOUR_TURN事件给所有客户端（携带当前作答玩家ID和截止时间）
+    your_turn_data = YourTurnData(
+        user_id=int(next_answerer),
+        answer_deadline=answer_deadline,
+    )
     your_turn_message = YourTurnMessage(data=your_turn_data)
     await clients.broadcast(room_id, your_turn_message.model_dump())
     logger.info("Broadcast YOUR_TURN for player %s in room %s", next_answerer, room_id)
@@ -554,6 +564,77 @@ async def handle_submit_answer(
     current_answerer = await room_cache.get_room_current_answerer(room_id)
     if current_answerer is None or str(current_answerer) != player_id_str:
         await client.send_error(GameEventType.SUBMIT_ANSWER, "Not your turn to answer")
+        return
+
+    # 验证答题截止时间
+    deadline = await room_cache.get_answer_deadline(room_id)
+    if deadline is not None and get_ts_ms() > deadline:
+        logger.warning(
+            "Player %s submission expired in room %s (deadline=%d)",
+            player_id_str,
+            room_id,
+            deadline,
+        )
+        await client.send_error(GameEventType.SUBMIT_ANSWER, "Answer time expired")
+
+        # 答题超时：自动跳过当前玩家，移到队列中的下一人
+        current_queue = await room_cache.get_answer_queue(room_id)
+        if current_queue:
+            current_index = -1
+            for i, item in enumerate(current_queue):
+                if str(item.player_id) == player_id_str:
+                    current_index = i
+                    break
+            if current_index >= 0 and current_index + 1 < len(current_queue):
+                next_player = current_queue[current_index + 1].player_id
+                transition_ok = await room_cache.transition_room_current_answerer(
+                    room_id, int(player_id), next_player)
+                if transition_ok:
+                    await room_cache.sync_answer_queue_is_answering(room_id, next_player)
+                    next_deadline = get_ts_ms() + 30000
+                    await room_cache.set_answer_deadline(room_id, next_deadline)
+                    your_turn_data = YourTurnData(
+                        user_id=int(next_player),
+                        answer_deadline=next_deadline,
+                    )
+                    await clients.broadcast(
+                        room_id,
+                        YourTurnMessage(data=your_turn_data).model_dump(),
+                    )
+            else:
+                # 无后续玩家，恢复播放
+                await room_cache.clear_answer_deadline(room_id)
+                await room_cache.transition_room_current_answerer(
+                    room_id, int(player_id), None)
+                await room_cache.sync_answer_queue_is_answering(room_id, -1)
+                await room_cache.set_answer_queue_tail_player_id(
+                    room_id, int(player_id))
+                playback_state = await room_cache.get_room_playback_state(room_id)
+                if playback_state and playback_state.play_state == "paused":
+                    server_ts = get_ts_ms()
+                    new_ps = playback_state.model_copy(update={
+                        "play_state": "playing",
+                        "offset_ts": server_ts,
+                    })
+                    await room_cache.set_room_playback_state(room_id, new_ps)
+                    await clients.broadcast(
+                        room_id,
+                        PlayMessage(data=PlayControlData(
+                            progress_ms=new_ps.progress_ms,
+                            offset_ts=server_ts,
+                            audio_url=new_ps.audio_url,
+                        )).model_dump(),
+                    )
+                current_queue = await room_cache.get_answer_queue(room_id)
+                await clients.broadcast(
+                    room_id,
+                    AnswerQueueMessage(data=AnswerQueueData(
+                        queue=current_queue,
+                        answer_queue_tail_player_id=(
+                            await room_cache.get_answer_queue_tail_player_id(room_id)
+                        ),
+                    )).model_dump(),
+                )
         return
 
     # 将答案保存到数据库（PlayerAnswer表）
@@ -649,7 +730,14 @@ async def handle_submit_answer(
                     room_id,
                 )
 
-            your_turn_data = YourTurnData(user_id=int(next_player))
+            # 存储下一个玩家的答题截止时间
+            next_deadline = get_ts_ms() + 30000
+            await room_cache.set_answer_deadline(room_id, next_deadline)
+
+            your_turn_data = YourTurnData(
+                user_id=int(next_player),
+                answer_deadline=next_deadline,
+            )
             your_turn_message = YourTurnMessage(data=your_turn_data)
             await clients.broadcast(room_id, your_turn_message.model_dump())
             logger.info(
@@ -660,6 +748,7 @@ async def handle_submit_answer(
             logger.info("Next player in queue: %s", next_player)
         else:
             # 队列无后续玩家（包括当前玩家未命中队列），恢复播放
+            await room_cache.clear_answer_deadline(room_id)
             transition_ok = await room_cache.transition_room_current_answerer(
                 room_id, int(player_id), None)
             if not transition_ok:
@@ -684,12 +773,25 @@ async def handle_submit_answer(
 
     if should_finish_answering:
         logger.info(
-            "Answering phase finished in room %s, waiting for owner to trigger judging",
+            "Answering phase finished in room %s, auto-resuming playback",
             room_id,
         )
-        # 所有玩家回答完成后，不自动进入 JUDGING。
-        # 房主需手动发送 JUDGING 事件触发判分环节（DESIGN.md §5.5 step 7）。
-        # 这样可以避免答案被自动广播给所有人。
+        # 所有已抢答玩家完成作答后，自动恢复曲目播放。
+        # 房主可随时手动发送 JUDGING 事件触发判分。
+        playback_state = await room_cache.get_room_playback_state(room_id)
+        if playback_state and playback_state.play_state == "paused":
+            server_ts = get_ts_ms()
+            new_playback_state = playback_state.model_copy(update={
+                "play_state": "playing",
+                "offset_ts": server_ts,
+            })
+            await room_cache.set_room_playback_state(room_id, new_playback_state)
+            play_message = PlayMessage(data=PlayControlData(
+                progress_ms=new_playback_state.progress_ms,
+                offset_ts=server_ts,
+                audio_url=new_playback_state.audio_url,
+            ))
+            await clients.broadcast(room_id, play_message.model_dump())
 
     # 广播更新后的抢答队列（使用与handle_attempt_answer相同的格式）
     # 注意：这里重新读取，确保包含最新 is_answering 状态

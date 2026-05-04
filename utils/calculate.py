@@ -16,7 +16,7 @@ def calculate_player_scores(
 
     计分规则：
     - 每个正确答案标签独立计分：按抢答顺序遍历玩家，第一个包含该标签的玩家得 1 分
-    - 精准描述：按抢答顺序遍历玩家，第一个描述 ID 匹配正确答案的玩家得 1 分（即使后面还有其他玩家也答对）
+    - 精准描述：按抢答顺序遍历玩家，第一个描述 ID 匹配正确答案的玩家得 2 分（即使后面还有其他玩家也答对）
 
     Args:
         answer_queue: List of player IDs in answer order (integers)
@@ -54,7 +54,7 @@ def calculate_player_scores(
                 continue
 
             if player_id in correct_desc_set:
-                player_scores[player_id] += 1
-                break  # 只给第一个匹配的玩家加分
+                player_scores[player_id] += 2
+                break  # 只给第一个匹配的玩家加分，得 2 分
 
     return player_scores

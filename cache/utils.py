@@ -62,3 +62,9 @@ class RedisKeys:
         """Generate Redis key for room answerer."""
         safe_room_id = _validate_room_id_for_key(room_id)
         return f"room:{safe_room_id}:answer_queue:answerer"
+
+    @staticmethod
+    def answer_deadline(room_id: str) -> str:
+        """Generate Redis key for player answer deadline."""
+        safe_room_id = _validate_room_id_for_key(room_id)
+        return f"room:{safe_room_id}:answer:deadline"
