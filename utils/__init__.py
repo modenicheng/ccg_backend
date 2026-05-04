@@ -1,7 +1,7 @@
 from __future__ import annotations
 from . import dataframe, enumerations
 
-from .dataframe import get_event_type
+from .dataframe import get_event_type, AudioFrame
 from .logger import get_logger, init_logging
 from .cookie import parse_cookie_string
 from .audio_token import (
@@ -32,6 +32,7 @@ __all__ = [
     "generate_audio_token",
     "get_song_id_from_token",
     "get_audio_stream_url",
+    "AudioFrame",
 ]
 
 # 如果有内存监控模块，添加到导出列表

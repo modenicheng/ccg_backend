@@ -153,7 +153,7 @@ async def handle_game_start(  # pylint: disable=too-many-locals
         playback_state = cache_schemas.PlaybackState(
             play_state="playing",
             progress_ms=0,
-            offset_ts=0,
+            offset_ts=get_ts_ms(),
             audio_url=audio_url,
         )
 
@@ -182,6 +182,20 @@ async def handle_game_start(  # pylint: disable=too-many-locals
                     r,
                     exc_info=r,
                 )
+
+        # Start binary audio push via WebSocket
+        from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
+        first_song = (await session.execute(
+            select(models.Song).where(models.Song.id == first_song_id)
+        )).scalar_one_or_none()
+        if first_song and first_song.cached_path:
+            await audio_push_manager.start_push(
+                room_id,
+                audio_token,
+                first_song.cached_path,
+                0,
+                clients,
+            )
 
 
 @regist(GameEventType.ROUND_END, data_validator=RoundEndMessage)
@@ -298,7 +312,7 @@ async def handle_skip_round(
         playback_state = cache_schemas.PlaybackState(
             play_state="playing",
             progress_ms=0,
-            offset_ts=0,
+            offset_ts=get_ts_ms(),
             audio_url=audio_url,
         )
         await room_cache.set_room_playback_state(room_id, playback_state)
@@ -315,6 +329,20 @@ async def handle_skip_round(
 
         # 兼容保留：广播原始SKIP_ROUND事件
         await clients.broadcast(room_id, data.model_dump())
+
+        # Start binary audio push via WebSocket
+        from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
+        next_song = (await session.execute(
+            select(models.Song).where(models.Song.id == next_song_id)
+        )).scalar_one_or_none()
+        if next_song and next_song.cached_path:
+            await audio_push_manager.start_push(
+                room_id,
+                audio_token,
+                next_song.cached_path,
+                0,
+                clients,
+            )
 
         logger.info(
             "Skip round completed for room %s, moved from round %d to %d",
@@ -590,7 +618,8 @@ async def handle_submit_answer(
                 transition_ok = await room_cache.transition_room_current_answerer(
                     room_id, int(player_id), next_player)
                 if transition_ok:
-                    await room_cache.sync_answer_queue_is_answering(room_id, next_player)
+                    await room_cache.sync_answer_queue_is_answering(
+                        room_id, next_player)
                     next_deadline = get_ts_ms() + 30000
                     await room_cache.set_answer_deadline(room_id, next_deadline)
                     your_turn_data = YourTurnData(
@@ -631,8 +660,7 @@ async def handle_submit_answer(
                     AnswerQueueMessage(data=AnswerQueueData(
                         queue=current_queue,
                         answer_queue_tail_player_id=(
-                            await room_cache.get_answer_queue_tail_player_id(room_id)
-                        ),
+                            await room_cache.get_answer_queue_tail_player_id(room_id)),
                     )).model_dump(),
                 )
         return

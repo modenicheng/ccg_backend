@@ -1,4 +1,4 @@
-"""WebSocket event handler for audio preload errors reported by the frontend."""
+"""WebSocket event handler for audio errors reported by the frontend."""
 from __future__ import annotations
 
 import time
@@ -9,7 +9,6 @@ from client_manager import ClientManager, Client
 from db import models
 from db.crud import get_current_song_info, get_room_song_queue
 from db.session import session_scope
-from handlers.audio_common import broadcast_preload_audio_for_index
 from mq import tasks
 from schemas.ws_messages.playback_schemas import AudioErrorMessage
 from utils import get_logger
@@ -139,28 +138,6 @@ async def handle_audio_preload_error(
                     exc_info=True,
                 )
                 return
-
-            # Re-broadcast PRELOAD_AUDIO message with refreshed URL/token
-            try:
-                await broadcast_preload_audio_for_index(
-                    clients=clients,
-                    session=session,
-                    room_id=room_id,
-                    song_queue=room_song_queue,
-                    index=current_song_queue_index,
-                )
-                logger.info(
-                    "[AUDIO_ERROR] Re-broadcasted PRELOAD_AUDIO for song %s in room %s",
-                    current_song_id,
-                    room_id,
-                )
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                logger.error(
-                    "[AUDIO_ERROR] Failed to re-broadcast PRELOAD_AUDIO for song %s: %s",
-                    current_song_id,
-                    e,
-                    exc_info=True,
-                )
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(

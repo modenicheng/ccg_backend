@@ -83,6 +83,20 @@ async def handle_play(
                 exc_info=r,
             )
 
+    # Start binary audio push
+    from handlers.audio_push_task import audio_push_manager, resolve_audio_path  # pylint: disable=import-outside-toplevel
+    path_info = await resolve_audio_path(room_id)
+    if path_info:
+        cached_path, token = path_info
+        start_ms = max(0, state.progress_ms)
+        await audio_push_manager.start_push(
+            room_id,
+            token,
+            cached_path,
+            start_ms,
+            clients,
+        )
+
 
 @regist(GameEventType.PAUSE, data_validator=playback_schemas.PauseMessage)
 async def handle_pause(
@@ -114,6 +128,10 @@ async def handle_pause(
                 r,
                 exc_info=r,
             )
+
+    # Stop binary audio push
+    from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
+    await audio_push_manager.stop_push(room_id)
 
 
 @regist(GameEventType.SEEK, data_validator=playback_schemas.SeekMessage)
@@ -173,27 +191,17 @@ async def handle_seek(
                 exc_info=r,
             )
 
-
-@regist(GameEventType.PRELOAD_AUDIO,
-        data_validator=playback_schemas.PreloadAudioMessage)
-async def handle_preload_audio(
-    data: playback_schemas.PreloadAudioMessage,
-    clients: ClientManager,
-    client: Client,
-    room_id: str,
-) -> None:
-    """Handle PRELOAD_AUDIO event: broadcast to all clients for preloading."""
-    logger.info(
-        "Received PRELOAD_AUDIO event in room %s: audio_url=%s",
-        room_id,
-        data.data.audio_url,
-    )
-    # 广播给房间内所有客户端，包括发送者
-    res = await clients.broadcast(room_id, data.model_dump())
-    if isinstance(res, Exception):
-        logger.error(
-            "Exception occurred while broadcasting PRELOAD_AUDIO event in room %s: %s",
-            room_id,
-            res,
-            exc_info=res,
-        )
+    # Restart binary audio push from new position
+    from handlers.audio_push_task import audio_push_manager, resolve_audio_path  # pylint: disable=import-outside-toplevel
+    await audio_push_manager.stop_push(room_id)
+    if updated_state.play_state == "playing":
+        path_info = await resolve_audio_path(room_id)
+        if path_info:
+            cached_path, token = path_info
+            await audio_push_manager.start_push(
+                room_id,
+                token,
+                cached_path,
+                data.data.progress_ms,
+                clients,
+            )
