@@ -99,7 +99,7 @@ def _parse_ogg_opus_packets(data: bytes) -> list[bytes]:
     return packets
 
 
-async def _resolve_audio_path(room_id: str) -> Optional[tuple[str, str]]:
+async def resolve_audio_path(room_id: str) -> Optional[tuple[str, str]]:
     """Resolve current song's cached_path and audio token from playback state.
 
     Returns (cached_path, audio_token) or None if unresolvable.
