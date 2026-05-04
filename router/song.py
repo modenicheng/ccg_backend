@@ -33,6 +33,7 @@ from schemas.song import (
 )
 from mq import tasks
 from utils import get_logger
+from utils.audio_metadata import ensure_opus_encoded
 from utils.enumerations import RoomStatus
 
 logger = get_logger(__name__)
@@ -358,6 +359,7 @@ async def get_song_asset(
     if not song.cached_path:
         raise HTTPException(status_code=404,
                             detail="Cached path not found for this song")
+    ensure_opus_encoded(song.cached_path)
     content_disposition = (f'inline; filename="{os.path.basename(song.cached_path)}"')
     return build_file_response(song.cached_path, content_disposition)
 

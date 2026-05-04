@@ -11,6 +11,7 @@ from sqlalchemy import select
 from db.session import get_db
 from db import models
 from cache.file_cache import build_file_response
+from utils.audio_metadata import ensure_opus_encoded
 from utils.audio_token import get_song_id_from_token
 from utils import get_logger
 
@@ -45,6 +46,7 @@ async def stream_audio(
         raise HTTPException(status_code=404, detail="Audio not available")
 
     try:
+        ensure_opus_encoded(song.cached_path)
         return build_file_response(song.cached_path)
     except HTTPException:
         raise
@@ -75,6 +77,7 @@ async def get_audio_file(
         raise HTTPException(status_code=404, detail="Audio file not found")
 
     try:
+        ensure_opus_encoded(song.cached_path)
         content_disposition = (
             f'inline; filename="{os.path.basename(song.cached_path)}"')
         return build_file_response(song.cached_path, content_disposition)

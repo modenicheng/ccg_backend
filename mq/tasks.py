@@ -20,7 +20,6 @@ import qqmusic_api as qapi
 from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError as SQLAlchemyInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydub import AudioSegment
 
 # Local application imports
 from cache import cookie_rotation
@@ -34,7 +33,7 @@ from db.crud import (
 from db.session import session_scope, engine
 from mq import cookie_refresh_service
 from utils import parse_cookie_string
-from utils.audio_metadata import strip_audio_metadata
+from utils.audio_metadata import convert_and_strip_metadata
 from utils.cookie_pool import CookieEntry, CookiePoolManager
 
 logger = logging.getLogger("huey")
@@ -368,25 +367,6 @@ async def get_current_cookie_entry() -> CookieEntry | None:
 
 
 @huey.task()
-def convert_to_opus(input_path, output_path=None, bitrate="128k"):
-    """
-    使用 pydub 转换音频到 Opus。
-    """
-    # 小丑了，qq 提供 opus 192k ，那我还转个 damn
-    if not output_path:
-        base, _ = os.path.splitext(input_path)
-        output_path = base + ".opus"
-
-    # 加载音频（pydub 自动根据扩展名选择格式）
-    audio: AudioSegment = AudioSegment.from_file(input_path)
-
-    # 导出为 Opus
-    audio.export(output_path, format="opus", bitrate=bitrate)
-    logger.info("Audio converted to opus: %s", output_path)
-    return output_path
-
-
-@huey.task()
 def download_audio_file(url, save_path=None, mid: str | None = None):
     """
     Download audio file from URL and save to specified path.
@@ -403,10 +383,7 @@ def download_audio_file(url, save_path=None, mid: str | None = None):
 
 
 async def _download_audio_file_impl(url, save_path=None, mid: str | None = None):
-    """
-    下载音频文件并保存到指定路径。
-    使用临时文件 + 原子重命名，避免写入失败后残留损坏文件。
-    """
+    """下载音频并转码为 Opus、去除 metadata，单次 ffmpeg 完成。"""
     try:
         target_mid = (mid or
                       os.path.splitext(os.path.basename(urlparse(url).path))[0] or
@@ -425,23 +402,11 @@ async def _download_audio_file_impl(url, save_path=None, mid: str | None = None)
             )
         response.raise_for_status()
 
-        tmp_save_path = final_save_path + ".tmp"
-        try:
-            with open(tmp_save_path, "wb") as f:
-                f.write(response.content)
-            os.replace(tmp_save_path, final_save_path)
-        except Exception:
-            # 清理临时文件，避免残留
-            try:
-                os.remove(tmp_save_path)
-            except OSError:
-                pass
-            raise
+        if not convert_and_strip_metadata(response.content, final_save_path):
+            logger.error("Failed to convert audio for %s", url)
+            return None
 
-        # 移除音频文件中的所有 metadata（歌曲名/封面/专辑等）
-        strip_audio_metadata(final_save_path)
-
-        logger.info("Audio downloaded successfully: %s", final_save_path)
+        logger.info("Audio downloaded and converted successfully: %s", final_save_path)
         return final_save_path
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error when downloading audio from %s: %s", url, e, exc_info=True)
