@@ -40,6 +40,7 @@ from utils import get_event_type, get_logger, init_logging
 from utils.enumerations import EventType, GameEventType, ErrorEventType
 from utils.logger import log_level_map
 from utils.memory_monitor import MemoryMonitor
+from utils.heartbeat_monitor import HeartbeatMonitor
 
 log_level = log_level_map.get(app_config.log_level, logging.INFO)
 
@@ -83,6 +84,14 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.error("Failed to start memory monitor: %s", exc)
 
+    # 启动心跳监控器
+    try:
+        heartbeat_monitor = HeartbeatMonitor(_app.state.clients)
+        await heartbeat_monitor.start()
+        _app.state.heartbeat_monitor = heartbeat_monitor
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error("Failed to start heartbeat monitor: %s", exc)
+
     # 应用运行
     yield
 
@@ -116,6 +125,14 @@ async def lifespan(_app: FastAPI):
             logger.info("Memory monitor stopped successfully")
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error("Failed to stop memory monitor: %s", exc)
+
+    # 停止心跳监控器
+    heartbeat_monitor = getattr(_app.state, "heartbeat_monitor", None)
+    if heartbeat_monitor:
+        try:
+            await heartbeat_monitor.stop()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to stop heartbeat monitor: %s", exc)
 
 
 app = FastAPI(lifespan=lifespan)

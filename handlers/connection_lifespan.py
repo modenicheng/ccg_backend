@@ -28,6 +28,7 @@ from schemas.ws_messages.judge_schemas import ShowSongData, ShowSongMessage
 from db.session import session_scope
 from utils import get_logger
 from utils.enumerations import GameEventType
+from utils.heartbeat_monitor import init_heartbeat_state, cleanup_heartbeat_state
 
 logger = get_logger(__name__)
 
@@ -87,6 +88,12 @@ async def on_connect(  # pylint: disable=too-many-statements
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("Error updating player status: %s", e, exc_info=True)
+
+    # 初始化心跳追踪状态，防止监控器立即将新连接判为离线
+    try:
+        await init_heartbeat_state(room_id, cl.user.id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Error initializing heartbeat state: %s", e, exc_info=True)
 
     # 连接时发送当前播放状态
     message = RoomSchema.ClientRoomState.model_validate(room)
@@ -267,6 +274,9 @@ async def on_disconnect(
                 room_id,
             )
             return
+
+        # 清理心跳追踪状态（避免心跳监控器对已离开的客户端重复判离线）
+        await cleanup_heartbeat_state(room_id, cl.user.id)
 
         # 构建广播用的 player_item（在修改状态前先取快照，online 固定为 False）
         player_item = RoomSchema.RoomStatePlayerItem(
