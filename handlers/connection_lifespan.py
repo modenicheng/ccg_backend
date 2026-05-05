@@ -308,11 +308,6 @@ async def on_disconnect(
         # 无论如何都要从客户端管理器中移除（异常保护）
         clients.pop(room_id, cl)
 
-        # Stop audio push if room is now empty
-        if clients.is_empty(room_id):
-            from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
-            await audio_push_manager.stop_push(room_id)
-
 
 @regist(GameEventType.KICK_USER, data_validator=KickUserMessage)
 async def handle_kick_user(

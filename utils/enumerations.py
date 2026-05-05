@@ -10,7 +10,6 @@ class EventType(Enum):
     """事件类型枚举"""
 
     OMIT = 0
-    AUDIO_FRAME = 1
     META_DATA = 2
     HEARTBEAT = 3
     TIME_SYNC = 4
@@ -40,7 +39,6 @@ class GameEventType(Enum):
     PLAY = 20
     PAUSE = 21
     SEEK = 22
-    PRELOAD_AUDIO = 23
 
     PLAYER_READY = 30
     GAME_START = 31
@@ -70,14 +68,6 @@ class GameEventType(Enum):
     TAGS_UPDATE = 60  # 标签增量更新
     TAG_GROUPS_UPDATE = 61  # 标签组增量更新
     TAG_GROUP = 62  # 房间已选标签组同步（非全量 ROOM_STATE）
-
-
-class AudioEncoding(Enum):
-    """音频编码格式枚举"""
-
-    UNKNOWN = 0
-    OPUS = 1
-    PCM = 2
 
 
 class HeartbeatType(Enum):

@@ -11,7 +11,7 @@ import string
 import struct
 
 from utils.errors import InvalidFrameError
-from .enumerations import AudioEncoding, EventType, HeartbeatType
+from .enumerations import EventType, HeartbeatType
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,109 +65,6 @@ class BaseFrame:
     @abstractmethod
     def load(data: bytes):
         return BaseFrame()
-
-
-class AudioFrame(BaseFrame):
-    """A class to abstract the audio frame data.
-
-    The binary format of the audio frame is as follows:
-    - 1 byte: event type, refer to `EventType` enum
-    - 8 bytes: timestamp, uint64 (milliseconds)
-    - 2 bytes: sample rate, uint16 (opus supports up to 48000Hz, so uint16 is enough)
-    - 4 bytes: sample num, uint32
-    - 1 byte: channels num, uint8
-    - 4 bytes: length of audio data, uint32
-    - 1 byte: encoding type, uint8, refer to AudioEncoding enum
-    - 1 byte: song_id length, uint8
-    - N bytes: song_id, UTF-8 string (typically 36 for UUID)
-    - M bytes: audio data
-
-    Please be careful when using this class. Big numbers may cause overflow when converting to bytes.
-    For example, the sample rate and the sample num should be less than 4294967296.
-    """
-
-    event_type: EventType = EventType.AUDIO_FRAME
-    timestamp: int = current_timestamp_ms()
-
-    sample_rate: int = 48000
-    sample_num: int = 0
-    channels: int = 2
-    _length: int = 0
-    encoding: AudioEncoding = AudioEncoding.OPUS
-    song_id: str = ""
-    data: bytes = b""
-
-    frame_format = "!B Q H I B I B B"
-    frame_header_size = struct.calcsize(frame_format)
-
-    def __init__(
-        self,
-        sample_rate: int,
-        sample_num: int,
-        channels: int,
-        encoding: AudioEncoding,
-        data: bytes,
-        song_id: str = "",
-    ):
-        self.timestamp = current_timestamp_ms()
-        self.sample_rate = sample_rate
-        self.sample_num = sample_num
-        self.channels = channels
-        self._length = len(data)
-        self.encoding = encoding
-        self.song_id = song_id
-        self.data = data
-
-    def dump(self):
-        if not self.data:
-            logger.warning("AudioFrame dump called with empty data")
-
-        song_id_bytes = self.song_id.encode("utf-8")
-        song_id_len = len(song_id_bytes)
-        return struct.pack(
-            AudioFrame.frame_format,
-            self.event_type.value,
-            self.timestamp,
-            self.sample_rate,
-            self.sample_num,
-            self.channels,
-            self._length,
-            self.encoding.value,
-            song_id_len,
-        ) + song_id_bytes + self.data
-
-    @staticmethod
-    def load(data: bytes):
-        header = struct.unpack(AudioFrame.frame_format,
-                               data[:AudioFrame.frame_header_size])
-        song_id_len = header[7]
-        song_id_start = AudioFrame.frame_header_size
-        song_id_end = song_id_start + song_id_len
-        song_id = data[song_id_start:song_id_end].decode("utf-8")
-        audio_data = data[song_id_end:]
-        frame = AudioFrame(
-            sample_rate=header[2],
-            sample_num=header[3],
-            channels=header[4],
-            encoding=AudioEncoding(header[6]),
-            data=audio_data,
-            song_id=song_id,
-        )
-        frame.event_type = EventType(header[0])
-        frame.timestamp = header[1]
-        return frame
-
-    def to_dict(self):
-        return {
-            "event_type": self.event_type.name,
-            "timestamp": self.timestamp,
-            "sample_rate": self.sample_rate,
-            "sample_num": self.sample_num,
-            "length": self._length,
-            "encoding": self.encoding.name,
-            "song_id": self.song_id,
-            "data": self.data.hex(),
-        }
 
 
 class HeartbeatFrame(BaseFrame):

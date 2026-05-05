@@ -137,9 +137,7 @@ async def handle_game_start(  # pylint: disable=too-many-locals
                                                            first_song_id)
         audio_url = get_audio_stream_url(audio_token)
 
-        # 触发预下载和预加载逻辑（i=0）
-        # 预下载：下载 i+3 歌曲
-        # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
+        # 触发预下载（i=0）：下载 i+3 歌曲
         await preload_songs_for_round_start(
             clients=clients,
             session=session,
@@ -182,20 +180,6 @@ async def handle_game_start(  # pylint: disable=too-many-locals
                     r,
                     exc_info=r,
                 )
-
-        # Start binary audio push via WebSocket
-        from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
-        first_song = (await session.execute(
-            select(models.Song).where(models.Song.id == first_song_id)
-        )).scalar_one_or_none()
-        if first_song and first_song.cached_path:
-            await audio_push_manager.start_push(
-                room_id,
-                audio_token,
-                first_song.cached_path,
-                0,
-                clients,
-            )
 
 
 @regist(GameEventType.ROUND_END, data_validator=RoundEndMessage)
@@ -297,9 +281,7 @@ async def handle_skip_round(
                                                            next_song_id)
         audio_url = get_audio_stream_url(audio_token)
 
-        # 触发预下载和预加载逻辑
-        # 预下载：下载 i+3 歌曲（i = next_index）
-        # 预加载：广播 PRELOAD_AUDIO 给 i+1 歌曲
+        # 触发预下载（i = next_index）：下载 i+3 歌曲
         await preload_songs_for_round_start(
             clients=clients,
             session=session,
@@ -329,20 +311,6 @@ async def handle_skip_round(
 
         # 兼容保留：广播原始SKIP_ROUND事件
         await clients.broadcast(room_id, data.model_dump())
-
-        # Start binary audio push via WebSocket
-        from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
-        next_song = (await session.execute(
-            select(models.Song).where(models.Song.id == next_song_id)
-        )).scalar_one_or_none()
-        if next_song and next_song.cached_path:
-            await audio_push_manager.start_push(
-                room_id,
-                audio_token,
-                next_song.cached_path,
-                0,
-                clients,
-            )
 
         logger.info(
             "Skip round completed for room %s, moved from round %d to %d",

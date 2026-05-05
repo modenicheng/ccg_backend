@@ -7,7 +7,6 @@ from .registe_manager import regist
 from . import (
     heartbeats as _heartbeats,
     audio_events_2x as _audio_events_2x,
-    audio_error_handler as _audio_error_handler,
     round_events_3x as _round_events_3x,
     judge_events_4x as _judge_events_4x,
     round_state_events,
@@ -18,7 +17,6 @@ from . import (
 _HANDLER_MODULES = (
     _heartbeats,
     _audio_events_2x,
-    _audio_error_handler,
     _round_events_3x,
     _judge_events_4x,
     _connection_lifespan,

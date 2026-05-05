@@ -83,20 +83,6 @@ async def handle_play(
                 exc_info=r,
             )
 
-    # Start binary audio push
-    from handlers.audio_push_task import audio_push_manager, resolve_audio_path  # pylint: disable=import-outside-toplevel
-    path_info = await resolve_audio_path(room_id)
-    if path_info:
-        cached_path, token = path_info
-        start_ms = max(0, state.progress_ms)
-        await audio_push_manager.start_push(
-            room_id,
-            token,
-            cached_path,
-            start_ms,
-            clients,
-        )
-
 
 @regist(GameEventType.PAUSE, data_validator=playback_schemas.PauseMessage)
 async def handle_pause(
@@ -128,10 +114,6 @@ async def handle_pause(
                 r,
                 exc_info=r,
             )
-
-    # Stop binary audio push
-    from handlers.audio_push_task import audio_push_manager  # pylint: disable=import-outside-toplevel
-    await audio_push_manager.stop_push(room_id)
 
 
 @regist(GameEventType.SEEK, data_validator=playback_schemas.SeekMessage)
@@ -189,19 +171,4 @@ async def handle_seek(
                 room_id,
                 r,
                 exc_info=r,
-            )
-
-    # Restart binary audio push from new position
-    from handlers.audio_push_task import audio_push_manager, resolve_audio_path  # pylint: disable=import-outside-toplevel
-    await audio_push_manager.stop_push(room_id)
-    if updated_state.play_state == "playing":
-        path_info = await resolve_audio_path(room_id)
-        if path_info:
-            cached_path, token = path_info
-            await audio_push_manager.start_push(
-                room_id,
-                token,
-                cached_path,
-                data.data.progress_ms,
-                clients,
             )
