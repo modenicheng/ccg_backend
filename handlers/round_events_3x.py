@@ -404,14 +404,6 @@ async def handle_attempt_answer(
         )
         return
 
-    # 在基础校验完成后再向客户端广播（转发原始事件）共前端维护抢答队列状态，避免后端全量广播队列导致性能问题
-    # 此时前端可以先自主暂停，然后在后续收到 PAUSE 事件时再进一步调整播放状态
-    await clients.broadcast(
-        room_id,
-        data.model_dump(),
-        excluded_clients={client},
-    )
-
     # 当前无人作答：从队列头选出本轮作答者，开始作答阶段
     # NOTE: current_answerer 查询已移除——改用原子 CAS 操作代替
     # 原来的 get + set 是 TOCTOU 竞态：多个并发 ATTEMPT_ANSWER 都能看到 None，
@@ -437,6 +429,16 @@ async def handle_attempt_answer(
             next_answerer = answer_queue[queue_tail_index + 1].player_id
         elif queue_tail_index < 0:
             next_answerer = player_id
+
+    # 广播 ATTEMPT_ANSWER 给其他客户端，附带完整队列数据用于前端队列同步
+    augmented_data = data.model_dump()
+    augmented_data["data"]["queue"] = [item.model_dump() for item in answer_queue]
+    augmented_data["data"]["answer_queue_tail_player_id"] = queue_tail_player_id
+    await clients.broadcast(
+        room_id,
+        augmented_data,
+        excluded_clients={client},
+    )
 
     logger.debug(
         "Current playback state for room %s: %s",
@@ -506,32 +508,6 @@ async def handle_attempt_answer(
     your_turn_message = YourTurnMessage(data=your_turn_data)
     await clients.broadcast(room_id, your_turn_message.model_dump())
     logger.info("Broadcast YOUR_TURN for player %s in room %s", next_answerer, room_id)
-
-    # 获取更新后的排序队列 - 使用 room_cache.get_answer_queue
-    # sorted_queue = [*(await room_cache.get_answer_queue(room_id))]
-
-    # # 广播ATTEMPT_ANSWER事件给其他客户端（保持原有行为）
-    # normalized_attempt_message = AttemptAnswerMessage(
-    #     data={
-    #         "offset_ts": offset_ts,
-    #         "progress_ms": progress_ms,
-    #         "user_id": int(player_id),
-    #     })
-    # await clients.broadcast(
-    #     room_id,
-    #     normalized_attempt_message.model_dump(),
-    #     excluded_clients={client},
-    # )
-
-    # answer_queue_data = AnswerQueueData(queue=sorted_queue)
-    # answer_queue_message = AnswerQueueMessage(data=answer_queue_data)
-
-    # await clients.broadcast(
-    #     room_id,
-    #     answer_queue_message.model_dump(),
-    # )
-
-    # logger.info("Answer queue updated in room %s: %s", room_id, sorted_queue)
 
 
 @regist(GameEventType.SUBMIT_ANSWER, SubmitAnswerMessage)

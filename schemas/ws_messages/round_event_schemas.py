@@ -55,6 +55,14 @@ class AttemptAnswerData(BaseModel):
     offset_ts: int = Field(..., ge=0)
     progress_ms: int = Field(..., ge=0)
     user_id: int = Field(..., ge=0)
+    queue: List[AnswerQueueItem] | None = Field(
+        default=None,
+        description="抢答队列（可选，用于前端队列同步）",
+    )
+    answer_queue_tail_player_id: int | None = Field(
+        default=None,
+        description="当前回合已处理段队尾玩家ID（可选，用于前端队列同步）",
+    )
 
 
 class AttemptAnswerMessage(MessageBase):
