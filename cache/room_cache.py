@@ -521,6 +521,38 @@ async def set_room_current_answerer(redis: Redis, room_id: str, player_id: int) 
     return True
 
 
+# Lua script: atomically set current answerer only if empty (nobody answering).
+# Returns 1 if set succeeded, 0 if someone else is already the answerer.
+_TRY_SET_FIRST_ANSWERER_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    return 1
+end
+return 0
+"""
+
+
+@handle_redis_operation(default_return=False,
+                        log_operation="atomically setting first answerer")
+async def try_set_first_answerer(redis: Redis, room_id: str,
+                                  player_id: int) -> bool:
+    """Atomically set current answerer only if nobody is answering yet.
+
+    Unlike try_set_room_current_answerer, this does NOT treat "same player"
+    as a success — it only succeeds when the answerer key is empty.
+    This prevents handle_attempt_answer from resetting the answer deadline.
+    """
+    key = RedisKeys.answerer(room_id)
+    expected = str(player_id)
+    result = await cast(
+        Awaitable[int],
+        redis.eval(_TRY_SET_FIRST_ANSWERER_SCRIPT, 1, key, expected,
+                   ROOM_TTL_SECONDS),
+    )
+    return bool(result)
+
+
 # Lua script: atomically check current answerer and set if empty or same player.
 # Returns 1 if set succeeded, 0 if another player is already the answerer.
 _TRY_SET_ANSWERER_SCRIPT = """

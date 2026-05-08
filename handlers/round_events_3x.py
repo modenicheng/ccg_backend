@@ -465,8 +465,8 @@ async def handle_attempt_answer(
     else:
         new_playback_state = None
 
-    # 原子 CAS：仅当当前无作答者（或同一玩家重复提交）时才设置成功
-    set_ok = await room_cache.try_set_room_current_answerer(room_id, next_answerer)
+    # 原子 CAS：仅当当前**无人作答**时才设置成功
+    set_ok = await room_cache.try_set_first_answerer(room_id, next_answerer)
     if not set_ok:
         logger.info(
             "Race lost for player %s in room %s: another answerer already set",
