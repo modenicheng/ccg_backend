@@ -9,7 +9,8 @@ import mq.tasks
 from client_manager import ClientManager
 from db import models
 from db.crud import get_or_create_audio_token
-from utils import get_logger
+from schemas.ws_messages.playback_schemas import PreloadAudioData, PreloadAudioMessage
+from utils import get_audio_stream_url, get_logger
 
 logger = get_logger(__name__)
 
@@ -71,7 +72,6 @@ async def download_song_at_index(
 
 
 async def preload_songs_for_round_start(
-    clients: ClientManager,
     session: AsyncSession,
     room_id: str,
     song_queue: list[int],
@@ -83,7 +83,6 @@ async def preload_songs_for_round_start(
     - 预下载：下载 i+3 歌曲
 
     Args:
-        clients: WebSocket客户端管理器
         session: 数据库会话
         room_id: 房间ID
         song_queue: 歌曲ID队列
@@ -93,3 +92,22 @@ async def preload_songs_for_round_start(
     download_index = current_index + 3
     if download_index < len(song_queue):
         await download_song_at_index(session, room_id, song_queue, download_index)
+
+
+async def prepare_and_broadcast_next_audio(
+    clients: ClientManager,
+    session: AsyncSession,
+    room_id: str,
+    song_queue: list[int],
+    current_index: int,
+) -> None:
+    """Prepare and broadcast the browser-preload URL for the next song."""
+    next_index = current_index + 1
+    if next_index >= len(song_queue):
+        return
+
+    next_song_id = song_queue[next_index]
+    audio_token = await get_or_create_audio_token(session, room_id, next_song_id)
+    preload_message = PreloadAudioMessage(data=PreloadAudioData(
+        audio_url=get_audio_stream_url(audio_token)))
+    await clients.broadcast(room_id, preload_message.model_dump(exclude_none=True))

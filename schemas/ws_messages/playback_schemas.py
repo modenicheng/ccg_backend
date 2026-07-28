@@ -1,6 +1,11 @@
+"""Playback WebSocket message schemas."""
+
 from __future__ import annotations
-from pydantic import BaseModel, Field
+
 from typing import Literal
+
+from pydantic import BaseModel, Field
+
 from utils.enumerations import GameEventType
 from ..base_message import MessageBase
 
@@ -29,3 +34,16 @@ class PauseMessage(MessageBase):
 class SeekMessage(MessageBase):
     event: Literal[22] = GameEventType.SEEK.value
     data: PlayControlData
+
+
+class PreloadAudioData(BaseModel):
+    """Browser preload target for the next song."""
+
+    audio_url: str
+
+
+class PreloadAudioMessage(MessageBase):
+    """Server-owned instruction to preload the next song."""
+
+    event: Literal[23] = GameEventType.PRELOAD_AUDIO.value
+    data: PreloadAudioData
