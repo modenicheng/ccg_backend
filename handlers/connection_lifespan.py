@@ -191,6 +191,7 @@ async def on_connect(  # pylint: disable=too-many-statements
             e,
             exc_info=True,
         )
+        clients.pop(room_id, cl)
         return
 
     try:
