@@ -15,7 +15,10 @@ from client_manager import ClientManager, Client
 from db import crud
 from db import models
 from db.session import session_scope
-from handlers.audio_common import preload_songs_for_round_start
+from handlers.audio_common import (
+    preload_songs_for_round_start,
+    prepare_and_broadcast_next_audio,
+)
 from handlers.registe_manager import regist
 from handlers.round_state_events import handle_round_state_transition
 from schemas.ws_messages.round_event_schemas import (
@@ -139,6 +142,14 @@ async def handle_game_start(  # pylint: disable=too-many-locals
 
         # 触发预下载（i=0）：下载 i+3 歌曲
         await preload_songs_for_round_start(
+            session=session,
+            room_id=room_id,
+            song_queue=song_queue,
+            current_index=0,
+        )
+
+        # 广播下一首歌的预加载URL
+        await prepare_and_broadcast_next_audio(
             clients=clients,
             session=session,
             room_id=room_id,
@@ -283,6 +294,14 @@ async def handle_skip_round(
 
         # 触发预下载（i = next_index）：下载 i+3 歌曲
         await preload_songs_for_round_start(
+            session=session,
+            room_id=room_id,
+            song_queue=song_queue,
+            current_index=next_index,
+        )
+
+        # 广播下一首歌的预加载URL
+        await prepare_and_broadcast_next_audio(
             clients=clients,
             session=session,
             room_id=room_id,
